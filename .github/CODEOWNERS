@@ -1,0 +1,11 @@
+# Reviewer auto-assignment for the OmniMed3D monorepo.
+# Mapping mirrors CONTRIBUTING.md #4.3 (Pull Request Process) —
+# update both together if ownership changes.
+#
+# Order matters: later patterns override earlier ones for a given path.
+
+/engine/     @nowead
+/viewer/     @nowead
+
+/ai-server/  @hyuniverse
+/infra/      @hyuniverse
