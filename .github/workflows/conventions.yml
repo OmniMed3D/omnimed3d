@@ -1,0 +1,56 @@
+# Enforces CONTRIBUTING.md #2.1 (commit message format) on the PR title and
+# every commit in the PR. Branch naming (#1.1) is a convention, not a CI
+# check — with a 2-person team it's cheaper to fix a stray branch name in
+# review than to have a strict regex block the PR over it.
+#
+# Deliberately convention-only otherwise: this repo has no CMakeLists.txt /
+# src/ tree yet (see CLAUDE.md #7), so there is nothing to build or test in
+# CI. A build/test workflow should be added once the native (Vulkan) and/or
+# WASM (WebGPU) build paths exist.
+
+name: Conventions
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  check-conventions:
+    name: PR title and commit message conventions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|refactor|docs|chore): .+'
+          echo "PR title: $PR_TITLE"
+          if ! [[ "$PR_TITLE" =~ $pattern ]]; then
+            echo "::error::PR title does not follow '<type>: <description>' (CONTRIBUTING.md #2.1)."
+            echo "Allowed types: feat, fix, refactor, docs, chore"
+            exit 1
+          fi
+
+      - name: Validate commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pattern='^(feat|fix|refactor|docs|chore): .+'
+          failed=0
+          while IFS= read -r subject; do
+            [ -z "$subject" ] && continue
+            if ! [[ "$subject" =~ $pattern ]]; then
+              echo "::error::Commit message does not follow '<type>: <description>' (CONTRIBUTING.md #2.1): $subject"
+              failed=1
+            fi
+          done < <(git log --format=%s "$BASE_SHA..$HEAD_SHA")
+          exit $failed

@@ -1,0 +1,32 @@
+name: Issue
+description: Bug, feature request, or anything else worth tracking.
+body:
+  - type: dropdown
+    id: part
+    attributes:
+      label: Part
+      description: Which module does this affect? (see CONTRIBUTING.md #1.1)
+      options:
+        - engine (C++ / RHI / Vulkan / WebGPU)
+        - viewer (frontend web viewer)
+        - ai-server (Python / segmentation / inference)
+        - infra (Docker / deployment)
+        - other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What / Why / How
+      description: >
+        Bug: what's wrong and how to reproduce it. Feature: why it's needed
+        and roughly how you'd approach it. Add a `bug` or `enhancement`
+        label yourself after creating the issue — this template doesn't
+        split the two.
+      placeholder: |
+        What:
+        Why:
+        How (repro steps / proposed approach):
+    validations:
+      required: true
