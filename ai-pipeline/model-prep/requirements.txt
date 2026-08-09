@@ -1,0 +1,5 @@
+torch>=2.0
+lungmask>=0.2.20
+onnx>=1.15
+onnxruntime>=1.17
+numpy>=1.24

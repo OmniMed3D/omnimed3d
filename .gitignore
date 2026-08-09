@@ -1,2 +1,14 @@
 docs/prd
 docs/ko
+docs/ai-track-decisions.md
+CLAUDE.md
+
+# Python (ai-pipeline/model-prep)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated model artifacts — not committed, regenerated via convert_to_onnx.py
+*.onnx
+*.onnx.data
