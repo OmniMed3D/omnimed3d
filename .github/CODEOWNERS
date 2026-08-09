@@ -7,5 +7,5 @@
 /engine/     @nowead
 /viewer/     @nowead
 
-/ai-server/  @hyuniverse
-/infra/      @hyuniverse
+/ai-pipeline/  @hyuniverse
+/infra/        @hyuniverse
