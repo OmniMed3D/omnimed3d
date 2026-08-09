@@ -15,7 +15,7 @@ Both are checked automatically by the Conventions workflow on this PR.
 
 - [ ] engine (C++ / RHI / Vulkan / WebGPU)
 - [ ] viewer (frontend web viewer)
-- [ ] ai-server (Python / segmentation / inference)
+- [ ] ai-pipeline (Python / segmentation / inference)
 - [ ] infra (Docker / deployment)
 - [ ] docs / other
 

@@ -70,7 +70,7 @@ To merge work into `main`, the following PR process must be completed.
 2. **Fill out the template:** Fill out the key sections of the provided PR template (summary of work and review notes) concisely and clearly.
 3. **Code Review (CODEOWNERS):** Reviewers are automatically assigned to the relevant module owners according to the `.github/CODEOWNERS` rules.
    * Changes to `engine/`, `viewer/`: @nowead
-   * Changes to `ai-server/`, `infra/`: @hyuniverse
+   * Changes to `ai-pipeline/`, `infra/`: @hyuniverse
 4. **Merge Policy:** Merge requirements are split by scope of work to maintain velocity for a small team.
    * **Core architecture changes (`feat`, `refactor`):** Merge only after approval from the designated reviewer and a passing CI build.
    * **Simple fixes and maintenance (`fix`, `docs`, `chore`):** May be self-merged by the author once the CI build passes, without requiring explicit reviewer approval.

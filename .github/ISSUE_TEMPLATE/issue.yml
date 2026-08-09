@@ -9,7 +9,7 @@ body:
       options:
         - engine (C++ / RHI / Vulkan / WebGPU)
         - viewer (frontend web viewer)
-        - ai-server (Python / segmentation / inference)
+        - ai-pipeline (Python / segmentation / inference)
         - infra (Docker / deployment)
         - other / not sure
     validations:
