@@ -11,8 +11,16 @@ mask contract handoff (Epic 6). Verified against the JoHof/lungmask source
 | --- | --- |
 | Shape | `[1, 1, 256, 256]` (batch, channel, H, W) — fixed by the R231 architecture, not configurable |
 | Dtype | `float32` |
-| Preprocessing | Per-slice. HU values clipped at `max=600` (no lower clip), then normalized as `(HU + 1024) / 1624` |
+| Preprocessing | Per-slice, see below — **correction (2026-08-10, verified against `lungmask/utils.py` while building Epic 2's calibration reader): earlier version of this doc was incomplete/wrong.** |
 | Constraint | Model operates on full 2D slices only; the slice must show the complete lung, surrounded by tissue, to segment correctly |
+
+**Full preprocessing pipeline (`lungmask.utils.preprocess` + the normalize step `mask.py` applies after it — not a single function):**
+1. Clip HU to **`[-1024, 600]`** (both bounds — not max-only as previously documented here).
+2. `simple_bodymask`: threshold at −500 HU, morphological closing/hole-fill/erosion/dilation, keep the largest connected component → binary body mask.
+3. `crop_and_resize`: crop the slice to that body mask's bounding box, **then** resize to `256x256` via `scipy.ndimage.zoom` (bilinear, `order=1`) — this is a crop-then-resize, not a plain resize of the full slice. Anything implementing this preprocessing outside Python (e.g. the browser Parse Worker in Epic 3/4) needs to replicate the body-crop step, not just downsample the raw slice.
+4. Re-clip upper bound at 600 (redundant with step 1 in the reference implementation, kept here only for exact fidelity) and normalize: `(HU + 1024) / 1624`.
+
+Epic 2's `../../../quantization/quantize_ptq.py` calls `lungmask.utils.preprocess` directly for its calibration data reader rather than reimplementing steps 1-3 by hand, specifically to avoid drifting from this real behavior.
 
 ## Output (raw model forward pass)
 

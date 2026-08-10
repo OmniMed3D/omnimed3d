@@ -3,12 +3,15 @@ docs/ko
 docs/ai-track-decisions.md
 CLAUDE.md
 
-# Python (ai-pipeline/model-prep)
+# Python (ai-pipeline/)
 __pycache__/
 *.pyc
 .venv/
 venv/
 
-# Generated model artifacts — not committed, regenerated via convert_to_onnx.py
+# Generated model artifacts — not committed, regenerated via convert_to_onnx.py / quantize_ptq.py
 *.onnx
 *.onnx.data
+
+# Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
+ai-pipeline/quantization/calibration_data/
