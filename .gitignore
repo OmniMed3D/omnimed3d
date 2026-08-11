@@ -24,3 +24,4 @@ engine/shaders/generated/
 
 # Engine CMake build output
 engine/build/
+engine/build_wasm/

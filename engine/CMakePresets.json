@@ -16,12 +16,27 @@
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
+    },
+    {
+      "name": "wasm-windows",
+      "displayName": "WebAssembly (Windows + Emscripten)",
+      "description": "WASM/WebGPU build via emsdk. NMake Makefiles, not Ninja -- Ninja can't invoke emcc.bat/em++.bat on Windows. Requires EMSDK activated in the invoking shell (see engine/scripts/emsdk-shell.ps1); no absolute emsdk path is hardcoded here.",
+      "generator": "NMake Makefiles",
+      "binaryDir": "${sourceDir}/build_wasm",
+      "toolchainFile": "${sourceDir}/cmake/EmscriptenToolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "windows-default",
       "configurePreset": "windows-default"
+    },
+    {
+      "name": "wasm-windows",
+      "configurePreset": "wasm-windows"
     }
   ]
 }
