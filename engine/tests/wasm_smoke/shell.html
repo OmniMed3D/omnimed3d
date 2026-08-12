@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OmniMed3D-Engine — WASM smoke test</title>
+    <style>
+        html, body { margin: 0; background: #111; color: #ddd; font-family: monospace; }
+        #canvas { display: block; margin: 16px auto; background: #000; }
+        #status { text-align: center; }
+    </style>
+</head>
+<body>
+    <div id="status">loading...</div>
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <script type="text/javascript">
+        var Module = {
+            canvas: document.getElementById('canvas'),
+            print: function(text) { console.log('[stdout] ' + text); },
+            printErr: function(text) { console.error('[stderr] ' + text); },
+            setStatus: function(text) {
+                document.getElementById('status').textContent = text || 'running';
+            }
+        };
+        window.onerror = function(msg) {
+            document.getElementById('status').textContent = 'error: ' + msg;
+        };
+    </script>
+
+    {{{ SCRIPT }}}
+</body>
+</html>
