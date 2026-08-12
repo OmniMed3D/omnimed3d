@@ -15,6 +15,7 @@ Both are checked automatically by the Conventions workflow on this PR.
 
 - [ ] engine (C++ / RHI / Vulkan / WebGPU)
 - [ ] viewer (frontend web viewer)
+- [ ] dicom-parser (shared DICOM parser library)
 - [ ] ai-pipeline (Python / segmentation / inference)
 - [ ] infra (Docker / deployment)
 - [ ] docs / other
@@ -35,7 +36,7 @@ Both are checked automatically by the Conventions workflow on this PR.
 ## Testing
 
 <!-- How was this verified? Commands run, manual steps taken, screenshots for viewer changes.
-     Note: this repo does not yet have an automated build/test CI job (see CLAUDE.md #7) —
+     Note: this repo does not yet have an automated build/test CI job —
      describe manual verification until one exists. -->
 
 ## Checklist

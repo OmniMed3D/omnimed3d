@@ -4,8 +4,9 @@
 #
 # Order matters: later patterns override earlier ones for a given path.
 
-/engine/     @nowead
-/viewer/     @nowead
+/engine/         @nowead
+/viewer/         @nowead
+/dicom-parser/   @nowead
 
 /ai-pipeline/  @hyuniverse
 /infra/        @hyuniverse
