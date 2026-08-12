@@ -7,16 +7,21 @@
 
 namespace dicom_parser {
 
-// Only the File Meta Information group (0002) is parsed -- not the main
-// dataset, not pixel data. See docs/adr/0001-shared-dicom-parser-module.md
-// (repo root) for why this lives in its own top-level module, and
-// engine/docs/adr/0004-shared-dicom-parser.md for why the parsing scope
-// itself is deliberately limited for now.
+// File Meta Information group (0002) only -- SOP Class/Instance UID,
+// Transfer Syntax UID. See DicomFile::parseImageInfo() below for the main
+// dataset (image geometry + pixel data). See
+// docs/adr/0001-shared-dicom-parser-module.md (repo root) for why this
+// library lives in its own top-level module.
 struct DicomMetaInfo {
     std::string mediaStorageSOPClassUID;
     std::string mediaStorageSOPInstanceUID;
     std::string transferSyntaxUID;
     uint32_t metaGroupLength = 0;
+
+    // Byte offset where the main dataset begins (right after group 0002) --
+    // callers pass this into parseImageInfo() so it doesn't have to re-walk
+    // the meta group to find where its own job starts.
+    size_t dataSetOffset = 0;
 };
 
 enum class DicomParseError {
@@ -24,6 +29,43 @@ enum class DicomParseError {
     MissingMagic,
     MissingGroupLength,
     Truncated,
+
+    // Errors specific to parseImageInfo() -- main dataset / pixel data.
+    UnsupportedTransferSyntax,   // not Explicit or Implicit VR Little Endian
+    UnsupportedSequenceEncoding, // undefined-length (0xFFFFFFFF) element hit;
+                                  // full nested Sequence/Item delimiter
+                                  // scanning is out of scope, so this fails
+                                  // loudly instead of misparsing
+    UnsupportedPixelFormat,      // SamplesPerPixel != 1, PhotometricInterpretation
+                                  // not MONOCHROME1/2, or PixelData has an
+                                  // undefined/encapsulated length (compressed)
+    MissingRequiredElement,      // Rows/Columns/BitsAllocated/PixelRepresentation
+                                  // /PixelData absent from the dataset
+};
+
+// Geometry + pixel data for one DICOM image (one file = one slice). HU
+// conversion (raw * rescaleSlope + rescaleIntercept) is left to the caller --
+// this struct exposes the raw ingredients, not a converted buffer, so it
+// doesn't have to allocate or pick an output numeric type on the caller's
+// behalf.
+struct DicomImageInfo {
+    uint16_t rows = 0;
+    uint16_t columns = 0;
+    uint16_t bitsAllocated = 0;
+    uint16_t bitsStored = 0;
+    uint16_t pixelRepresentation = 0; // 0 = unsigned, 1 = signed
+    uint16_t samplesPerPixel = 0;
+    std::string photometricInterpretation;
+    double rescaleSlope = 1.0;
+    double rescaleIntercept = 0.0;
+    double pixelSpacingRow = 0.0;
+    double pixelSpacingColumn = 0.0;
+    double sliceThickness = 0.0;
+
+    // View into the caller's original buffer -- never a copy (ADR-0004's
+    // zero-copy philosophy). Valid only as long as that buffer is alive.
+    std::byte const* pixelData = nullptr;
+    size_t pixelDataLength = 0;
 };
 
 // Parses the 128-byte preamble + "DICM" magic + File Meta Information group
@@ -35,6 +77,19 @@ enum class DicomParseError {
 class DicomFile {
 public:
     static std::optional<DicomMetaInfo> parseFromBuffer(std::byte const* data, size_t size,
+                                                          DicomParseError* outError = nullptr);
+
+    // Parses the main dataset's image geometry + pixel data. `dataSetOffset`
+    // and `transferSyntaxUID` come from a prior parseFromBuffer() call --
+    // this is a deliberate two-step API (not a combined one-call parse)
+    // because the caller must already know the transfer syntax before it can
+    // decide how to walk the main dataset, same as a future Parse Worker
+    // would. Only uncompressed Explicit/Implicit VR Little Endian are
+    // supported -- see docs/adr/0002-dicom-parser-uncompressed-pixel-data.md
+    // (repo root) for why.
+    static std::optional<DicomImageInfo> parseImageInfo(std::byte const* data, size_t size,
+                                                          size_t dataSetOffset,
+                                                          std::string const& transferSyntaxUID,
                                                           DicomParseError* outError = nullptr);
 };
 

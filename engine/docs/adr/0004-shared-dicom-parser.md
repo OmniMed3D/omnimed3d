@@ -12,6 +12,14 @@
 > `engine/`, not nested inside it. Everything else in this ADR (three
 > build targets, buffer-first parsing API, why unification now) still
 > holds; only the physical path changed.
+>
+> **Update (2026-08-12):** this ADR's Consequences section flagged "any
+> future PR that adds pixel-data transfer-syntax support" as pending — that
+> PR landed, scoped to uncompressed Explicit/Implicit VR Little Endian only.
+> See `docs/adr/0002-dicom-parser-uncompressed-pixel-data.md` (repo-root,
+> cross-team, matching this ADR's own location precedent) for the scope
+> decision and why compressed transfer syntaxes (RLE/JPEG2000/legacy JPEG)
+> are out of scope.
 
 ## Context
 

@@ -39,5 +39,24 @@ int main(int argc, char** argv) {
     std::printf("  Media Storage SOP Class UID:    %s\n", meta->mediaStorageSOPClassUID.c_str());
     std::printf("  Media Storage SOP Instance UID: %s\n", meta->mediaStorageSOPInstanceUID.c_str());
     std::printf("  Transfer Syntax UID:            %s\n", meta->transferSyntaxUID.c_str());
+
+    auto const image = dicom_parser::DicomFile::parseImageInfo(bytes, buffer.size(), meta->dataSetOffset,
+                                                                 meta->transferSyntaxUID, &error);
+    if (!image) {
+        std::fprintf(stderr, "failed to parse image data from '%s' (error code %d)\n", argv[1],
+                     static_cast<int>(error));
+        return 1;
+    }
+
+    std::printf("  Rows x Columns:                 %u x %u\n", image->rows, image->columns);
+    std::printf("  Bits Allocated / Stored:        %u / %u\n", image->bitsAllocated, image->bitsStored);
+    std::printf("  Pixel Representation:           %u (%s)\n", image->pixelRepresentation,
+                 image->pixelRepresentation == 0 ? "unsigned" : "signed");
+    std::printf("  Samples Per Pixel:              %u\n", image->samplesPerPixel);
+    std::printf("  Photometric Interpretation:     %s\n", image->photometricInterpretation.c_str());
+    std::printf("  Pixel Spacing (row, column):    %g, %g\n", image->pixelSpacingRow, image->pixelSpacingColumn);
+    std::printf("  Slice Thickness:                %g\n", image->sliceThickness);
+    std::printf("  Rescale Slope / Intercept:      %g / %g\n", image->rescaleSlope, image->rescaleIntercept);
+    std::printf("  Pixel Data Length:              %zu bytes\n", image->pixelDataLength);
     return 0;
 }
