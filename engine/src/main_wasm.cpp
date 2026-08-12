@@ -23,3 +23,31 @@ int main() {
     emscripten_set_main_loop(tick, 0, true);
     return 0;
 }
+
+// JS-callable exports (roadmap step 4). EMSCRIPTEN_KEEPALIVE alone makes
+// these callable as Module._engine_load_volume(...) / Module._engine_apply_mask_slice(...)
+// -- no additional -s EXPORTED_FUNCTIONS linker flag needed (main() itself
+// is already proof this mechanism works). Real orchestration (minting
+// volumeId, receiving Parse/Inference Worker output) is the future
+// viewer/-owned layer, PRD #5.3.2 -- this smoke test's shell.html simulates
+// it with synthetic data.
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE
+int engine_is_ready() {
+    return g_device.isReady() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width,
+                         uint32_t height, uint32_t depth, float spacingX, float spacingY, float spacingZ) {
+    g_device.loadVolume(volumeId, data, byteLength, width, height, depth, spacingX, spacingY, spacingZ);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_apply_mask_slice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
+                              uint8_t* data, size_t byteLength) {
+    g_device.applyMaskSlice(volumeId, sliceIndex, width, height, data, byteLength);
+}
+
+}  // extern "C"

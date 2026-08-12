@@ -16,6 +16,12 @@ public:
     void initialize() override;
     bool isReady() const override;
     void renderFrame() override;
+    void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
+                     uint32_t width, uint32_t height, uint32_t depth,
+                     float spacingX, float spacingY, float spacingZ) override;
+    void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
+                         uint32_t width, uint32_t height,
+                         void const* data, size_t byteLength) override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -37,6 +43,17 @@ private:
     WGPUQueue queue_ = nullptr;
     WGPUSurface surface_ = nullptr;
     bool ready_ = false;
+
+    // Volume/mask state (roadmap step 4). No general RHITexture wrapper --
+    // see the Device.hpp header comment for why these stay raw WGPUTexture
+    // handles private to this backend for now.
+    WGPUTexture volumeTexture_ = nullptr;
+    WGPUTexture maskTexture_ = nullptr;
+    uint32_t currentVolumeId_ = 0;
+    bool hasVolume_ = false;
+    uint32_t volumeWidth_ = 0;
+    uint32_t volumeHeight_ = 0;
+    uint32_t volumeDepth_ = 0;
 };
 
 }  // namespace omnimed3d::rhi::webgpu
