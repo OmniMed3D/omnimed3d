@@ -52,5 +52,5 @@ jobs:
               echo "::error::Commit message does not follow '<type>: <description>' (CONTRIBUTING.md #2.1): $subject"
               failed=1
             fi
-          done < <(git log --format=%s "$BASE_SHA..$HEAD_SHA")
+          done < <(git log --no-merges --format=%s "$BASE_SHA..$HEAD_SHA")
           exit $failed
