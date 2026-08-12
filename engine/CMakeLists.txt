@@ -4,6 +4,13 @@ project(OmniMed3D-Engine CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Must precede add_subdirectory(dicom-parser) below -- CTest only discovers
+# tests from the directory where enable_testing() was first invoked
+# downward, and dicom-parser/CMakeLists.txt registers its own tests via
+# add_test() (NFR-04 "core processing pipelines must be verifiable through
+# automated testing frameworks").
+enable_testing()
+
 add_subdirectory(src/core)
 add_subdirectory(src/concurrency)
 
@@ -77,10 +84,3 @@ if(NOT EMSCRIPTEN)
         CXX_STANDARD_REQUIRED ON
     )
 endif()
-
-# The EMSCRIPTEN/WebGPU rendering block (rhi/, wasm_smoke) lives on the
-# separate feat/engine-webgpu-canvas branch, not yet merged -- deliberately
-# not reintroduced here to keep this branch scoped to the DICOM parser
-# module only. Re-merge order: this branch or that one, whichever merges
-# second picks up the other's addition via a normal (non-conflicting) merge
-# once both are just appending to the same two guarded blocks.

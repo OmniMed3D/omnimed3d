@@ -9,6 +9,7 @@ body:
       options:
         - engine (C++ / RHI / Vulkan / WebGPU)
         - viewer (frontend web viewer)
+        - dicom-parser (shared DICOM parser library)
         - ai-pipeline (Python / segmentation / inference)
         - infra (Docker / deployment)
         - other / not sure
