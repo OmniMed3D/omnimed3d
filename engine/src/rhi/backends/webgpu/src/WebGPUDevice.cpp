@@ -129,4 +129,116 @@ void WebGPUDevice::renderFrame() {
     wgpuTextureRelease(surfaceTexture.texture);
 }
 
+void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
+                               uint32_t width, uint32_t height, uint32_t depth,
+                               float /*spacingX*/, float /*spacingY*/, float /*spacingZ*/) {
+    if (!ready_) {
+        std::printf("WebGPUDevice::loadVolume: device not ready, ignoring\n");
+        return;
+    }
+    size_t const expected = static_cast<size_t>(width) * height * depth * sizeof(uint16_t);
+    if (byteLength != expected) {
+        std::printf("WebGPUDevice::loadVolume: byteLength %zu != expected %zu, ignoring\n", byteLength,
+                     expected);
+        return;
+    }
+
+    // A new volume load invalidates any mask texture from the previous
+    // volume -- old mask data no longer applies (PRD #5.3.2).
+    if (maskTexture_) {
+        wgpuTextureRelease(maskTexture_);
+        maskTexture_ = nullptr;
+    }
+    if (volumeTexture_) {
+        wgpuTextureRelease(volumeTexture_);
+        volumeTexture_ = nullptr;
+    }
+
+    WGPUTextureDescriptor desc{};
+    desc.dimension = WGPUTextureDimension_3D;
+    desc.size = WGPUExtent3D{width, height, depth};
+    desc.format = WGPUTextureFormat_R16Float;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    volumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = volumeTexture_;
+    dst.mipLevel = 0;
+    dst.origin = WGPUOrigin3D{0, 0, 0};
+    dst.aspect = WGPUTextureAspect_All;
+
+    WGPUTexelCopyBufferLayout layout{};
+    layout.offset = 0;
+    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint16_t));
+    layout.rowsPerImage = height;
+
+    WGPUExtent3D writeSize{width, height, depth};
+    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+
+    currentVolumeId_ = volumeId;
+    hasVolume_ = true;
+    volumeWidth_ = width;
+    volumeHeight_ = height;
+    volumeDepth_ = depth;
+
+    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded\n", volumeId, width, height, depth);
+}
+
+void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
+                                   void const* data, size_t byteLength) {
+    if (!hasVolume_ || volumeId != currentVolumeId_) {
+        std::printf("WebGPUDevice::applyMaskSlice: stale volumeId=%u (current=%u), ignoring\n", volumeId,
+                     currentVolumeId_);
+        return;
+    }
+    if (width != volumeWidth_ || height != volumeHeight_) {
+        std::printf("WebGPUDevice::applyMaskSlice: %ux%u doesn't match loaded volume %ux%u, ignoring\n",
+                     width, height, volumeWidth_, volumeHeight_);
+        return;
+    }
+    if (sliceIndex >= volumeDepth_) {
+        std::printf("WebGPUDevice::applyMaskSlice: sliceIndex %u out of range (depth=%u), ignoring\n",
+                     sliceIndex, volumeDepth_);
+        return;
+    }
+    size_t const expected = static_cast<size_t>(width) * height * sizeof(uint8_t);
+    if (byteLength != expected) {
+        std::printf("WebGPUDevice::applyMaskSlice: byteLength %zu != expected %zu, ignoring\n", byteLength,
+                     expected);
+        return;
+    }
+
+    if (!maskTexture_) {
+        // Lazily created on first valid slice -- zero-initialized by WebGPU
+        // on creation, so not-yet-written slices read as background/no
+        // overlay (PRD #5.3.1) without this code needing to clear it itself.
+        WGPUTextureDescriptor desc{};
+        desc.dimension = WGPUTextureDimension_3D;
+        desc.size = WGPUExtent3D{volumeWidth_, volumeHeight_, volumeDepth_};
+        desc.format = WGPUTextureFormat_R8Uint;
+        desc.mipLevelCount = 1;
+        desc.sampleCount = 1;
+        desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+        maskTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+    }
+
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = maskTexture_;
+    dst.mipLevel = 0;
+    dst.origin = WGPUOrigin3D{0, 0, sliceIndex};
+    dst.aspect = WGPUTextureAspect_All;
+
+    WGPUTexelCopyBufferLayout layout{};
+    layout.offset = 0;
+    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint8_t));
+    layout.rowsPerImage = height;
+
+    WGPUExtent3D writeSize{width, height, 1};
+    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+
+    std::printf("WebGPUDevice::applyMaskSlice: volumeId=%u slice=%u applied\n", volumeId, sliceIndex);
+}
+
 }  // namespace omnimed3d::rhi::webgpu

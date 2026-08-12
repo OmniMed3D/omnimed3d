@@ -26,12 +26,33 @@ if(EMSCRIPTEN)
     target_link_options(wasm_smoke PRIVATE
         "SHELL:-s ALLOW_MEMORY_GROWTH=1"
         "SHELL:-s ASSERTIONS=1"
+        # _malloc/_free aren't EMSCRIPTEN_KEEPALIVE-marked in our own code (they
+        # come from the runtime's libc), so unlike engine_is_ready/engine_load_volume/
+        # engine_apply_mask_slice -- which auto-export via EMSCRIPTEN_KEEPALIVE --
+        # they need to be listed explicitly for shell.html's Module._malloc/_free
+        # calls to resolve. _main must stay listed too since setting
+        # EXPORTED_FUNCTIONS replaces the implicit default ["_main"] entirely.
+        "SHELL:-s EXPORTED_FUNCTIONS=['_main','_malloc','_free']"
+        # HEAPU8 (used by shell.html to build typed-array views over WASM
+        # linear memory for the volume/mask transfer) is a runtime-side
+        # export, tracked separately from EXPORTED_FUNCTIONS above.
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=['HEAPU8']"
         "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_smoke/shell.html"
     )
     # Deliberately no -s ASYNCIFY=1 (avoided by design -- WebGPUDevice uses
     # callback-based adapter/device requests, see its header comment) and no
     # -s USE_GLFW=3 (that's for native windowing; this target only needs the
     # HTML canvas).
+
+    # shell.html is baked into the linked output (--shell-file above) but
+    # CMake has no way to know that from a plain link option string -- without
+    # this, NMake won't relink on a shell.html-only change, leaving a stale
+    # HTML in build_wasm/ (CLAUDE.md #8 "declare explicit build dependencies
+    # for every asset that affects the binary from day one"; confirmed this
+    # actually happened here, not just a theoretical risk).
+    set_target_properties(wasm_smoke PROPERTIES
+        LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_smoke/shell.html"
+    )
 endif()
 # Shared DICOM parser -- lives at the repo root (docs/adr/0001-shared-dicom-parser-module.md),
 # a sibling of engine/, not nested inside it: it's consumed by both engine

@@ -12,19 +12,88 @@
 <body>
     <div id="status">loading...</div>
     <canvas id="canvas" width="640" height="480"></canvas>
+    <pre id="log"></pre>
 
     <script type="text/javascript">
+        function appendLog(text) {
+            var el = document.getElementById('log');
+            el.textContent += text + '\n';
+        }
         var Module = {
             canvas: document.getElementById('canvas'),
-            print: function(text) { console.log('[stdout] ' + text); },
-            printErr: function(text) { console.error('[stderr] ' + text); },
+            print: function(text) { console.log('[stdout] ' + text); appendLog('[stdout] ' + text); },
+            printErr: function(text) { console.error('[stderr] ' + text); appendLog('[stderr] ' + text); },
             setStatus: function(text) {
                 document.getElementById('status').textContent = text || 'running';
+            },
+            onRuntimeInitialized: function() {
+                document.title = 'onRuntimeInitialized fired';
+                // Poll engine_is_ready() via requestAnimationFrame, not
+                // setInterval -- under headless Chrome + --virtual-time-budget,
+                // rAF-driven callbacks were empirically confirmed to run
+                // (the WASM main loop itself uses emscripten_set_main_loop,
+                // which is rAF-backed) while setInterval-driven polling did
+                // not reliably fire in that same environment.
+                var pollCount = 0;
+                var testRan = false;
+                function pollFrame() {
+                    if (testRan) {
+                        return;
+                    }
+                    pollCount++;
+                    document.title = 'polling #' + pollCount;
+                    if (Module._engine_is_ready()) {
+                        testRan = true;
+                        document.title = 'ready after ' + pollCount + ' polls, running test';
+                        try {
+                            runVolumeMaskSmokeTest();
+                            document.title = 'test done';
+                        } catch (e) {
+                            document.title = 'test threw: ' + e;
+                            document.getElementById('status').textContent = 'exception: ' + e;
+                        }
+                        return;
+                    }
+                    requestAnimationFrame(pollFrame);
+                }
+                requestAnimationFrame(pollFrame);
             }
         };
         window.onerror = function(msg) {
             document.getElementById('status').textContent = 'error: ' + msg;
         };
+
+        // Roadmap step 4 smoke test: proves the JS -> WASM volume/mask
+        // transport pipeline, not HU-value correctness or rendering (that's
+        // step 5) -- so the "volume" is arbitrary Uint16 data, not real
+        // half-floats. Simulates the future viewer/-owned orchestration
+        // layer (PRD #5.3.2) with a hardcoded volumeId instead of one minted
+        // per file load.
+        function runVolumeMaskSmokeTest() {
+            var width = 32, height = 32, depth = 8;
+            var volumeId = 1;
+
+            var volumeBytes = width * height * depth * 2; // R16Float = 2 bytes/texel
+            var volumePtr = Module._malloc(volumeBytes);
+            var volumeView = new Uint16Array(Module.HEAPU8.buffer, volumePtr, width * height * depth);
+            for (var i = 0; i < volumeView.length; i++) {
+                volumeView[i] = i & 0xffff; // arbitrary pattern, not real HU data
+            }
+            Module._engine_load_volume(volumeId, volumePtr, volumeBytes, width, height, depth, 1.0, 1.0, 1.0);
+            Module._free(volumePtr);
+
+            var sliceBytes = width * height; // uint8 class indices
+            [0, 3, 7].forEach(function(sliceIndex) {
+                var slicePtr = Module._malloc(sliceBytes);
+                var sliceView = new Uint8Array(Module.HEAPU8.buffer, slicePtr, sliceBytes);
+                sliceView.fill(sliceIndex % 3); // arbitrary class index per slice
+                Module._engine_apply_mask_slice(volumeId, sliceIndex, width, height, slicePtr, sliceBytes);
+                Module._free(slicePtr);
+            });
+
+            document.getElementById('status').textContent =
+                'smoke test: volume ' + width + 'x' + height + 'x' + depth + ' + 3 mask slices sent';
+        }
     </script>
 
     {{{ SCRIPT }}}
