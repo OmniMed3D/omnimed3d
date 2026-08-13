@@ -12,6 +12,10 @@ __pycache__/
 .venv/
 venv/
 
+# Node (viewer/)
+node_modules/
+dist/
+
 # Generated model artifacts — not committed, regenerated via convert_to_onnx.py / quantize_ptq.py
 *.onnx
 *.onnx.data
