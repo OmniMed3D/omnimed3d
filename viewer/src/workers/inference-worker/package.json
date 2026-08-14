@@ -1,0 +1,18 @@
+{
+  "name": "@omnimed3d/inference-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client-side (browser) AI Inference Worker (REQ-A03/A09/A16) — model adapters, ONNX Runtime Web inference, mask postprocessing. Owned by the AI track (CODEOWNERS override within viewer/); model artifacts are produced offline by ai-pipeline/conversion and ai-pipeline/quantization.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.19.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
