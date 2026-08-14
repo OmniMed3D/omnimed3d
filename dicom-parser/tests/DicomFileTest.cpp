@@ -101,6 +101,7 @@ void testCtSmallHappyPath() {
     checkNear(image->rescaleIntercept, -1024.0, 1e-9, "rescaleIntercept");
     checkEqU(image->pixelDataLength, 32768, "pixelDataLength");
     check(image->pixelData != nullptr, "pixelData pointer is non-null");
+    check(image->instanceNumber == 1, "instanceNumber");
 }
 
 void testBufferTooSmall() {

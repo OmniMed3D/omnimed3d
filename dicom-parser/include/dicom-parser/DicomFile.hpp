@@ -62,6 +62,13 @@ struct DicomImageInfo {
     double pixelSpacingColumn = 0.0;
     double sliceThickness = 0.0;
 
+    // Defaults to 0 if the tag is absent -- Instance Number is commonly
+    // present but not hard-required by every IOD, so a missing value is
+    // not treated as a parse failure. Used by multi-file callers to order
+    // slices into a volume (see viewer/src/workers/parse-worker/); this
+    // library itself never assembles multiple files.
+    int32_t instanceNumber = 0;
+
     // View into the caller's original buffer -- never a copy (ADR-0004's
     // zero-copy philosophy). Valid only as long as that buffer is alive.
     std::byte const* pixelData = nullptr;
