@@ -1,4 +1,4 @@
-# ADR-0002: Inference Worker lives inside `viewer/`, not `ai-pipeline/`
+# ADR-0003: Inference Worker lives inside `viewer/`, not `ai-pipeline/`
 
 | Field  | Value      |
 | ------ | ---------- |
