@@ -2,14 +2,17 @@
   "name": "@omnimed3d/parse-worker",
   "version": "0.1.0",
   "private": true,
-  "description": "Client-side (browser) DICOM Parse Worker (REQ-A05) -- parses DICOM files via the shared dicom-parser WASM build, converts pixel data to Hounsfield Units, and feeds the Inference Worker. Milestone 1 scope: the Parse Worker -> Inference Worker leg only.",
+  "description": "Client-side (browser) DICOM Parse Worker -- parses DICOM files via the shared dicom-parser WASM build, converts pixel data to Hounsfield Units, and feeds both the Inference Worker (per-slice) and the rendering engine (assembled multi-file volume).",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }

@@ -9,13 +9,7 @@ export const CT_SMALL_DCM_PATH = path.join(REPO_ROOT, "engine", "tests", "fixtur
 
 // Native build output (gitignored) -- run the WASM build first:
 //   engine/scripts/emsdk-shell.ps1 "cmake --build build_wasm" -EmsdkDir <emsdk>
-export const WASM_MODULE_PATH = path.join(
-  REPO_ROOT,
-  "engine",
-  "build_wasm",
-  "dicom-parser",
-  "dicom_parser_wasm.mjs",
-);
+export const WASM_MODULE_PATH = path.join(REPO_ROOT, "engine", "build_wasm", "dicom-parser", "dicom_parser_wasm.mjs");
 // wasm.ts's dynamic import() needs a proper file:// URL for an absolute
 // filesystem path under Node (a bare Windows path like "C:\..." is not a
 // valid ESM specifier) -- this conversion is Node-only, kept out of

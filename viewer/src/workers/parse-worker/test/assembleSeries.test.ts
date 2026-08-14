@@ -93,9 +93,7 @@ describe("assembleSeries", () => {
     const sliceB = makeFakeSlice(1, 2, 4, 4);
     const wasm = fakeParserFor([sliceA, sliceB]);
 
-    expect(() => assembleSeries(wasm, [new Uint8Array(0), new Uint8Array(0)], "v")).toThrow(
-      InconsistentSeriesError,
-    );
+    expect(() => assembleSeries(wasm, [new Uint8Array(0), new Uint8Array(0)], "v")).toThrow(InconsistentSeriesError);
   });
 
   it("rejects an empty file list", () => {

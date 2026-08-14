@@ -39,11 +39,7 @@ describe("parseSliceToHu vs CT_small.dcm ground truth", () => {
     // Independently re-reads the signed 16-bit pixel data straight out of
     // the file buffer at the known offset -- not derived from pipeline.ts's
     // own logic, so a bug in the HU formula can't pass by agreeing with itself.
-    const view = new DataView(
-      fileBytes.buffer,
-      fileBytes.byteOffset + PIXEL_DATA_OFFSET_IN_FILE,
-      ROWS * COLUMNS * 2,
-    );
+    const view = new DataView(fileBytes.buffer, fileBytes.byteOffset + PIXEL_DATA_OFFSET_IN_FILE, ROWS * COLUMNS * 2);
 
     for (const i of [0, 1, 100, 5000, ROWS * COLUMNS - 1]) {
       const raw = view.getInt16(i * 2, true);
