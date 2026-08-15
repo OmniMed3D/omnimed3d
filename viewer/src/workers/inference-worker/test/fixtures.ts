@@ -20,6 +20,10 @@ export const ONNX_MODEL_PATH = path.join(
   "lungmask_r231.onnx",
 );
 
+const QUANTIZATION_DIR = path.join(REPO_ROOT, "ai-pipeline", "quantization");
+export const ONNX_MODEL_PATH_INT8 = path.join(QUANTIZATION_DIR, "lungmask_r231_int8.onnx");
+export const ONNX_MODEL_PATH_FP16 = path.join(QUANTIZATION_DIR, "lungmask_r231_fp16.onnx");
+
 export interface FixtureManifestEntry {
   stem: string;
   originalHeight: number;
