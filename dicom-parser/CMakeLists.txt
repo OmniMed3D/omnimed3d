@@ -44,3 +44,38 @@ if(NOT EMSCRIPTEN)
 
     add_test(NAME dicom_parser_tests COMMAND dicom_parser_tests)
 endif()
+
+# WASM export layer for the browser Parse Worker
+# (viewer/src/workers/parse-worker/) -- a separate build output from the
+# engine's own rendering WASM (engine/src/main_wasm.cpp's wasm_smoke and
+# successors), which must never link this library in at all (see
+# engine/docs/adr/0004-shared-dicom-parser.md). This target is the only
+# thing that exists specifically to be loaded by JS as a runnable module;
+# the plain `dicom_parser` library above has no JS-callable exports.
+if(EMSCRIPTEN)
+    add_executable(dicom_parser_wasm wasm/DicomParserWasm.cpp)
+    target_link_libraries(dicom_parser_wasm PRIVATE dicom::parser)
+    set_target_properties(dicom_parser_wasm PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        SUFFIX ".mjs"
+    )
+
+    target_link_options(dicom_parser_wasm PRIVATE
+        "SHELL:-s MODULARIZE=1"
+        "SHELL:-s EXPORT_ES6=1"
+        # "node" alongside "worker": vitest runs pipeline.ts (which loads
+        # this module) under Node, not a real browser Worker -- the same
+        # artifact needs to run in both, or tests can't load it at all.
+        "SHELL:-s ENVIRONMENT=worker,node"
+        "SHELL:-s ALLOW_MEMORY_GROWTH=1"
+        "SHELL:-s ASSERTIONS=1"
+        # _malloc/_free/HEAPU8: same gap hit and fixed for wasm_smoke
+        # (engine/CMakeLists.txt) -- Emscripten doesn't auto-export either
+        # unless listed explicitly, even though the runtime uses them
+        # internally. _main must stay listed too since setting
+        # EXPORTED_FUNCTIONS replaces the implicit default ["_main"] entirely.
+        "SHELL:-s EXPORTED_FUNCTIONS=['_main','_malloc','_free','_dicom_wasm_image_info_size','_dicom_wasm_parse_meta','_dicom_wasm_parse_image']"
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=['HEAPU8']"
+    )
+endif()

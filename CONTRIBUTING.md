@@ -63,6 +63,10 @@ Language-specific standard conventions are enforced to maximize code readability
 * **Standard:** PEP 8
 * **Automation:** `Black` is used as the standard Python code formatter (auto-format via the `black .` command).
 
+### 3.3. TypeScript (Viewer module)
+* **Standard:** No custom lint rule set (kept minimal, matching this project's other two languages) — just consistent formatting.
+* **Automation:** `Prettier` is the standard formatter, configured once at the repository root (`.prettierrc.json`) so every package under `viewer/` shares the same style. Each package installs `prettier` as its own devDependency (no repo-wide `node_modules` yet — see `docs/adr/0003-inference-worker-in-viewer.md`) and exposes an `npm run format` script. Formatting must be applied before every commit, same as `.clang-format`/`black .`.
+
 ---
 
 ## 4. Pull Request (PR) Process

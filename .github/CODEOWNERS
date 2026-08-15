@@ -13,5 +13,5 @@
 
 # AI-track subtree inside viewer/ — single consumer (this web app), no
 # independent build target, so it lives with Shell/Parse Worker for
-# bundling rather than as a standalone package. See docs/adr/0002.
+# bundling rather than as a standalone package. See docs/adr/0003.
 /viewer/src/workers/inference-worker/  @hyuniverse

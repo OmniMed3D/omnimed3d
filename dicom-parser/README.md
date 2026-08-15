@@ -85,6 +85,7 @@ group 0002 a second time.
 | `sliceThickness` | Through-plane thickness from *this file's own header* — not a substitute for inter-slice spacing computed across multiple files' `ImagePositionPatient` (out of scope here). |
 | `rescaleSlope` / `rescaleIntercept` | Apply as `HU = raw * rescaleSlope + rescaleIntercept`. Default to `1.0`/`0.0` (per the DICOM spec) when absent from the file. |
 | `pixelData` / `pixelDataLength` | A view into the buffer passed to `parseImageInfo`, not a copy. Do not use after the original buffer is freed or goes out of scope. |
+| `instanceNumber` | Defaults to `0` if absent (not a parse failure). For ordering multiple files into a volume — this library never assembles a volume itself, so it's the caller's job to sort by this. Only a simple ordering hint, not a substitute for geometric ordering via `ImagePositionPatient`. |
 
 **`DicomParseError`**
 

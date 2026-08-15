@@ -58,6 +58,17 @@ std::string trimWhitespace(std::string s) {
     return s;
 }
 
+// IS (Integer String) -- same even-length whitespace/NUL padding
+// convention as DS, but always single-valued for the tags this parser
+// cares about (InstanceNumber), so no backslash-splitting is needed here.
+int32_t parseISValue(std::string const& raw) {
+    std::string const trimmed = trimWhitespace(raw);
+    if (trimmed.empty()) {
+        return 0;
+    }
+    return static_cast<int32_t>(std::strtol(trimmed.c_str(), nullptr, 10));
+}
+
 // DS (Decimal String) values are backslash-separated for multi-valued
 // fields (e.g. PixelSpacing = "row\column").
 std::vector<double> parseDSValues(std::string const& raw) {
@@ -149,6 +160,7 @@ enum class KnownTag {
     RescaleIntercept,
     RescaleSlope,
     PixelData,
+    InstanceNumber,
 };
 
 struct TagLookup {
@@ -170,6 +182,7 @@ constexpr TagLookup kKnownTags[] = {
     {0x0028, 0x1052, KnownTag::RescaleIntercept},
     {0x0028, 0x1053, KnownTag::RescaleSlope},
     {0x7FE0, 0x0010, KnownTag::PixelData},
+    {0x0020, 0x0013, KnownTag::InstanceNumber},
 };
 
 std::optional<KnownTag> lookupKnownTag(uint16_t group, uint16_t element) {
@@ -269,6 +282,10 @@ void applyKnownTagValue(KnownTag tag, std::byte const* data, size_t valueOffset,
             info.pixelData = data + valueOffset;
             info.pixelDataLength = valueLength;
             found.pixelData = true;
+            break;
+        case KnownTag::InstanceNumber:
+            info.instanceNumber =
+                parseISValue(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
             break;
     }
 }
