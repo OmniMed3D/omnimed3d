@@ -14,8 +14,12 @@ through local-only edits carried between machines manually (see
 `docs/current/SESSION_STATUS_2026-08-16.md`'s handoff notes) — none of
 that prior history is in git. What follows is the delta between that
 last pre-git snapshot and this first committed one, made while resolving
-GitHub issue #21's two agenda items (REQ-C01 schema ownership, and the
-`viewer/` root toolchain decision):
+GitHub issue #20's Step 0 ("Finalize Mask Data Contract and Rendering
+Integration") — REQ-C01 schema ownership, and the `viewer/` root toolchain
+decision Step 2 later depends on. (Correction: the commit that introduced
+this file, `91e4b30`, mislabeled this as "issue #21" — that commit is
+already merged to `main` and its message is left as historical record;
+this note is the correction.)
 
 - **§5.3.1 "Engine Integration Point" row:** reworded from tracking the
   mask compositor as separately-flagged "new engine work" to describing
