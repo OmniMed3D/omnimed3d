@@ -27,6 +27,30 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "macos-default",
+      "displayName": "macOS Native Debug",
+      "description": "Native Vulkan (via MoltenVK, once linked) build via vcpkg (manifest mode) and Apple Clang.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "TRUE",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "wasm-macos",
+      "displayName": "WebAssembly (macOS + Emscripten)",
+      "description": "WASM/WebGPU build via emsdk. Ninja works directly here (unlike wasm-windows) -- em++/emar are real executables on macOS, not .bat wrappers. Requires EMSDK activated in the invoking shell (see engine/scripts/emsdk-shell.sh); no absolute emsdk path is hardcoded here.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_wasm",
+      "toolchainFile": "${sourceDir}/cmake/EmscriptenToolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -37,6 +61,14 @@
     {
       "name": "wasm-windows",
       "configurePreset": "wasm-windows"
+    },
+    {
+      "name": "macos-default",
+      "configurePreset": "macos-default"
+    },
+    {
+      "name": "wasm-macos",
+      "configurePreset": "wasm-macos"
     }
   ]
 }
