@@ -17,6 +17,7 @@ To clearly distinguish modules, we use the **`Type/Part-Description`** pattern. 
   * `refactor`: Code structure improvement with no functional change
   * `docs`: Documentation changes
   * `chore`: Build scripts, CI/CD, package configuration changes
+  * `test`: Adding or modifying tests, with no other production code changes
 * **Part:**
   * `engine`: C++ / WebGPU rendering core
   * `viewer`: Frontend web viewer
@@ -48,6 +49,7 @@ We follow **Conventional Commits**, a global open-source standard. All commit me
 * `feat: add WebGPU raymarching pipeline`
 * `fix: resolve memory leak in dicom parsing`
 * `chore: update github actions for wasm build`
+* `test: validate segmentation accuracy against ground truth`
 
 ---
 
@@ -80,4 +82,4 @@ To merge work into `main`, the following PR process must be completed.
    * Changes to `ai-pipeline/`, `infra/`: @hyuniverse
 4. **Merge Policy:** Merge requirements are split by scope of work to maintain velocity for a small team.
    * **Core architecture changes (`feat`, `refactor`):** Merge only after approval from the designated reviewer and a passing CI build.
-   * **Simple fixes and maintenance (`fix`, `docs`, `chore`):** May be self-merged by the author once the CI build passes, without requiring explicit reviewer approval.
+   * **Simple fixes and maintenance (`fix`, `docs`, `chore`, `test`):** May be self-merged by the author once the CI build passes, without requiring explicit reviewer approval.
