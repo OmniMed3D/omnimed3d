@@ -1,0 +1,21 @@
+{
+  "name": "omnimed3d-viewer",
+  "private": true,
+  "description": "npm workspace root for viewer/ -- the Web Application Shell and its Workers (Parse Worker, Inference Worker) share one Vite build from here. See docs/adr/0003-inference-worker-in-viewer.md for why this root didn't exist until now.",
+  "workspaces": [
+    "src/workers/*",
+    "src/shell"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "vite": "^5.4.21"
+  }
+}

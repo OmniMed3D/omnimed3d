@@ -1,0 +1,7 @@
+{
+  "name": "@omnimed3d/shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web Application Shell (REQ-R06) -- currently a toolchain smoke entry only, not the real Shell (file picking, engine WASM loading, message routing). See viewer/README.md.",
+  "type": "module"
+}
