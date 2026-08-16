@@ -27,6 +27,7 @@ Both are checked automatically by the Conventions workflow on this PR.
 - [ ] refactor — no functional change
 - [ ] docs — documentation only
 - [ ] chore — build/CI/tooling/config
+- [ ] test — adding/modifying tests, no other production code changes
 
 ## Review notes
 

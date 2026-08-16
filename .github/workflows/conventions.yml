@@ -31,11 +31,11 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          pattern='^(feat|fix|refactor|docs|chore): .+'
+          pattern='^(feat|fix|refactor|docs|chore|test): .+'
           echo "PR title: $PR_TITLE"
           if ! [[ "$PR_TITLE" =~ $pattern ]]; then
             echo "::error::PR title does not follow '<type>: <description>' (CONTRIBUTING.md #2.1)."
-            echo "Allowed types: feat, fix, refactor, docs, chore"
+            echo "Allowed types: feat, fix, refactor, docs, chore, test"
             exit 1
           fi
 
@@ -44,7 +44,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          pattern='^(feat|fix|refactor|docs|chore): .+'
+          pattern='^(feat|fix|refactor|docs|chore|test): .+'
           failed=0
           while IFS= read -r subject; do
             [ -z "$subject" ] && continue
