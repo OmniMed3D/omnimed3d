@@ -24,6 +24,29 @@ const QUANTIZATION_DIR = path.join(REPO_ROOT, "ai-pipeline", "quantization");
 export const ONNX_MODEL_PATH_INT8 = path.join(QUANTIZATION_DIR, "lungmask_r231_int8.onnx");
 export const ONNX_MODEL_PATH_FP16 = path.join(QUANTIZATION_DIR, "lungmask_r231_fp16.onnx");
 
+/** REQ-A10: ground truth = raw PyTorch lungmask model, independent of the ONNX/TS chain. */
+export const GROUND_TRUTH_DIR = path.join(QUANTIZATION_DIR, "calibration_data", "ground_truth_fixtures");
+
+export interface GroundTruthManifestEntry {
+  stem: string;
+  originalHeight: number;
+  originalWidth: number;
+}
+
+export function loadGroundTruthManifest(): GroundTruthManifestEntry[] {
+  return JSON.parse(readFileSync(path.join(GROUND_TRUTH_DIR, "manifest.json"), "utf-8"));
+}
+
+export function loadGroundTruthFloat32Bin(stem: string, suffix: string): Float32Array {
+  const buf = readFileSync(path.join(GROUND_TRUTH_DIR, `${stem}_${suffix}.bin`));
+  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+}
+
+export function loadGroundTruthUint8Bin(stem: string, suffix: string): Uint8Array {
+  const buf = readFileSync(path.join(GROUND_TRUTH_DIR, `${stem}_${suffix}.bin`));
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
 export interface FixtureManifestEntry {
   stem: string;
   originalHeight: number;
