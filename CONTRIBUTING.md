@@ -65,7 +65,7 @@ Language-specific standard conventions are enforced to maximize code readability
 
 ### 3.3. TypeScript (Viewer module)
 * **Standard:** No custom lint rule set (kept minimal, matching this project's other two languages) — just consistent formatting.
-* **Automation:** `Prettier` is the standard formatter, configured once at the repository root (`.prettierrc.json`) so every package under `viewer/` shares the same style. Each package installs `prettier` as its own devDependency (no repo-wide `node_modules` yet — see `docs/adr/0003-inference-worker-in-viewer.md`) and exposes an `npm run format` script. Formatting must be applied before every commit, same as `.clang-format`/`black .`.
+* **Automation:** `Prettier` is the standard formatter, configured once at the repository root (`.prettierrc.json`) so every package under `viewer/` shares the same style. `viewer/` is an npm workspace (Vite + npm workspaces, `docs/prd/PRD.md` §6.1) as of 2026-08-16 — `prettier` is a `viewer/`-root devDependency and `npm run format`/`format:check` at that root cover every workspace member in one pass; run `cd viewer && npm run format` before every commit, same as `.clang-format`/`black .`.
 
 ---
 
