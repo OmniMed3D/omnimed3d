@@ -25,6 +25,10 @@ const IMAGE_INFO_OFFSET = {
   pixelDataOffset: 56,
   pixelDataLength: 60,
   instanceNumber: 64,
+  imageOrientationPatient: 72,
+  imagePositionPatient: 120,
+  hasImageOrientationPatient: 144,
+  hasImagePositionPatient: 148,
 } as const;
 
 /** Mirrors DicomParseError's declaration order (position + 1; 0 = success) in dicom-parser/include/dicom-parser/DicomFile.hpp. */
@@ -51,6 +55,12 @@ export interface DicomWasmImageInfo {
   sliceThickness: number;
   /** Ordering hint for multi-file volume assembly; 0 if the tag was absent from the file. */
   instanceNumber: number;
+  /** Row direction cosine [0..2] + column direction cosine [3..5], patient LPS space. Meaningless unless hasImageOrientationPatient. */
+  imageOrientationPatient: [number, number, number, number, number, number];
+  /** Slice origin (x, y, z), patient LPS space. Meaningless unless hasImagePositionPatient. */
+  imagePositionPatient: [number, number, number];
+  hasImageOrientationPatient: boolean;
+  hasImagePositionPatient: boolean;
   /** Copied out of WASM memory -- safe to use after the module call returns. */
   pixelData: Uint8Array;
 }
@@ -149,6 +159,14 @@ export class DicomParserWasm implements ImageParser {
         pixelSpacingColumn: view.getFloat64(IMAGE_INFO_OFFSET.pixelSpacingColumn, true),
         sliceThickness: view.getFloat64(IMAGE_INFO_OFFSET.sliceThickness, true),
         instanceNumber: view.getInt32(IMAGE_INFO_OFFSET.instanceNumber, true),
+        imageOrientationPatient: [0, 1, 2, 3, 4, 5].map((i) =>
+          view.getFloat64(IMAGE_INFO_OFFSET.imageOrientationPatient + i * 8, true),
+        ) as DicomWasmImageInfo["imageOrientationPatient"],
+        imagePositionPatient: [0, 1, 2].map((i) =>
+          view.getFloat64(IMAGE_INFO_OFFSET.imagePositionPatient + i * 8, true),
+        ) as DicomWasmImageInfo["imagePositionPatient"],
+        hasImageOrientationPatient: view.getUint32(IMAGE_INFO_OFFSET.hasImageOrientationPatient, true) !== 0,
+        hasImagePositionPatient: view.getUint32(IMAGE_INFO_OFFSET.hasImagePositionPatient, true) !== 0,
         pixelData,
       };
     } finally {
