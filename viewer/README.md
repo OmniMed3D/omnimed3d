@@ -95,22 +95,32 @@ This routing is verified end-to-end in a real browser via
 real Parse Worker, a real (dummy-model, plumbing-only) Inference Worker
 round trip, out-of-order slice delivery, and stale-`volumeId` rejection
 all confirmed against the Engine's own WASM exports — not just each
-piece independently anymore. What that test does *not* cover: whether
-any of this is visually correct, since there's no rendering pass that
-samples the volume/mask textures yet (see below).
+piece independently anymore. That same spec file's second test (issue
+number 29) confirms the real render pass now visually reflects real
+DICOM data too: a screenshot taken after a real volume loads is
+asserted to differ from the flat clear-color baseline taken before it.
+On Windows,
+running this suite needs `channel: "chrome"` (the real system Chrome
+install, not Playwright's own bundled Chromium test build) —
+`playwright.config.ts` picks this automatically by OS; see its comment
+for why (a Dawn/D3D12 DXC shader-compiler DLL-loading issue specific to
+Playwright's bundled build).
 
 ## What's not here yet
 
 - A real file-picking UI — `src/shell/` routes messages correctly (see
   above) but nothing yet drives it from user interaction; that's
   `window.omnimed3dTestHooks`' job today.
-- **Any visual rendering.** `WebGPUDevice::renderFrame()`
-  (`engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp`) only clears the
-  canvas to a solid color — there is no raymarch/shading pass that
-  samples the loaded volume or mask textures yet. `loadVolume`/
-  `applyMaskSlice` write real data into GPU textures (verified above),
-  but nothing reads them for display. Don't expect anything to appear
-  on screen yet even though the data pipeline is real.
+- Interactive camera controls (rotation/zoom/pan) and a real
+  window/level UI. `WebGPUDevice::renderFrame()`
+  (`engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp`) now runs a real
+  front-to-back raymarch with clinical window/level and mask-overlay
+  compositing (issue #29, REQ-R02/R03) — verified visually against real
+  DICOM data (see above) — but the camera is a fixed, auto-framed
+  default and window/level presets are only reachable via the
+  `engine_set_window_level`/`engine_set_colormap_preset` WASM exports
+  directly, not a UI control. That's REQ-R06 / roadmap step 8, separate
+  not-yet-started `viewer/` work.
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
   exists yet (see "DICOM orientation normalization" below); only

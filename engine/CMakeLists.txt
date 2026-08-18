@@ -14,6 +14,11 @@ enable_testing()
 add_subdirectory(src/core)
 add_subdirectory(src/concurrency)
 
+# Slang -> WGSL/SPIR-V shader compilation (ADR-0002). Unconditional (not
+# EMSCRIPTEN-gated) -- slangc always runs on the host regardless of which
+# target is being configured. See engine/shaders/CMakeLists.txt.
+add_subdirectory(shaders)
+
 # WASM/WebGPU path only -- no Vulkan Device implementation exists yet
 # (roadmap: docs/current/ENGINE_ROADMAP_WASM_FIRST_2026-08-11.md
 # reprioritizes WASM ahead of native Vulkan). The native windows-default

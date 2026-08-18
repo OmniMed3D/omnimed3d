@@ -2,6 +2,9 @@
 
 #include "rhi/Device.hpp"
 
+#include "core/RenderGraph.hpp"
+
+#include <glm/glm.hpp>
 #include <webgpu/webgpu.h>
 
 namespace omnimed3d::rhi::webgpu {
@@ -22,6 +25,8 @@ public:
     void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
                          uint32_t width, uint32_t height,
                          void const* data, size_t byteLength) override;
+    void setWindowLevel(float center, float width) override;
+    void setColormapPreset(uint32_t presetId) override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -37,6 +42,25 @@ private:
 
     void configureSurface();
 
+    // Raymarch pipeline setup -- built once when the device becomes ready,
+    // independent of any loaded volume (bind group *layout* is static; the
+    // bind group itself, which references specific texture views, is
+    // rebuilt per loadVolume() call -- see rebuildBindGroup()).
+    void createPipeline();
+    void createSamplerAndLut();
+    void rebuildBindGroup();
+
+    // Auto-frames a default camera and world-space AABB from the loaded
+    // volume's voxel dimensions + physical spacing -- no interactive camera
+    // controls yet (REQ-R06 / roadmap step 8, separate not-yet-started
+    // work), just a fixed, automatically-reasonable view so the raymarch
+    // output is visually inspectable. World axes already match the
+    // canonical LPS convention the Parse Worker normalizes to upstream
+    // (viewer/README.md) -- up=+Z puts patient-Superior at the top of the
+    // frame.
+    void frameCameraForVolume(uint32_t width, uint32_t height, uint32_t depth,
+                               float spacingX, float spacingY, float spacingZ);
+
     WGPUInstance instance_ = nullptr;
     WGPUAdapter adapter_ = nullptr;
     WGPUDevice device_ = nullptr;
@@ -44,16 +68,49 @@ private:
     WGPUSurface surface_ = nullptr;
     bool ready_ = false;
 
-    // Volume/mask state (roadmap step 4). No general RHITexture wrapper --
+    // Volume/mask state (roadmap step 4/6). No general RHITexture wrapper --
     // see the Device.hpp header comment for why these stay raw WGPUTexture
     // handles private to this backend for now.
     WGPUTexture volumeTexture_ = nullptr;
     WGPUTexture maskTexture_ = nullptr;
+    WGPUTextureView volumeTextureView_ = nullptr;
+    WGPUTextureView maskTextureView_ = nullptr;
     uint32_t currentVolumeId_ = 0;
     bool hasVolume_ = false;
     uint32_t volumeWidth_ = 0;
     uint32_t volumeHeight_ = 0;
     uint32_t volumeDepth_ = 0;
+
+    core::RenderGraph renderGraph_;
+
+    // Raymarch pipeline resources -- created once in createPipeline()/
+    // createSamplerAndLut() when the device becomes ready.
+    WGPUShaderModule shaderModule_ = nullptr;
+    WGPUBindGroupLayout bindGroupLayout_ = nullptr;
+    WGPUPipelineLayout pipelineLayout_ = nullptr;
+    WGPURenderPipeline pipeline_ = nullptr;
+    WGPUBuffer uboBuffer_ = nullptr;
+    WGPUSampler linearSampler_ = nullptr;
+    WGPUTexture lutTexture_ = nullptr;
+    WGPUTextureView lutTextureView_ = nullptr;
+    // Rebuilt in rebuildBindGroup() -- depends on volumeTextureView_/
+    // maskTextureView_, which change every loadVolume() call.
+    WGPUBindGroup bindGroup_ = nullptr;
+
+    // Camera + AABB, auto-framed per loadVolume() call -- see
+    // frameCameraForVolume().
+    glm::mat4 invView_{1.0F};
+    glm::mat4 invProj_{1.0F};
+    glm::vec3 cameraPos_{0.0F};
+    glm::vec3 aabbMin_{0.0F};
+    glm::vec3 aabbMax_{0.0F};
+
+    // Window/level + mask overlay parameters -- defaults applied in
+    // createPipeline(); overridden via setWindowLevel()/setColormapPreset()
+    // or once real data has been observed to have a class present.
+    float windowCenter_ = 0.0F;
+    float windowWidth_ = 400.0F;
+    bool maskOverlayEnabled_ = true;
 };
 
 }  // namespace omnimed3d::rhi::webgpu
