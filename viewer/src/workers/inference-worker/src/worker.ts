@@ -40,6 +40,12 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   if (msg.type === "init") {
     adapter = new LungmaskAdapter(msg.modelPath);
     session = await ort.InferenceSession.create(msg.modelPath);
+    // Callers have no other way to know the (async) session load finished
+    // -- without this ack, a caller sending hu-slice right after init()
+    // races the load and hits the "received a slice before 'init'" error
+    // below (found via real browser e2e testing,
+    // viewer/tests/e2e/shell-mask-integration.spec.ts).
+    (self as unknown as Worker).postMessage({ type: "init-complete" });
     return;
   }
 
