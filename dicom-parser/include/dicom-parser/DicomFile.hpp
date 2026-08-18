@@ -69,6 +69,21 @@ struct DicomImageInfo {
     // library itself never assembles multiple files.
     int32_t instanceNumber = 0;
 
+    // Row direction cosine [0..2] + column direction cosine [3..5], and
+    // the slice origin, both in patient LPS space (DICOM PS3.3
+    // C.7.6.2.1.1) -- always in LPS regardless of PatientPosition, which
+    // describes how the patient was fed into the scanner, not a different
+    // coordinate convention for these tags. Presence flags because
+    // (0,0,0)/identity are legitimate real values too, same reasoning as
+    // instanceNumber defaulting rather than hard-failing when absent.
+    // Geometric slice ordering and orientation normalization are caller
+    // responsibilities (see viewer/src/workers/parse-worker/src/orientation.ts)
+    // -- this library only exposes the raw values.
+    double imageOrientationPatient[6] = {1, 0, 0, 0, 1, 0};
+    double imagePositionPatient[3] = {0, 0, 0};
+    bool hasImageOrientationPatient = false;
+    bool hasImagePositionPatient = false;
+
     // View into the caller's original buffer -- never a copy (ADR-0004's
     // zero-copy philosophy). Valid only as long as that buffer is alive.
     std::byte const* pixelData = nullptr;
