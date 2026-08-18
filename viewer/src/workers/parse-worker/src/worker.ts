@@ -59,6 +59,12 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
 
   if (msg.type === "init") {
     wasm = await DicomParserWasm.load(msg.wasmModulePath);
+    // Callers have no other way to know the (async) WASM load finished --
+    // without this ack, a caller sending parse-file/parse-series right
+    // after init() races the load and hits requireWasm()'s "received a
+    // file before 'init'" error (found via real browser e2e testing,
+    // viewer/tests/e2e/shell-mask-integration.spec.ts).
+    worker.postMessage({ type: "init-complete" });
     return;
   }
 
