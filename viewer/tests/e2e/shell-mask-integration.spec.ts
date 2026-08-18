@@ -190,3 +190,70 @@ test("raymarch pass actually draws real DICOM data, not just the flat clear colo
   // difference in rendered output changes the encoded PNG bytes.
   expect(beforeLoad.equals(afterLoad)).toBe(false);
 });
+
+test("mask overlay actually composites over the rendered volume (issue #29)", async ({ page }) => {
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+
+  async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  const canvas = page.locator("#canvas");
+  const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
+  const volumeId = await page.evaluate(() => window.omnimed3dTestHooks.startNewVolume());
+  await page.evaluate(
+    ({ base64, id }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const files = [bytes.buffer];
+      window.omnimed3dTestHooks.parseWorker.postMessage({ type: "parse-series", volumeId: id, files }, files);
+    },
+    { base64: ctSmallBase64, id: volumeId },
+  );
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+  await page.waitForTimeout(500);
+  const volumeOnlyShot = await canvas.screenshot();
+
+  // main.ts's volumeId<->numeric mapping (volumeIdMap) is module-private,
+  // so the real numeric id the engine assigned is pulled out of its own
+  // log line rather than guessed.
+  const loadLine = consoleLines.find((line) => /WebGPUDevice::loadVolume/.test(line))!;
+  const engineVolumeId = Number(loadLine.match(/volumeId=(\d+)/)![1]);
+
+  // engine_apply_mask_slice is called directly here, bypassing the
+  // Inference Worker -- the repo's dummy ONNX fixture
+  // (tests/fixtures/generate-dummy-onnx.py) is a static Concat of the
+  // input with itself across all class channels, so argmax always picks
+  // class 0 (background) by construction; it can never produce a
+  // non-background mask to composite. This isolates exactly what issue
+  // #29's DoD asks about -- the engine's own mask-overlay compositing --
+  // from model quality, which is out of scope here. Same
+  // direct-WASM-export pattern engine/tests/wasm_smoke/shell.html already
+  // used before Shell wiring existed.
+  await page.evaluate((id) => {
+    const width = 128;
+    const height = 128;
+    const mask = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const inCenter = x > width * 0.25 && x < width * 0.75 && y > height * 0.25 && y < height * 0.75;
+        mask[y * width + x] = inCenter ? 1 : 0;
+      }
+    }
+    const ptr = window.Module._malloc(mask.length);
+    window.Module.HEAPU8.set(mask, ptr);
+    window.Module._engine_apply_mask_slice(id, 0, width, height, ptr, mask.length);
+    window.Module._free(ptr);
+  }, engineVolumeId);
+
+  await waitForLine(/WebGPUDevice::applyMaskSlice: volumeId=\d+ slice=0 applied/);
+  await page.waitForTimeout(500);
+  const withMaskShot = await canvas.screenshot();
+
+  // Same real-not-fabricated check as the previous test: a genuinely
+  // composited overlay changes the rendered (and thus encoded PNG) output.
+  expect(volumeOnlyShot.equals(withMaskShot)).toBe(false);
+});
