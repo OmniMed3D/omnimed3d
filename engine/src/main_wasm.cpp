@@ -50,4 +50,19 @@ void engine_apply_mask_slice(uint32_t volumeId, uint32_t sliceIndex, uint32_t wi
     g_device.applyMaskSlice(volumeId, sliceIndex, width, height, data, byteLength);
 }
 
+// Issue #29 (REQ-R02/R03): clinical window/level, set directly or via a
+// baseline preset. Both safe to call whether or not a volume is loaded yet
+// -- see rhi::Device::setWindowLevel's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_window_level(float center, float width) {
+    g_device.setWindowLevel(center, width);
+}
+
+// presetId: 0=Lung, 1=Bone, 2=Soft Tissue, 3=Brain -- see kColormapPresets
+// in WebGPUDevice.cpp for the concrete values.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_colormap_preset(uint32_t presetId) {
+    g_device.setColormapPreset(presetId);
+}
+
 }  // extern "C"

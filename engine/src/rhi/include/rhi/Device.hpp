@@ -45,6 +45,19 @@ public:
     virtual void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
                                  uint32_t width, uint32_t height,
                                  void const* data, size_t byteLength) = 0;
+
+    // Clinical window/level applied during raymarch shading (REQ-R03).
+    // center/width are in the loaded volume's raw texel units (Hounsfield
+    // Units for CT). Safe to call before any volume is loaded -- unlike
+    // loadVolume/applyMaskSlice this only stores plain values consumed by
+    // the next renderFrame(), no GPU resource dependency to guard against.
+    virtual void setWindowLevel(float center, float width) = 0;
+
+    // Selects a baseline window/level + transfer-function-LUT preset
+    // (REQ-R03). See ColormapPreset in WebGPUDevice.cpp for the concrete
+    // list -- an engine-owned enum, not a string, so an invalid preset
+    // can't silently no-op.
+    virtual void setColormapPreset(uint32_t presetId) = 0;
 };
 
 }  // namespace omnimed3d::rhi
