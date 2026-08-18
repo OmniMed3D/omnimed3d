@@ -26,6 +26,10 @@ viewer/playwright-report/
 # Generated model artifacts — not committed, regenerated via convert_to_onnx.py / quantize_ptq.py
 *.onnx
 *.onnx.data
+# Exception: a tiny (190-byte), checked-in dummy model for e2e plumbing
+# tests -- not a real/raw generated model artifact, see its own
+# generate-dummy-onnx.py for what it actually is.
+!viewer/tests/fixtures/dummy-lungmask.onnx
 
 # Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
 ai-pipeline/quantization/calibration_data/
