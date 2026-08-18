@@ -14,6 +14,7 @@
 
 #include "dicom-parser/DicomFile.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -51,6 +52,10 @@ struct DicomWasmImageInfo {
     uint32_t pixelDataOffset;  // relative to the `data` pointer passed in
     uint32_t pixelDataLength;
     int32_t instanceNumber;  // ordering hint for multi-file volume assembly; 0 if absent
+    double imageOrientationPatient[6];  // row cosine [0..2] + column cosine [3..5], patient LPS space
+    double imagePositionPatient[3];     // slice origin (x, y, z), patient LPS space
+    uint32_t hasImageOrientationPatient;
+    uint32_t hasImagePositionPatient;
 };
 
 static_assert(offsetof(DicomWasmImageInfo, rows) == 0);
@@ -65,7 +70,11 @@ static_assert(offsetof(DicomWasmImageInfo, sliceThickness) == 48);
 static_assert(offsetof(DicomWasmImageInfo, pixelDataOffset) == 56);
 static_assert(offsetof(DicomWasmImageInfo, pixelDataLength) == 60);
 static_assert(offsetof(DicomWasmImageInfo, instanceNumber) == 64);
-static_assert(sizeof(DicomWasmImageInfo) == 72);
+static_assert(offsetof(DicomWasmImageInfo, imageOrientationPatient) == 72);
+static_assert(offsetof(DicomWasmImageInfo, imagePositionPatient) == 120);
+static_assert(offsetof(DicomWasmImageInfo, hasImageOrientationPatient) == 144);
+static_assert(offsetof(DicomWasmImageInfo, hasImagePositionPatient) == 148);
+static_assert(sizeof(DicomWasmImageInfo) == 152);
 
 extern "C" {
 
@@ -132,6 +141,12 @@ int dicom_wasm_parse_image(uint8_t const* data, size_t size, size_t dataSetOffse
     out->pixelDataOffset = static_cast<uint32_t>(image->pixelData - bytes);
     out->pixelDataLength = static_cast<uint32_t>(image->pixelDataLength);
     out->instanceNumber = image->instanceNumber;
+    std::copy(std::begin(image->imageOrientationPatient), std::end(image->imageOrientationPatient),
+              out->imageOrientationPatient);
+    std::copy(std::begin(image->imagePositionPatient), std::end(image->imagePositionPatient),
+              out->imagePositionPatient);
+    out->hasImageOrientationPatient = image->hasImageOrientationPatient ? 1 : 0;
+    out->hasImagePositionPatient = image->hasImagePositionPatient ? 1 : 0;
     return 0;
 }
 

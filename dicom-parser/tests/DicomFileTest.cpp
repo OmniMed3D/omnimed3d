@@ -102,6 +102,19 @@ void testCtSmallHappyPath() {
     checkEqU(image->pixelDataLength, 32768, "pixelDataLength");
     check(image->pixelData != nullptr, "pixelData pointer is non-null");
     check(image->instanceNumber == 1, "instanceNumber");
+
+    check(image->hasImageOrientationPatient, "hasImageOrientationPatient");
+    checkNear(image->imageOrientationPatient[0], 1.0, 1e-6, "imageOrientationPatient[0]");
+    checkNear(image->imageOrientationPatient[1], 0.0, 1e-6, "imageOrientationPatient[1]");
+    checkNear(image->imageOrientationPatient[2], 0.0, 1e-6, "imageOrientationPatient[2]");
+    checkNear(image->imageOrientationPatient[3], 0.0, 1e-6, "imageOrientationPatient[3]");
+    checkNear(image->imageOrientationPatient[4], 1.0, 1e-6, "imageOrientationPatient[4]");
+    checkNear(image->imageOrientationPatient[5], 0.0, 1e-6, "imageOrientationPatient[5]");
+
+    check(image->hasImagePositionPatient, "hasImagePositionPatient");
+    checkNear(image->imagePositionPatient[0], -158.135803, 1e-4, "imagePositionPatient[0]");
+    checkNear(image->imagePositionPatient[1], -179.035797, 1e-4, "imagePositionPatient[1]");
+    checkNear(image->imagePositionPatient[2], -75.699997, 1e-4, "imagePositionPatient[2]");
 }
 
 void testBufferTooSmall() {

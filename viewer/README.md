@@ -111,6 +111,47 @@ samples the volume/mask textures yet (see below).
   `applyMaskSlice` write real data into GPU textures (verified above),
   but nothing reads them for display. Don't expect anything to appear
   on screen yet even though the data pipeline is real.
-- True geometric multi-file ordering (Parse Worker currently orders by
-  `InstanceNumber` only — see
-  [`dicom-parser/README.md`](../dicom-parser/README.md#data-model)).
+- Anatomical verification of orientation normalization against a real
+  multi-slice series with known left/right anatomy — no suitable fixture
+  exists yet (see "DICOM orientation normalization" below); only
+  synthetic hand-computed cases are verified so far.
+- Sagittal/coronal/oblique DICOM acquisitions — the Parse Worker only
+  supports axial series (slice normal resolves to the patient Z axis);
+  anything else is rejected with `UnsupportedOrientationError` rather
+  than silently mishandled.
+
+## DICOM orientation normalization
+
+`src/workers/parse-worker/src/orientation.ts` normalizes every slice's
+pixel data to one canonical convention before it leaves the Parse
+Worker, regardless of which of DICOM's several equally-valid
+acquisition conventions (HFS/FFS/HFP/FFP, etc.) the source series used.
+Both `hu-slice` and `volume-ready` output are guaranteed to already be
+in this orientation — downstream consumers (Inference Worker, Engine)
+need no orientation-handling code of their own, only this assumption:
+
+- Column-index-increasing = patient **Left** (+X)
+- Row-index-increasing = patient **Posterior** (+Y)
+- Slice-index-increasing = patient **Superior** (+Z)
+
+i.e. **LPS**, matching common medical-imaging tooling's default (e.g.
+ITK). This is derived from each file's `ImageOrientationPatient` (0020,0037)
+and `ImagePositionPatient` (0020,0032) tags — both always expressed in
+patient LPS space regardless of `PatientPosition` (which describes how
+the patient was fed into the scanner, not a different coordinate
+convention for these tags).
+
+Scope: **axial acquisitions only** — the slice normal
+(`cross(rowCosine, columnCosine)`) must resolve to the patient Z axis.
+Row/column can be any axis-aligned permutation of ±X/±Y (covering
+realistic HFS/FFS/HFP/FFP variation), so both transpose and flip
+transforms are applied as needed, but sagittal/coronal/oblique
+acquisitions are rejected outright (`UnsupportedOrientationError`), not
+silently misparsed.
+
+If a slice is missing either tag, its pixel data passes through
+unchanged (`console.warn`), and `assembleSeries` falls back to ordering
+by `InstanceNumber` instead of true geometric position — see
+[`dicom-parser/README.md`](../dicom-parser/README.md#data-model) for
+that fallback's own caveats. The result's `orderingMethod` field
+(`"geometric"` or `"instanceNumber"`) reports which path was taken.

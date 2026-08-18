@@ -1,5 +1,6 @@
 #include "dicom-parser/DicomFile.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -161,6 +162,8 @@ enum class KnownTag {
     RescaleSlope,
     PixelData,
     InstanceNumber,
+    ImageOrientationPatient,
+    ImagePositionPatient,
 };
 
 struct TagLookup {
@@ -183,6 +186,8 @@ constexpr TagLookup kKnownTags[] = {
     {0x0028, 0x1053, KnownTag::RescaleSlope},
     {0x7FE0, 0x0010, KnownTag::PixelData},
     {0x0020, 0x0013, KnownTag::InstanceNumber},
+    {0x0020, 0x0037, KnownTag::ImageOrientationPatient},
+    {0x0020, 0x0032, KnownTag::ImagePositionPatient},
 };
 
 std::optional<KnownTag> lookupKnownTag(uint16_t group, uint16_t element) {
@@ -287,6 +292,24 @@ void applyKnownTagValue(KnownTag tag, std::byte const* data, size_t valueOffset,
             info.instanceNumber =
                 parseISValue(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
             break;
+        case KnownTag::ImageOrientationPatient: {
+            auto const values =
+                parseDSValues(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
+            if (values.size() == 6) {
+                std::copy(values.begin(), values.end(), info.imageOrientationPatient);
+                info.hasImageOrientationPatient = true;
+            }
+            break;
+        }
+        case KnownTag::ImagePositionPatient: {
+            auto const values =
+                parseDSValues(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
+            if (values.size() == 3) {
+                std::copy(values.begin(), values.end(), info.imagePositionPatient);
+                info.hasImagePositionPatient = true;
+            }
+            break;
+        }
     }
 }
 

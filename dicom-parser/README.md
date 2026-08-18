@@ -85,7 +85,9 @@ group 0002 a second time.
 | `sliceThickness` | Through-plane thickness from *this file's own header* — not a substitute for inter-slice spacing computed across multiple files' `ImagePositionPatient` (out of scope here). |
 | `rescaleSlope` / `rescaleIntercept` | Apply as `HU = raw * rescaleSlope + rescaleIntercept`. Default to `1.0`/`0.0` (per the DICOM spec) when absent from the file. |
 | `pixelData` / `pixelDataLength` | A view into the buffer passed to `parseImageInfo`, not a copy. Do not use after the original buffer is freed or goes out of scope. |
-| `instanceNumber` | Defaults to `0` if absent (not a parse failure). For ordering multiple files into a volume — this library never assembles a volume itself, so it's the caller's job to sort by this. Only a simple ordering hint, not a substitute for geometric ordering via `ImagePositionPatient`. |
+| `instanceNumber` | Defaults to `0` if absent (not a parse failure). A simple acquisition-order ordering hint — prefer `imageOrientationPatient`/`imagePositionPatient` below for true geometric ordering when both are present. |
+| `imageOrientationPatient` / `hasImageOrientationPatient` | Row direction cosine (indices 0–2) + column direction cosine (indices 3–5), in patient LPS space (DICOM PS3.3 C.7.6.2.1.1) — always LPS regardless of `PatientPosition`, which describes how the patient was positioned in the scanner, not a different coordinate convention for this tag. Defaults to the identity orientation with `hasImageOrientationPatient = false` if the tag is absent — check the flag, not just whether the value happens to look like identity. |
+| `imagePositionPatient` / `hasImagePositionPatient` | The slice origin `(x, y, z)`, same LPS space as above. Defaults to `(0,0,0)` with `hasImagePositionPatient = false` if absent. Combined with `imageOrientationPatient`, lets a caller order multiple files geometrically and normalize pixel orientation — this library only exposes the raw values; geometric ordering and orientation normalization themselves are the caller's job (see `viewer/src/workers/parse-worker/src/orientation.ts`). |
 
 **`DicomParseError`**
 
