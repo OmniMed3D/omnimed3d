@@ -2,13 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>OmniMed3D Shell (toolchain smoke test)</title>
+    <title>OmniMed3D Shell</title>
   </head>
   <body>
-    <p>
-      Vite + npm workspace toolchain smoke test -- proves cross-package Worker bundling works, not the real Web
-      Application Shell (REQ-R06). See <code>main.ts</code> and the browser console.
-    </p>
+    <!-- #status is Emscripten's own runtime status (Module.setStatus) --
+         don't also write Shell-side progress there, it gets clobbered by
+         the runtime's own updates. Shell progress goes in #shell-status
+         instead (same reason engine/tests/wasm_smoke/shell.html uses
+         document.title for its own progress rather than #status). -->
+    <div id="status">loading...</div>
+    <div id="shell-status">shell: loading...</div>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <pre id="log"></pre>
+
+    <script type="text/javascript">
+      // Classic (non-MODULARIZE) Emscripten output for the rendering engine
+      // -- Module must exist as a global before wasm_smoke.js loads, same
+      // pattern as engine/tests/wasm_smoke/shell.html, minus that file's
+      // synthetic auto-run test. main.ts (loaded below as a module) polls
+      // Module._engine_is_ready() to know when it's safe to call the
+      // engine_load_volume/engine_apply_mask_slice exports.
+      window.Module = {
+        canvas: document.getElementById("canvas"),
+        print: function (text) {
+          console.log("[engine stdout] " + text);
+        },
+        printErr: function (text) {
+          console.error("[engine stderr] " + text);
+        },
+        setStatus: function (text) {
+          document.getElementById("status").textContent = text || "running";
+        },
+        onRuntimeInitialized: function () {
+          // Guards main.ts's poll loop -- calling _engine_is_ready() before
+          // this fires trips Emscripten's ASSERTIONS=1 check and aborts the
+          // whole module (empirically confirmed, not assumed).
+          window.__engineRuntimeInitialized = true;
+        },
+      };
+    </script>
+    <script type="text/javascript" src="/engine/wasm_smoke.js"></script>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
