@@ -5,17 +5,22 @@ import { expect, test } from "@playwright/test";
 /**
  * Issue #20 DoD verification: real postMessage/Transferable through real
  * browser Workers, Shell -> Engine WASM compositor wiring, out-of-order
- * slice delivery, and stale-volumeId rejection (PRD §5.3.2). Scope is the
- * data pipeline only -- WebGPUDevice::renderFrame() doesn't sample the
- * volume/mask textures yet (no raymarch pass exists), so this doesn't
- * (and can't yet) assert anything about what's visually on screen. See
- * the plan this test implements for the full scope discussion.
+ * slice delivery, and stale-volumeId rejection (PRD §5.3.2).
  *
- * Assertions are made against the Engine's own C++ stdout log lines
- * (WebGPUDevice.cpp's std::printf calls, forwarded to the browser console
- * via index.html's Module.print), not new engine-side readback code --
- * these lines already existed to prove commit 05534b3's synthetic smoke
- * test worked; this test makes that claim reproducible.
+ * The first test's assertions are made against the Engine's own C++ stdout
+ * log lines (WebGPUDevice.cpp's std::printf calls, forwarded to the
+ * browser console via index.html's Module.print), not new engine-side
+ * readback code -- these lines already existed to prove commit 05534b3's
+ * synthetic smoke test worked; this test makes that claim reproducible.
+ *
+ * The second test (issue #29 DoD) is the first one in this repo that
+ * asserts anything about what's actually on screen -- WebGPUDevice::
+ * renderFrame() didn't sample the volume/mask textures at all until #29's
+ * raymarch pass existed. No headless-Chrome screenshot tooling existed
+ * anywhere in this repo before this (the one prior "verified with a
+ * screenshot" note, referenced in an earlier version of this file, was a
+ * manual, non-reproducible, one-off step -- confirmed via
+ * docs/verification/shell-mask-integration.md, not assumed).
  */
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
@@ -139,4 +144,49 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
   await waitForLine(/Shell: discarding mask-slice for stale volumeId=/);
   // The stale slice must never have reached the Engine at all.
   expect(countLines(/WebGPUDevice::applyMaskSlice: volumeId=1 .* applied/)).toBe(staleAppliedCountBefore);
+});
+
+test("raymarch pass actually draws real DICOM data, not just the flat clear color (issue #29)", async ({
+  page,
+}) => {
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+
+  async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  const canvas = page.locator("#canvas");
+
+  // Before any volume is loaded, renderFrame() only clears the canvas --
+  // this screenshot is the flat background baseline the post-load one is
+  // compared against below.
+  const beforeLoad = await canvas.screenshot();
+
+  const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
+  const volumeId = await page.evaluate(() => window.omnimed3dTestHooks.startNewVolume());
+  await page.evaluate(
+    ({ base64, id }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const files = [bytes.buffer];
+      window.omnimed3dTestHooks.parseWorker.postMessage({ type: "parse-series", volumeId: id, files }, files);
+    },
+    { base64: ctSmallBase64, id: volumeId },
+  );
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+
+  // renderFrame() runs once per requestAnimationFrame tick -- give it a
+  // few real frames to pick up the newly loaded volume/bind group before
+  // capturing the "after" screenshot.
+  await page.waitForTimeout(500);
+  const afterLoad = await canvas.screenshot();
+
+  // A real, not fabricated, visual check: byte-identical PNGs would mean
+  // the raymarch pass drew literally nothing different from the
+  // clear-only baseline. No pixel-decoding dependency needed -- any real
+  // difference in rendered output changes the encoded PNG bytes.
+  expect(beforeLoad.equals(afterLoad)).toBe(false);
 });
