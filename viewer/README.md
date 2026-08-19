@@ -19,7 +19,7 @@ independently (its own dependencies, `typecheck`/`test` scripts).
 
 | Directory | What it does | Owner |
 | --- | --- | --- |
-| `src/shell/` | Real message routing and Engine WASM wiring: mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). As of issue #34, also the real Web Application Shell UI (REQ-R06): a file picker (`filePicker.ts`), mouse-driven orbit camera (`cameraControls.ts`), and a window/level panel (`windowLevelControls.ts`) — `window.omnimed3dTestHooks` stays available alongside these for `tests/e2e/`, sharing the same underlying Worker instances. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
+| `src/shell/` | Real message routing and Engine WASM wiring: mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). As of issue #34, also the real Web Application Shell UI (REQ-R06): a file picker (`filePicker.ts`), mouse-driven orbit camera (`cameraControls.ts`), and a window/level panel (`windowLevelControls.ts`). As of issue #37, also a 3D-orbit/2D-axial-slice view-mode toggle plus a slice slider (`viewControls.ts`), completing PRD §9's rotate/zoom/slice-pan success criterion — `window.omnimed3dTestHooks` stays available alongside all of these for `tests/e2e/`, sharing the same underlying Worker instances. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
 | `src/workers/parse-worker/` | DICOM parsing (REQ-A05) — loads the shared [`dicom-parser`](../dicom-parser/README.md) WASM build, converts pixel data to Hounsfield Units, and produces both a per-slice output for the Inference Worker and an assembled volume for the rendering engine. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
 | `src/workers/inference-worker/` | AI segmentation inference (REQ-A03/A09/A16/A17) — runs a model adapter's preprocess/infer/postprocess over each Hounsfield-Unit slice the Parse Worker produces, emitting the REQ-C01 mask contract. | AI track (`CODEOWNERS` path override on this specific subtree) |
 
@@ -61,10 +61,11 @@ generated locally first (gitignored, not part of a fresh clone) — see
 
 Verifies the real Shell against real Workers in a real browser
 (Playwright + Chromium) — see `tests/e2e/shell-mask-integration.spec.ts`'s
-own doc comment for exactly what each of its 4 tests checks, including
+own doc comment for exactly what each of its 5 tests checks, including
 real visual (screenshot-diff) assertions against real DICOM data (issue
-number 29) and the real UI shell driven end-to-end (issue number 34) —
-see "What's not here yet" for what's still deliberately out of scope. One-time
+number 29), the real UI shell driven end-to-end (issue number 34), and
+the 3D/2D view-mode toggle + slice slider (issue number 37) — see "What's
+not here yet" for what's still deliberately out of scope. One-time
 setup, then per-run:
 
 ```zsh
@@ -120,17 +121,22 @@ Playwright's bundled build).
 
 ## What's not here yet
 
-- Slice panning (2D axial scroll, separate from the 3D orbit camera) and
-  any Inference Worker/model-loading UI — neither is wired up yet
-  (issue #34's explicit scope boundary; the repo's only model fixture is
-  a dummy, plumbing-only ONNX graph with nothing real to point a "load
-  model" control at). Loading a volume via the file picker with no model
-  loaded is a supported, non-error state — `hu-slice` messages are
-  dropped with a console log rather than forwarded, until a model is
-  initialized (currently only `omnimed3dTestHooks.inferenceWorker` can
-  do that).
+- Inference Worker/model-loading UI — not wired up yet (issue #34's
+  explicit scope boundary; the repo's only model fixture is a dummy,
+  plumbing-only ONNX graph with nothing real to point a "load model"
+  control at). Loading a volume via the file picker with no model loaded
+  is a supported, non-error state — `hu-slice` messages are dropped with
+  a console log rather than forwarded, until a model is initialized
+  (currently only `omnimed3dTestHooks.inferenceWorker` can do that).
 - Mobile touch/pinch input for the camera — mouse-driven controls only
   (issue #34's explicit scope boundary).
+- Aspect-ratio-correct letterboxing for the 2D axial slice view (issue
+  #37) when voxel spacing is non-square — the MVP fills the canvas
+  edge-to-edge, matching the 3D raymarch pipeline's own fixed-canvas,
+  no-DPR-correction posture.
+- Sagittal/coronal slice axes for the 2D slice view (issue #37) — axial
+  only, matching REQ-R02 and the Parse Worker's own axial-only scope
+  below.
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
   exists yet (see "DICOM orientation normalization" below); only
