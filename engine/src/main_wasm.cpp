@@ -65,4 +65,18 @@ void engine_set_colormap_preset(uint32_t presetId) {
     g_device.setColormapPreset(presetId);
 }
 
+// Issue #34 (REQ-R06): interactive orbit camera. dx/dy are raw mouse-drag
+// pixel deltas -- see rhi::Device::orbitCamera's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_orbit_camera(float deltaYawPixels, float deltaPitchPixels) {
+    g_device.orbitCamera(deltaYawPixels, deltaPitchPixels);
+}
+
+// wheelDeltaSign: caller pre-normalizes to +-1 per wheel notch -- see
+// rhi::Device::zoomCamera's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_zoom_camera(float wheelDeltaSign) {
+    g_device.zoomCamera(wheelDeltaSign);
+}
+
 }  // extern "C"

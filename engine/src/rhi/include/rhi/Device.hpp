@@ -58,6 +58,23 @@ public:
     // list -- an engine-owned enum, not a string, so an invalid preset
     // can't silently no-op.
     virtual void setColormapPreset(uint32_t presetId) = 0;
+
+    // Interactive orbit camera (REQ-R06). Raw mouse-drag pixel deltas --
+    // yaw/pitch accumulate internally (pitch clamped to +-89 degrees, a
+    // gimbal-flip guard matching Mini-Engine-reference's validated
+    // camera). No-op (logged) if no volume is loaded -- unlike
+    // setWindowLevel/setColormapPreset, the zoom clamp this pairs with
+    // needs real AABB data, so there is nothing sensible to orbit yet.
+    virtual void orbitCamera(float deltaYawPixels, float deltaPitchPixels) = 0;
+
+    // wheelDeltaSign: pre-normalized by the caller to +-1 per wheel
+    // notch (sidesteps real cross-browser/cross-device wheel delta
+    // magnitude inconsistency -- DOM_DELTA_PIXEL vs DOM_DELTA_LINE,
+    // trackpad vs. mouse wheel -- rather than needing deltaMode-aware
+    // normalization logic here). Distance adjusts by an adaptive step
+    // (faster when far away already), clamped relative to the loaded
+    // volume's own size. No-op (logged) if no volume is loaded.
+    virtual void zoomCamera(float wheelDeltaSign) = 0;
 };
 
 }  // namespace omnimed3d::rhi
