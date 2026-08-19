@@ -35,8 +35,13 @@ viewer/.dev-server.pid
 *.onnx.data
 # Exception: a tiny (190-byte), checked-in dummy model for e2e plumbing
 # tests -- not a real/raw generated model artifact, see its own
-# generate-dummy-onnx.py for what it actually is.
+# generate-dummy-onnx.py for what it actually is. Duplicated (not
+# symlinked/synced) into public/models/ so the real Shell UI's "Load Demo
+# Model" button can actually fetch it in a browser -- tests/fixtures/ is
+# not on any servable path, unlike public/, which is why the copy exists
+# instead of pointing the UI at the same file the generator writes to.
 !viewer/tests/fixtures/dummy-lungmask.onnx
+!viewer/src/shell/public/models/dummy-lungmask.onnx
 
 # Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
 ai-pipeline/quantization/calibration_data/

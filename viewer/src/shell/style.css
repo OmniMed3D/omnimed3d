@@ -9,23 +9,37 @@
    Visual polish pass: consolidates the colors/radii repeated ad hoc across
    the file so far into named tokens (impeccable's polish playbook calls
    this out explicitly: "missing token: the system needs a reusable
-   value"). The palette itself is unchanged -- #0a0c10 ground, #2a3a5c
-   primary accent -- this only names what was already there and adds the
-   handful of new values the polish pass needed (a brighter accent for
-   slider thumbs/focus rings, a faint tier for debug/meta text). */
+   value").
+
+   Accent re-tuned from the original flat corporate navy (#2a3a5c) to a
+   deep teal -- picked directly against two other candidates (a warm
+   brass/instrument-panel tone, a richer indigo) after screenshotting all
+   three; teal reads as clinical-monitor/vitals-display heritage rather
+   than "any dark-mode SaaS panel," which was the critique's own
+   Design Specificity complaint. --surface/--panel-bg/--accent-secondary
+   pick up teal's hue too (craft-floor: "a grey with a slight hue bias
+   toward the page's accent reads as chosen"). --bg stays a true neutral
+   near-black on purpose -- it sits directly behind the diagnostic
+   render, and color-tinting the ground behind a grayscale HU-windowed
+   image risks biasing how it reads, unlike the surrounding UI chrome. */
 
 :root {
   --bg: #0a0c10;
-  --panel-bg: rgba(16, 19, 26, 0.92);
+  --panel-bg: rgba(14, 20, 19, 0.92);
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.18);
   --text: #e6e9ef;
-  --text-muted: #aab2c0;
-  --text-faint: #838da3; /* ~6:1 against --bg -- craft-floor's 4.5:1 floor for body/meta text */
-  --accent: #2a3a5c;
-  --accent-bright: #5c7cc4;
-  --accent-secondary: #262b36;
-  --surface: #1c2230;
+  --text-muted: #a7b5b1;
+  --text-faint: #82938e; /* ~6:1 against --bg -- craft-floor's 4.5:1 floor for body/meta text */
+  --accent: #1d5c56;
+  --accent-bright: #4fb8ab;
+  --accent-secondary: #223330;
+  --surface: #1a2624;
+  /* Semantic, not the accent hue (artifact-design/craft-floor guidance:
+     status color is a separate axis from brand accent) -- a muted warm
+     red distinct from teal, for the load-error state only. */
+  --danger: #d3766a; /* ~5.2:1 against --bg -- craft-floor's 4.5:1 floor */
+  --danger-bg: rgba(211, 118, 106, 0.1);
   --radius-sm: 6px;
   --radius-md: 8px;
   --shadow-panel:
@@ -106,13 +120,19 @@ canvas {
   pointer-events: none;
 }
 
+/* Legibility pass: a dashed neutral border read as "disabled" rather
+   than "here's what to do" -- solid accent-tinted border + a faint
+   accent-tinted fill invites the action instead. Text bumped to
+   --text-muted (this is the primary prompt at this state, not
+   secondary/meta content that --text-faint is for). */
 #empty-hint p {
   margin: 0;
   padding: 10px 16px;
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-size: 13px;
   letter-spacing: 0.01em;
-  border: 1px dashed var(--border-strong);
+  background: rgba(79, 184, 171, 0.08);
+  border: 1px solid rgba(79, 184, 171, 0.35);
   border-radius: var(--radius-md);
 }
 
@@ -149,7 +169,7 @@ canvas {
   padding: 10px 12px;
   max-width: 46ch;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px; /* legibility pass: 11px was borderline for a quick glance at arm's length */
   line-height: 1.5;
   color: var(--text-faint);
 }
@@ -171,6 +191,97 @@ canvas {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-panel);
   font-size: 13px;
+}
+
+/* Visual polish pass follow-up: drag handle + collapse toggle
+   (panelDrag.ts). Negative margins pull it flush against #control-panel's
+   own 14px padding so it reads as a title-bar spanning the panel's full
+   width, not a floating chip inside it. The grip and toggle are separate
+   elements (see index.html's comment on why) laid out with the grip
+   centered across the full bar and the toggle absolutely positioned at
+   its end, rather than a space-between row -- keeps the grip visually
+   centered on the panel regardless of the toggle's own width. */
+#panel-drag-handle {
+  position: relative;
+  height: 22px;
+  margin: -14px -14px 10px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+#panel-drag-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+#panel-drag-grip:active {
+  cursor: grabbing;
+}
+
+#panel-drag-grip span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+#panel-collapse-toggle {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+#panel-collapse-toggle:hover {
+  background: var(--surface);
+}
+
+/* CSS-drawn chevron (craft-floor: no unicode glyphs/emoji standing in
+   for icons) -- points up by default ("collapse" direction), flips to
+   point down when the panel is already collapsed ("expand" direction). */
+.chevron {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-135deg);
+  transition: transform 0.15s ease;
+}
+
+#panel-collapse-toggle[aria-expanded="false"] .chevron {
+  transform: rotate(45deg);
+}
+
+/* Collapsed state: the handle (and its toggle, so the panel can be
+   re-expanded or still dragged out of the way) stays visible; every
+   content section hides. #control-panel's own padding-bottom would
+   otherwise leave empty space below the now-childless handle. */
+#control-panel.collapsed {
+  padding-bottom: 6px;
+}
+
+#control-panel.collapsed .panel-section {
+  display: none;
+}
+
+.hint-text {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 
 .section-label {
@@ -220,6 +331,35 @@ canvas {
   font-family: var(--font-mono);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Follow-up: .value is now sometimes a real <input type=number>
+   (window/level direct-entry) -- reset the browser's own chrome
+   (border/background/spinner arrows) so it still reads as the plain
+   numeric label it always was, not a form field, until focused. */
+input.value {
+  appearance: textfield;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  width: 4.5em;
+}
+
+input.value::-webkit-outer-spin-button,
+input.value::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+input.value:hover {
+  border-color: var(--border-strong);
+}
+
+input.value:focus-visible {
+  outline: none;
+  border-color: var(--accent-bright);
+  background: var(--surface);
 }
 
 /* Custom range slider theming (craft-floor: "the numerals in tabular
@@ -324,6 +464,20 @@ input[type="range"]:focus-visible,
   pointer-events: none;
 }
 
+/* Visual polish pass follow-up: #load-demo-model is a real <button>, not
+   a <label> -- reuses .upload-btn's look but dims via the native
+   :disabled state directly (inferenceControls.ts sets button.disabled)
+   rather than the .disabled class the loading-indicator's label-based
+   buttons need. */
+button.upload-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.upload-btn:disabled:hover {
+  filter: none;
+}
+
 .file-input {
   /* Visually hidden but still focusable/clickable via its <label for>. */
   position: absolute;
@@ -333,12 +487,21 @@ input[type="range"]:focus-visible,
   clip: rect(0, 0, 0, 0);
 }
 
+/* Grid rather than flex-wrap: found via this pass's own screenshot
+   verification that 4 buttons in a flex row sat right at the panel's
+   content-width boundary -- "Soft Tissue" being the widest label left
+   "Brain" with no room, wrapping it alone onto its own row. A fixed 2x2
+   grid is deterministic regardless of label-width fluctuations (and
+   still just one row for the 2-button .view-mode-buttons case this
+   class is also applied to). Overrides .row's own display:flex --
+   declared after it in this file, same specificity, same element. */
 .preset-buttons {
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
 }
 
 .preset-buttons button {
-  flex: 1 1 auto;
   padding: 5px 8px;
   background: var(--surface);
   color: var(--text);
@@ -375,6 +538,22 @@ input[type="range"]:focus-visible,
    .row alone (0,1,0). */
 .row[hidden] {
   display: none;
+}
+
+/* Follow-up: shown when parseWorker.onerror fires (main.ts) -- a bad or
+   unsupported file previously failed silently (console.error only,
+   nothing on screen). Same visual family as .hint-text but in --danger
+   instead of --text-faint, with a tinted background so it reads as a
+   distinct state rather than more meta text. */
+#load-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Issue #42: file-load progress spinner. Reuses the primary-action color

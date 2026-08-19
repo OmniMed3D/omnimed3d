@@ -335,10 +335,13 @@ test("real UI: file picker, camera drag, wheel zoom, and window/level controls a
   await page.waitForTimeout(300);
   const afterPreset = await canvas.screenshot();
   expect(afterSlider.equals(afterPreset)).toBe(false);
+  // #window-center-value/#window-width-value are real <input type=number>
+  // elements now (numeric direct-entry follow-up), not read-only <span>s --
+  // toHaveValue, not toHaveText.
   await expect(page.locator("#window-center")).toHaveValue("300");
-  await expect(page.locator("#window-center-value")).toHaveText("300");
+  await expect(page.locator("#window-center-value")).toHaveValue("300");
   await expect(page.locator("#window-width")).toHaveValue("1500");
-  await expect(page.locator("#window-width-value")).toHaveText("1500");
+  await expect(page.locator("#window-width-value")).toHaveValue("1500");
 });
 
 test("view-mode toggle switches to a 2D axial slice view and the slice slider pans through it (issue #37, PRD §9 slice-panning)", async ({

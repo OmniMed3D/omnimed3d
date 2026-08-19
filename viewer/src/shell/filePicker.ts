@@ -18,6 +18,26 @@
 
 export type LoadVolumeFromFiles = (files: File[]) => Promise<string>;
 
+// Follow-up (critique heuristic #5, Error Prevention): #dicom-folder-input
+// has no `accept` filter at all, and even where `accept` is set
+// (#dicom-files-input), it's browser-advisory, not enforced. A real DICOM
+// file conventionally has NO extension at all (common in real-world
+// datasets), so an allow-list requiring ".dcm" would wrongly reject valid
+// files -- this is a deny-list of common non-DICOM junk instead
+// (folder-picker noise: OS metadata files, readmes, or the DICOMDIR
+// index file itself, which is a real DICOM-adjacent file but not a pixel
+// dataset dicom-parser can decode).
+const IGNORED_FILENAMES = new Set(["Thumbs.db", ".DS_Store", "DICOMDIR"]);
+const IGNORED_EXTENSIONS = [".txt", ".json", ".xml", ".pdf", ".jpg", ".jpeg", ".png", ".zip"];
+
+function isLikelyNonDicom(file: File): boolean {
+  const name = file.name.split(/[/\\]/).pop() ?? file.name;
+  if (IGNORED_FILENAMES.has(name)) {
+    return true;
+  }
+  return IGNORED_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext));
+}
+
 function wireFileInput(inputId: string, loadVolumeFromFiles: LoadVolumeFromFiles): void {
   const input = document.getElementById(inputId) as HTMLInputElement | null;
   if (!input) {
@@ -30,7 +50,13 @@ function wireFileInput(inputId: string, loadVolumeFromFiles: LoadVolumeFromFiles
     if (!files || files.length === 0) {
       return;
     }
-    loadVolumeFromFiles(Array.from(files)).catch((error: unknown) => {
+    const filtered = Array.from(files).filter((file) => !isLikelyNonDicom(file));
+    if (filtered.length === 0) {
+      console.log("filePicker: every selected file looked like non-DICOM junk, nothing to load");
+      input.value = "";
+      return;
+    }
+    loadVolumeFromFiles(filtered).catch((error: unknown) => {
       console.error("filePicker: failed to load volume from selected files", error);
     });
     // Reset so selecting the same file(s) again still fires "change".
