@@ -55,6 +55,11 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
   3: { center: 40, width: 80 }, // Brain
 };
 
+// The engine's own default-on-load preset (kDefaultColormapPreset in
+// WebGPUDevice.cpp) -- Soft Tissue. Marked active on setup so the UI
+// agrees with engine state from the first frame, not just after a click.
+const DEFAULT_PRESET_ID = 2;
+
 export function setupWindowLevelControls(): void {
   let center = DEFAULT_WINDOW_CENTER;
   let width = DEFAULT_WINDOW_WIDTH;
@@ -65,17 +70,32 @@ export function setupWindowLevelControls(): void {
   const centerLabel = document.getElementById("window-center-value");
   const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
   const widthLabel = document.getElementById("window-width-value");
+  const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]");
+
+  // Visual polish pass: presets now get the same selected-state feedback
+  // the view-mode toggle already had (critique heuristic #4,
+  // Consistency). Manually dragging a slider afterward clears the active
+  // state -- the displayed values no longer necessarily match any
+  // preset once the user has diverged from it, so claiming one is still
+  // "selected" would misrepresent state (the same class of bug the
+  // preset/slider desync fix closed).
+  function setActivePreset(presetId: number | null): void {
+    presetButtons.forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
+    });
+  }
 
   bindRangeInput("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
     center = value;
+    setActivePreset(null);
     applyWindowLevel();
   });
   bindRangeInput("window-width", "window-width-value", DEFAULT_WINDOW_WIDTH, (value) => {
     width = value;
+    setActivePreset(null);
     applyWindowLevel();
   });
 
-  const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]");
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const presetId = Number(button.dataset["colormapPreset"]);
@@ -95,6 +115,9 @@ export function setupWindowLevelControls(): void {
         widthInput.value = String(width);
         widthLabel.textContent = String(width);
       }
+      setActivePreset(presetId);
     });
   });
+
+  setActivePreset(DEFAULT_PRESET_ID);
 }

@@ -4,7 +4,58 @@
    "referencing Mini-Engine-reference's UI patterns" instruction. Kept as
    a proper linked stylesheet rather than inlined in index.html, since this
    is a Vite-built project rather than Mini-Engine's single-file
-   Emscripten HTML shell template. */
+   Emscripten HTML shell template.
+
+   Visual polish pass: consolidates the colors/radii repeated ad hoc across
+   the file so far into named tokens (impeccable's polish playbook calls
+   this out explicitly: "missing token: the system needs a reusable
+   value"). The palette itself is unchanged -- #0a0c10 ground, #2a3a5c
+   primary accent -- this only names what was already there and adds the
+   handful of new values the polish pass needed (a brighter accent for
+   slider thumbs/focus rings, a faint tier for debug/meta text). */
+
+:root {
+  --bg: #0a0c10;
+  --panel-bg: rgba(16, 19, 26, 0.92);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #e6e9ef;
+  --text-muted: #aab2c0;
+  --text-faint: #838da3; /* ~6:1 against --bg -- craft-floor's 4.5:1 floor for body/meta text */
+  --accent: #2a3a5c;
+  --accent-bright: #5c7cc4;
+  --accent-secondary: #262b36;
+  --surface: #1c2230;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --shadow-panel:
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  --font-ui:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  --font-mono:
+    "JetBrains Mono",
+    ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+}
+
+/* Pre-existing latent bug, found while verifying this pass's own mobile
+   screenshot: without border-box, #control-panel's
+   width: calc(100vw - 24px) at the mobile breakpoint excludes its own
+   padding/border, so the rendered box is ~30px wider than intended and
+   overflows off the left edge of the viewport, clipping content. Never
+   caught before -- prior mobile verification (issues #40/#42) checked
+   canvas backing-store dimensions and button heights, not the panel's
+   own edge positioning. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 html,
 body {
@@ -13,12 +64,16 @@ body {
 }
 
 body {
-  background: #0a0c10;
-  color: #e6e9ef;
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+/* Browser surfaces the palette should own (craft-floor guidance) rather
+   than leaving at their unthemed default. */
+::selection {
+  background: var(--accent-bright);
+  color: #fff;
 }
 
 /* Issue #40: fills the viewport instead of a fixed 640x480 box.
@@ -35,21 +90,30 @@ canvas {
   height: 100vh;
 }
 
-/* Issue #40: WebGPU-unavailable fallback (main.ts's waitForEngineReady
-   timeout). Centered over the canvas; position:relative lifts it into
-   the positioned-stacking context so it paints above the fixed canvas
-   despite coming later in the DOM than #control-panel does not matter
-   here (paint order follows DOM order among same-level positioned
-   elements, and this element comes after canvas). */
-/* Issue #40: these are normal-flow (position:static) debug elements --
-   without an explicit position they'd paint *below* the now-fixed
-   canvas regardless of DOM order (CSS stacking always ranks positioned
-   elements above static ones). position:relative is the minimal change
-   that keeps them visible without altering their layout. */
-#status,
-#shell-status,
-#log {
+/* Visual polish pass: the empty-canvas hint (Nielsen #10). Centered,
+   quiet -- a hint, not a hero moment; the render itself is the point,
+   this just orients a first-time user before one exists. */
+/* [hidden] must stay unqualified by :not() here so the UA [hidden]
+   stylesheet rule (display:none) isn't beaten by this ID selector's own
+   higher specificity -- the exact bug .row[hidden] already has a comment
+   about below; #empty-hint just repeats it with a new element. */
+#empty-hint:not([hidden]) {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  pointer-events: none;
+}
+
+#empty-hint p {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--text-faint);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
 }
 
 #engine-error {
@@ -57,26 +121,66 @@ canvas {
   max-width: 420px;
   margin: 40vh auto 0;
   padding: 16px 20px;
-  background: rgba(16, 19, 26, 0.92);
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   text-align: center;
   font-size: 14px;
   line-height: 1.5;
+}
+
+/* Issue #40: these are normal-flow (position:static) debug elements --
+   without an explicit position they'd paint *below* the now-fixed
+   canvas regardless of DOM order (CSS stacking always ranks positioned
+   elements above static ones). position:relative is the minimal change
+   that keeps them visible without altering their layout.
+   Visual polish pass: #debug-readout gives the group (previously raw,
+   unstyled white text sitting directly on the canvas) a single quiet
+   corner treatment -- small, monospace, faint -- so it reads as
+   intentional instrument telemetry rather than leftover debug output.
+   #status/#shell-status/#log keep their own ids and behavior unchanged. */
+#debug-readout {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  max-width: 46ch;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+#log:empty {
+  display: none;
 }
 
 #control-panel {
   position: fixed;
   top: 12px;
   right: 12px;
-  width: 260px;
-  padding: 12px;
-  background: rgba(16, 19, 26, 0.92);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  width: 264px;
+  padding: 14px;
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
   font-size: 13px;
+}
+
+.section-label {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 2px;
 }
 
 .panel-section {
@@ -88,7 +192,7 @@ canvas {
 .panel-section + .panel-section {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border);
 }
 
 .row {
@@ -100,7 +204,7 @@ canvas {
 .row label {
   flex: 0 0 auto;
   min-width: 90px;
-  color: #aab2c0;
+  color: var(--text-muted);
 }
 
 .row input[type="range"] {
@@ -110,30 +214,105 @@ canvas {
 
 .row .value {
   flex: 0 0 auto;
-  min-width: 2.5em;
+  min-width: 3em;
   text-align: right;
-  color: #e6e9ef;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Custom range slider theming (craft-floor: "the numerals in tabular
+   data all ship with browser defaults that belong to no design system" --
+   the same is true of range inputs; the unstyled default blue thumb/track
+   was the single most visible native/custom mismatch in the critique).
+   -webkit-/-moz- rulesets must stay in separate rule blocks -- a browser
+   drops the entire selector list if any one pseudo-element in it is
+   unrecognized. */
+input[type="range"] {
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface);
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  border: 2px solid var(--bg);
+  cursor: pointer;
+}
+
+/* Keyboard focus (Sam persona, accessibility -- no :focus-visible styling
+   existed anywhere before this pass). Themed from the palette rather than
+   the browser default outline, per craft-floor's "focus rings... ship
+   with browser defaults that belong to no design system."
+   .upload-btn is a <label>, not natively focusable -- real keyboard focus
+   lands on its associated (visually hidden) .file-input, which comes
+   *after* the label in the DOM, so a :has() on the preceding label is the
+   only way to draw the ring on the visible element. Chrome (this
+   project's REQ-R07 target) has supported :has() since v105. */
+.preset-buttons button:focus-visible,
+input[type="range"]:focus-visible,
+.upload-btn:has(+ .file-input:focus-visible) {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
 }
 
 .upload-btn {
   display: block;
   flex: 1 1 auto;
   padding: 6px 10px;
-  background: #2a3a5c;
-  color: #e6e9ef;
-  border-radius: 6px;
+  background: var(--accent);
+  color: var(--text);
+  border-radius: var(--radius-sm);
   text-align: center;
   cursor: pointer;
   min-width: 0;
+  transition: filter 0.1s ease;
 }
 
 .upload-btn.secondary {
-  background: #262b36;
+  background: var(--accent-secondary);
 }
 
 .upload-btn:hover {
   filter: brightness(1.15);
+}
+
+.upload-btn:active {
+  filter: brightness(0.92);
 }
 
 /* Issue #42: while a load is in flight (loadingIndicator.ts). Dims and
@@ -161,26 +340,34 @@ canvas {
 .preset-buttons button {
   flex: 1 1 auto;
   padding: 5px 8px;
-  background: #1c2230;
-  color: #e6e9ef;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    filter 0.1s ease,
+    background 0.12s ease;
 }
 
 .preset-buttons button:hover {
   filter: brightness(1.25);
 }
 
+.preset-buttons button:active {
+  filter: brightness(0.85);
+}
+
 /* Issue #37: first pressed-state treatment in this codebase -- reuses the
-   existing primary-action color (.upload-btn's #2a3a5c) rather than
-   inventing a new palette token, plus a brighter border as a second,
-   distinct cue. Scoped to .view-mode-buttons so it doesn't also apply to
-   the colormap preset buttons above, which have no concept of "active"
-   (each click just fires a one-shot preset apply). */
-.view-mode-buttons button.active {
-  background: #2a3a5c;
-  border-color: rgba(255, 255, 255, 0.35);
+   existing primary-action color (--accent) rather than inventing a new
+   palette token, plus a brighter border as a second, distinct cue.
+   Visual polish pass: generalized from .view-mode-buttons-only to every
+   .preset-buttons button, so the colormap presets get the same
+   selected-state feedback the view-mode toggle already had (previously
+   an inconsistency the critique named directly -- heuristic #4). */
+.preset-buttons button.active {
+  background: var(--accent);
+  border-color: var(--border-strong);
 }
 
 /* .row sets display:flex, which otherwise beats the UA [hidden]
@@ -191,14 +378,14 @@ canvas {
 }
 
 /* Issue #42: file-load progress spinner. Reuses the primary-action color
-   (.upload-btn's #2a3a5c) for the active edge, matching the existing
-   palette rather than introducing a new token. */
+   (--accent) for the active edge, matching the existing palette rather
+   than introducing a new token. */
 .spinner {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
   border: 2px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #2a3a5c;
+  border-top-color: var(--accent-bright);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -212,6 +399,10 @@ canvas {
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    transition: none;
   }
 }
 

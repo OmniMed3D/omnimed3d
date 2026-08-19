@@ -231,6 +231,9 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   });
   notifyVolumeLoaded(msg.depth);
   setLoading(false);
+  // Visual polish pass: the empty-canvas hint has served its purpose
+  // once a volume has actually rendered.
+  document.getElementById("empty-hint")!.hidden = true;
 }
 
 function engineApplyMaskSlice(msg: MaskSliceMessage): void {
@@ -328,6 +331,10 @@ async function main() {
   setupViewControls();
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
+  // Visual polish pass: shown only once there's actually something to
+  // prompt -- not during the earlier load/init states, which already
+  // have their own status text.
+  document.getElementById("empty-hint")!.hidden = false;
 }
 
 main();

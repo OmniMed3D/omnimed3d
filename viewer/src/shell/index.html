@@ -3,6 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <title>OmniMed3D Shell</title>
+    <!-- Visual polish pass: JetBrains Mono for measurement
+         readouts only (window/level HU values, slice index) -- a
+         legitimate "data/measurement" use per the impeccable skill's own
+         craft-floor guidance, not a "technical" costume. UI chrome (labels,
+         buttons) stays on the system-ui stack, matching Operate-mode
+         guidance that scanability/native expectations outrank typographic
+         voice here. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -16,6 +29,14 @@
          first paint. -->
     <canvas id="canvas" width="640" height="480"></canvas>
 
+    <!-- Visual polish pass: shown until the first volume loads
+         (Nielsen heuristic #10, "Help and Documentation" -- the empty
+         canvas gave a first-time user no hint at the one moment they
+         most needed one). main.ts toggles [hidden]. -->
+    <div id="empty-hint" hidden>
+      <p>Select a DICOM file or folder to begin.</p>
+    </div>
+
     <!-- Issue #40: shown only if the engine never becomes ready within
          waitForEngineReady()'s timeout (e.g. no WebGPU adapter on this
          browser/device) -- see main.ts. Hidden by default. -->
@@ -28,16 +49,23 @@
          don't also write Shell-side progress there, it gets clobbered by
          the runtime's own updates. Shell progress goes in #shell-status
          instead (same reason engine/tests/wasm_smoke/shell.html uses
-         document.title for its own progress rather than #status). -->
-    <div id="status">loading...</div>
-    <div id="shell-status">shell: loading...</div>
-    <pre id="log"></pre>
+         document.title for its own progress rather than #status).
+         Visual polish pass: wrapped in #debug-readout for a single quiet
+         corner treatment instead of raw unstyled text -- the individual
+         ids/behavior are unchanged, tests and main.ts still address them
+         directly. -->
+    <div id="debug-readout">
+      <div id="status">loading...</div>
+      <div id="shell-status">shell: loading...</div>
+      <pre id="log"></pre>
+    </div>
 
     <!-- Issue #34 (REQ-R06): file picker + window/level control panel.
          Camera controls (cameraControls.ts) have no DOM of their own --
          they listen directly on #canvas/window. -->
     <div id="control-panel">
       <div class="panel-section">
+        <span class="section-label">Volume</span>
         <div class="row">
           <label for="dicom-folder-input" class="upload-btn">Load DICOM folder</label>
           <input id="dicom-folder-input" type="file" webkitdirectory multiple class="file-input" />
@@ -57,6 +85,7 @@
            view-mode toggle + slice slider. viewControls.ts owns showing/
            hiding #axial-slice-row based on the active mode. -->
       <div class="panel-section">
+        <span class="section-label">View</span>
         <div class="row preset-buttons view-mode-buttons">
           <button type="button" data-view-mode="0">3D Orbit</button>
           <button type="button" data-view-mode="1">2D Slice</button>
@@ -68,6 +97,7 @@
         </div>
       </div>
       <div class="panel-section">
+        <span class="section-label">Window &amp; Level</span>
         <div class="row">
           <label for="window-center">Window Center</label>
           <input id="window-center" type="range" min="-1000" max="1000" step="1" />
