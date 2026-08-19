@@ -1,0 +1,125 @@
+/* Issue #34 (REQ-R06) control panel styling. Dark theme, floating
+   glassmorphic panel -- adapted from Mini-Engine-reference's validated UI
+   pattern (docs/current/medical-volume/VIEWERS.md), per PRD Appendix A's
+   "referencing Mini-Engine-reference's UI patterns" instruction. Kept as
+   a proper linked stylesheet rather than inlined in index.html, since this
+   is a Vite-built project rather than Mini-Engine's single-file
+   Emscripten HTML shell template. */
+
+body {
+  margin: 0;
+  background: #0a0c10;
+  color: #e6e9ef;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+canvas {
+  display: block;
+}
+
+#control-panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 260px;
+  padding: 12px;
+  background: rgba(16, 19, 26, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-section + .panel-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row label {
+  flex: 0 0 auto;
+  min-width: 90px;
+  color: #aab2c0;
+}
+
+.row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row .value {
+  flex: 0 0 auto;
+  min-width: 2.5em;
+  text-align: right;
+  color: #e6e9ef;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-btn {
+  display: block;
+  flex: 1 1 auto;
+  padding: 6px 10px;
+  background: #2a3a5c;
+  color: #e6e9ef;
+  border-radius: 6px;
+  text-align: center;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.upload-btn.secondary {
+  background: #262b36;
+}
+
+.upload-btn:hover {
+  filter: brightness(1.15);
+}
+
+.file-input {
+  /* Visually hidden but still focusable/clickable via its <label for>. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.preset-buttons {
+  flex-wrap: wrap;
+}
+
+.preset-buttons button {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  background: #1c2230;
+  color: #e6e9ef;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preset-buttons button:hover {
+  filter: brightness(1.25);
+}
+
+@media (max-width: 640px) {
+  #control-panel {
+    width: calc(100vw - 24px);
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+}
