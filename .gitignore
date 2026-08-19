@@ -23,6 +23,9 @@ viewer/src/shell/public/engine/
 viewer/test-results/
 viewer/playwright-report/
 
+# PID file for scripts/dev-server.ps1's background npm run dev tracking
+viewer/.dev-server.pid
+
 # Generated model artifacts — not committed, regenerated via convert_to_onnx.py / quantize_ptq.py
 *.onnx
 *.onnx.data
