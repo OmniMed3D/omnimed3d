@@ -46,6 +46,12 @@
           <label for="dicom-files-input" class="upload-btn secondary">Load DICOM files</label>
           <input id="dicom-files-input" type="file" multiple accept=".dcm,application/dicom" class="file-input" />
         </div>
+        <!-- Issue #42: shown between file selection and engine_load_volume
+             completing -- loadingIndicator.ts owns hidden/visible. -->
+        <div class="row" id="loading-indicator" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Loading&hellip;</span>
+        </div>
       </div>
       <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D axial-slice
            view-mode toggle + slice slider. viewControls.ts owns showing/

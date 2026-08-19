@@ -136,6 +136,15 @@ canvas {
   filter: brightness(1.15);
 }
 
+/* Issue #42: while a load is in flight (loadingIndicator.ts). Dims and
+   blocks the label's click-through-to-input behavior rather than
+   relying on the underlying input's own disabled state alone, since
+   it's the label the user actually sees and clicks. */
+.upload-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .file-input {
   /* Visually hidden but still focusable/clickable via its <label for>. */
   position: absolute;
@@ -181,9 +190,47 @@ canvas {
   display: none;
 }
 
+/* Issue #42: file-load progress spinner. Reuses the primary-action color
+   (.upload-btn's #2a3a5c) for the active edge, matching the existing
+   palette rather than introducing a new token. */
+.spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #2a3a5c;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
 @media (max-width: 640px) {
   #control-panel {
     width: calc(100vw - 24px);
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Issue #42: computed height was ~25-30px (padding + 13px text) --
+     under the 44px (iOS) / 48dp (Material) touch-target minimum, and
+     PRODUCT.md names quick/gloved-hand mobile operation as a confirmed
+     requirement, not a nice-to-have. Scoped to this breakpoint rather
+     than globally, since desktop mouse precision doesn't need it. */
+  .upload-btn,
+  .preset-buttons button {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 }

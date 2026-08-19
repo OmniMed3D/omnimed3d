@@ -28,6 +28,7 @@ import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
+import { setLoading } from "./loadingIndicator.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -179,10 +180,22 @@ export async function loadVolumeFromFiles(files: File[]): Promise<string> {
   if (!parseWorkerInstance) {
     throw new Error("loadVolumeFromFiles called before the Shell finished initializing");
   }
-  const volumeId = mintVolumeId();
-  const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
-  parseWorkerInstance.postMessage({ type: "parse-series", volumeId, files: buffers }, buffers);
-  return volumeId;
+  setLoading(true);
+  try {
+    const volumeId = mintVolumeId();
+    const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
+    parseWorkerInstance.postMessage({ type: "parse-series", volumeId, files: buffers }, buffers);
+    return volumeId;
+  } catch (error) {
+    // Only the synchronous/promise-rejection path here (a bad File read)
+    // clears loading itself -- once the parse-series message is posted,
+    // loading stays true until engineLoadVolume's success path clears it.
+    // A malformed-file/Parse-Worker-side failure leaving the indicator
+    // stuck is a known, separate gap (Nielsen #9, not in this issue's
+    // scope).
+    setLoading(false);
+    throw error;
+  }
 }
 
 function withWasmBuffer<T>(byteLength: number, fn: (ptr: number) => T): T {
@@ -217,6 +230,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
     );
   });
   notifyVolumeLoaded(msg.depth);
+  setLoading(false);
 }
 
 function engineApplyMaskSlice(msg: MaskSliceMessage): void {
