@@ -5,6 +5,10 @@ docs/claude
 docs/ai-track-decisions.md
 CLAUDE.md
 
+#claude
+CLAUDE.md
+.claude/
+
 # Python (ai-pipeline/)
 __pycache__/
 *.pyc
