@@ -14,11 +14,6 @@
 namespace omnimed3d::rhi::webgpu {
 
 namespace {
-// Fixed for this smoke-test milestone -- resizing/DPR handling is not in
-// scope until there's a real application driving canvas size.
-constexpr uint32_t kCanvasWidth = 640;
-constexpr uint32_t kCanvasHeight = 480;
-
 constexpr uint32_t kLutSize = 256;
 
 // REQ-R06 interactive camera tuning -- rad/px, matching Mini-Engine-
@@ -70,11 +65,18 @@ static_assert(sizeof(RaymarchUBO) == 224);
 struct AxialSliceUBO {
     glm::vec4 sliceParams;  // x=sliceIndex (raw voxel index), y=windowCenter, z=windowWidth, w unused
     glm::vec4 maskParams;   // x=overlayEnabled, y=overlayAlpha, zw unused
+    // "Contain" letterbox fit (issue #40 follow-up) -- see
+    // axial_slice.slang's own comment on this field for the full
+    // rationale. x/y are NDC scale factors, computed fresh every frame in
+    // renderFrame() from the volume's physical aspect ratio (aabbMax_ -
+    // aabbMin_) vs. canvasWidth_/canvasHeight_'s aspect ratio.
+    glm::vec4 fitParams;
 };
 
 static_assert(offsetof(AxialSliceUBO, sliceParams) == 0);
 static_assert(offsetof(AxialSliceUBO, maskParams) == 16);
-static_assert(sizeof(AxialSliceUBO) == 32);
+static_assert(offsetof(AxialSliceUBO, fitParams) == 32);
+static_assert(sizeof(AxialSliceUBO) == 48);
 
 // View modes for WebGPUDevice::setViewMode() (issue #37).
 constexpr uint32_t kViewModeOrbit3D = 0;
@@ -165,8 +167,8 @@ void WebGPUDevice::configureSurface() {
     config.format = WGPUTextureFormat_BGRA8Unorm;
     config.usage = WGPUTextureUsage_RenderAttachment;
     config.alphaMode = WGPUCompositeAlphaMode_Auto;
-    config.width = kCanvasWidth;
-    config.height = kCanvasHeight;
+    config.width = canvasWidth_;
+    config.height = canvasHeight_;
     config.presentMode = WGPUPresentMode_Fifo;
     wgpuSurfaceConfigure(surface_, &config);
 }
@@ -372,7 +374,7 @@ void WebGPUDevice::updateCameraMatrices() {
     cameraPos_ = eye;
 
     glm::mat4 const view = glm::lookAt(eye, glm::vec3{0.0F}, glm::vec3{0.0F, 0.0F, 1.0F});
-    float const aspect = static_cast<float>(kCanvasWidth) / static_cast<float>(kCanvasHeight);
+    float const aspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
     glm::mat4 const proj =
         glm::perspective(glm::radians(45.0F), aspect, cameraDistance_ * 0.1F, cameraDistance_ * 3.0F);
 
@@ -446,9 +448,21 @@ void WebGPUDevice::renderFrame() {
         renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
 
         if (viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
+            // "Contain" letterbox fit (issue #40 follow-up) -- see
+            // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_'s
+            // X/Y already encode the volume's physical (spacing-aware)
+            // extent (frameCameraForVolume()), so no separate spacing
+            // storage is needed here.
+            glm::vec3 const physicalExtent = aabbMax_ - aabbMin_;
+            float const volumeAspect = physicalExtent.x / physicalExtent.y;
+            float const canvasAspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
+            float const fitScaleX = std::max(1.0F, canvasAspect / volumeAspect);
+            float const fitScaleY = std::max(1.0F, volumeAspect / canvasAspect);
+
             AxialSliceUBO ubo{};
             ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
             ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+            ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
 
             wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
 
@@ -707,6 +721,29 @@ void WebGPUDevice::setAxialSliceIndex(uint32_t index) {
         return;
     }
     axialSliceIndex_ = std::min(index, volumeDepth_ - 1);
+}
+
+void WebGPUDevice::resize(uint32_t width, uint32_t height) {
+    // A detached/hidden canvas can report a 0x0 ResizeObserver entry --
+    // reject rather than configuring a zero-sized surface (undefined
+    // behavior in WebGPU) or dividing by zero in the aspect-ratio calc
+    // below.
+    if (width == 0 || height == 0) {
+        std::printf("WebGPUDevice::resize: ignoring degenerate %ux%u\n", width, height);
+        return;
+    }
+    canvasWidth_ = width;
+    canvasHeight_ = height;
+
+    // device_ is null before onDeviceRequested() has fired -- resize() is
+    // allowed to be called that early (Device.hpp's header comment), so
+    // just remember the new dimensions; configureSurface() (called once
+    // from onDeviceRequested()) will use whatever canvasWidth_/
+    // canvasHeight_ already hold at that point.
+    if (device_) {
+        configureSurface();
+    }
+    updateCameraMatrices();
 }
 
 }  // namespace omnimed3d::rhi::webgpu
