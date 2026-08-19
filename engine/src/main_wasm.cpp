@@ -79,4 +79,18 @@ void engine_zoom_camera(float wheelDeltaSign) {
     g_device.zoomCamera(wheelDeltaSign);
 }
 
+// Issue #37 (PRD §9 slice-panning gap): view-mode toggle. mode: 0=Orbit3D,
+// 1=AxialSlice2D -- see rhi::Device::setViewMode's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_view_mode(uint32_t mode) {
+    g_device.setViewMode(mode);
+}
+
+// Raw voxel Z index (not normalized) for the AxialSlice2D view -- see
+// rhi::Device::setAxialSliceIndex's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_axial_slice_index(uint32_t index) {
+    g_device.setAxialSliceIndex(index);
+}
+
 }  // extern "C"
