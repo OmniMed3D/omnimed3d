@@ -93,4 +93,11 @@ void engine_set_axial_slice_index(uint32_t index) {
     g_device.setAxialSliceIndex(index);
 }
 
+// Issue #40: canvas backing-store pixel dimensions (post-devicePixelRatio
+// scaling, not CSS pixels) -- see rhi::Device::resize's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_resize(uint32_t width, uint32_t height) {
+    g_device.resize(width, height);
+}
+
 }  // extern "C"

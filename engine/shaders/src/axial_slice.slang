@@ -18,6 +18,14 @@ struct AxialSliceUBO
 {
     float4 sliceParams;  // x=sliceIndex (raw voxel index, not normalized), y=windowCenter, z=windowWidth, w unused
     float4 maskParams;   // x=overlayEnabled (0/1), y=overlayAlpha, zw unused
+    // "Contain" letterbox fit (issue #40 follow-up -- the canvas is no
+    // longer a fixed near-4:3 640x480 box, so filling it edge-to-edge
+    // stretched/over-scaled the slice on wide or unusually-shaped
+    // viewports). x/y are the NDC scale factors WebGPUDevice::renderFrame
+    // computes from the volume's physical aspect ratio vs. the canvas's;
+    // >1 on the axis that must be cropped to letterbox bars so the other
+    // axis fills fully without distortion. zw unused.
+    float4 fitParams;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<AxialSliceUBO> ubo;
@@ -61,7 +69,18 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     // calibration/strict DICOM color pipeline compliance") and
     // viewer/README.md's own documented gap (no suitable fixture exists
     // yet to verify against).
-    float2 uv = float2(input.ndc.x * 0.5 + 0.5, 0.5 - input.ndc.y * 0.5);
+    //
+    // fitParams scales the NDC range before mapping to [0,1] so the
+    // image "contain"-fits the canvas at its own aspect ratio instead of
+    // stretching to fill it -- ndc positions that fall outside the
+    // fitted rectangle map outside [0,1] and are discarded below
+    // (letterbox/pillarbox bars, drawn as the pass's clear color since
+    // nothing is written there).
+    float2 uv = float2(input.ndc.x * ubo.fitParams.x * 0.5 + 0.5, 0.5 - input.ndc.y * ubo.fitParams.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+    {
+        discard;
+    }
 
     uint volW, volH, volD;
     volumeTex.GetDimensions(volW, volH, volD);

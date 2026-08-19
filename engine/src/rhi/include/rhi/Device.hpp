@@ -96,6 +96,19 @@ public:
     // no-volume no-op. Otherwise clamped to [0, depth-1]. On loadVolume,
     // the engine defaults this to depth/2 (the volume's middle slice).
     virtual void setAxialSliceIndex(uint32_t index) = 0;
+
+    // Resizes the render surface and recomputes the Orbit3D camera's
+    // aspect ratio to match (issue #40 -- the canvas was previously a
+    // fixed 640x480 box with no way to reconfigure it). width/height are
+    // the canvas's backing-store pixel dimensions (post-devicePixelRatio
+    // scaling), not CSS pixels -- the caller (viewer/) owns that
+    // conversion via ResizeObserver, matching how orbitCamera/zoomCamera
+    // already push caller-normalized values rather than raw browser
+    // units. Safe to call before any volume is loaded or before the
+    // device is ready -- backends should defer any GPU work until
+    // initialize()'s async setup has completed, matching loadVolume's own
+    // tolerance for being called at any time.
+    virtual void resize(uint32_t width, uint32_t height) = 0;
 };
 
 }  // namespace omnimed3d::rhi

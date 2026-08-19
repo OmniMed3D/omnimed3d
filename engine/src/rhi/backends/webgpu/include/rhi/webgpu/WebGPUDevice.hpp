@@ -31,6 +31,7 @@ public:
     void zoomCamera(float wheelDeltaSign) override;
     void setViewMode(uint32_t mode) override;
     void setAxialSliceIndex(uint32_t index) override;
+    void resize(uint32_t width, uint32_t height) override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -44,6 +45,11 @@ private:
     static void onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
                                    WGPUStringView message, void* userdata1, void* userdata2);
 
+    // Uses canvasWidth_/canvasHeight_ (issue #40) -- called once from
+    // onDeviceRequested() with whatever those hold at that point (a
+    // placeholder default until resize() is called at least once; the
+    // Shell calls it once on startup, see viewer/src/shell/main.ts), and
+    // again from resize() itself on every subsequent call.
     void configureSurface();
 
     // Raymarch pipeline setup -- built once when the device becomes ready,
@@ -92,6 +98,14 @@ private:
     WGPUQueue queue_ = nullptr;
     WGPUSurface surface_ = nullptr;
     bool ready_ = false;
+
+    // Backing-store pixel dimensions of the render surface (issue #40) --
+    // replaces the previous fixed 640x480 constants. Defaulted to a
+    // placeholder so configureSurface() has something valid to use even
+    // if resize() is never called (shouldn't happen in practice; the
+    // Shell always calls it once on startup), and updated by resize().
+    uint32_t canvasWidth_ = 640;
+    uint32_t canvasHeight_ = 480;
 
     // Volume/mask state (roadmap step 4/6). No general RHITexture wrapper --
     // see the Device.hpp header comment for why these stay raw WGPUTexture

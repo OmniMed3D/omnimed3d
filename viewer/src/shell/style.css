@@ -6,8 +6,13 @@
    is a Vite-built project rather than Mini-Engine's single-file
    Emscripten HTML shell template. */
 
+html,
 body {
+  height: 100%;
   margin: 0;
+}
+
+body {
   background: #0a0c10;
   color: #e6e9ef;
   font-family:
@@ -16,8 +21,49 @@ body {
     sans-serif;
 }
 
+/* Issue #40: fills the viewport instead of a fixed 640x480 box.
+   canvasResize.ts drives the backing-store resolution (width/height
+   attributes) via a ResizeObserver + engine_resize -- this rule only
+   controls the CSS/display size. position:fixed + being first in the
+   DOM (index.html) means every other element paints on top of it
+   without needing z-index (see index.html's own comment). */
 canvas {
   display: block;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Issue #40: WebGPU-unavailable fallback (main.ts's waitForEngineReady
+   timeout). Centered over the canvas; position:relative lifts it into
+   the positioned-stacking context so it paints above the fixed canvas
+   despite coming later in the DOM than #control-panel does not matter
+   here (paint order follows DOM order among same-level positioned
+   elements, and this element comes after canvas). */
+/* Issue #40: these are normal-flow (position:static) debug elements --
+   without an explicit position they'd paint *below* the now-fixed
+   canvas regardless of DOM order (CSS stacking always ranks positioned
+   elements above static ones). position:relative is the minimal change
+   that keeps them visible without altering their layout. */
+#status,
+#shell-status,
+#log {
+  position: relative;
+}
+
+#engine-error {
+  position: relative;
+  max-width: 420px;
+  margin: 40vh auto 0;
+  padding: 16px 20px;
+  background: rgba(16, 19, 26, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 #control-panel {
