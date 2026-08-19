@@ -28,6 +28,11 @@ import { expect, test } from "@playwright/test";
  * `omnimed3dTestHooks`, automating PRD §9's "successful initial
  * interaction (rotation, zoom) by non-developer testers within 3
  * unassisted attempts" criterion rather than leaving it as a manual claim.
+ *
+ * The fifth test (issue #37 DoD) covers the remaining third of that same
+ * PRD §9 criterion -- slice panning -- via the real 3D/2D view-mode
+ * toggle and slice slider, completing what the fourth test's rotation/
+ * zoom coverage left out.
  */
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
@@ -316,4 +321,103 @@ test("real UI: file picker, camera drag, wheel zoom, and window/level controls a
   await page.waitForTimeout(300);
   const afterPreset = await canvas.screenshot();
   expect(afterSlider.equals(afterPreset)).toBe(false);
+});
+
+test("view-mode toggle switches to a 2D axial slice view and the slice slider pans through it (issue #37, PRD §9 slice-panning)", async ({
+  page,
+}) => {
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+  async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  const canvas = page.locator("#canvas");
+  const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
+
+  // depth=3 volume via the same "same file 3x" trick the first test uses.
+  const volumeId = await page.evaluate(() => window.omnimed3dTestHooks.startNewVolume());
+  await page.evaluate(
+    ({ base64, id }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const files = [bytes.buffer.slice(0), bytes.buffer.slice(0), bytes.buffer.slice(0)];
+      window.omnimed3dTestHooks.parseWorker.postMessage({ type: "parse-series", volumeId: id, files }, files);
+    },
+    { base64: ctSmallBase64, id: volumeId },
+  );
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+  await page.waitForTimeout(500);
+  const orbitShot = await canvas.screenshot();
+
+  // Switch to 2D Slice -- a genuinely different pipeline/output, so this
+  // must differ regardless of mask state.
+  await page.locator('[data-view-mode="1"]').click();
+  await page.waitForTimeout(300);
+  const sliceDefaultShot = await canvas.screenshot();
+  expect(orbitShot.equals(sliceDefaultShot)).toBe(false);
+
+  // depth=3 -> slider max=2, default index=floor(3/2)=1 (engine's own
+  // depth/2 default, mirrored client-side by viewControls.ts).
+  await expect(page.locator("#axial-slice-index")).toHaveAttribute("max", "2");
+  await expect(page.locator("#axial-slice-index")).toHaveValue("1");
+
+  // The three slices are byte-identical HU data (same file loaded 3x), so
+  // moving the slider alone wouldn't guarantee a visual diff -- apply a
+  // mask to slice 0 only, same direct engine_apply_mask_slice pattern the
+  // "mask overlay actually composites" test above uses, bypassing the
+  // Inference Worker so this test isolates the slice pipeline/slider, not
+  // model quality.
+  const loadLine = consoleLines.find((line) => /WebGPUDevice::loadVolume/.test(line))!;
+  const engineVolumeId = Number(loadLine.match(/volumeId=(\d+)/)![1]);
+  await page.evaluate((id) => {
+    const width = 128;
+    const height = 128;
+    const mask = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const inCenter = x > width * 0.25 && x < width * 0.75 && y > height * 0.25 && y < height * 0.75;
+        mask[y * width + x] = inCenter ? 1 : 0;
+      }
+    }
+    const ptr = window.Module._malloc(mask.length);
+    window.Module.HEAPU8.set(mask, ptr);
+    window.Module._engine_apply_mask_slice(id, 0, width, height, ptr, mask.length);
+    window.Module._free(ptr);
+  }, engineVolumeId);
+  await waitForLine(/WebGPUDevice::applyMaskSlice: volumeId=\d+ slice=0 applied/);
+
+  const sliceSlider = page.locator("#axial-slice-index");
+  await sliceSlider.fill("0");
+  await sliceSlider.dispatchEvent("input");
+  await page.waitForTimeout(300);
+  const sliceZeroShot = await canvas.screenshot();
+  expect(sliceZeroShot.equals(sliceDefaultShot)).toBe(false);
+
+  await sliceSlider.fill("1");
+  await sliceSlider.dispatchEvent("input");
+  await page.waitForTimeout(300);
+  const backToOneShot = await canvas.screenshot();
+  expect(backToOneShot.equals(sliceZeroShot)).toBe(false);
+
+  // Toggle back to 3D Orbit -- pipeline changes again, and rotation/zoom
+  // must keep working unregressed (drag confirms the camera still
+  // responds, matching the fourth test's own drag check).
+  await page.locator('[data-view-mode="0"]').click();
+  await page.waitForTimeout(300);
+  const backToOrbitShot = await canvas.screenshot();
+  expect(backToOrbitShot.equals(backToOneShot)).toBe(false);
+
+  const box = (await canvas.boundingBox())!;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  await page.mouse.move(centerX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(centerX + 80, centerY + 40, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const afterDrag = await canvas.screenshot();
+  expect(backToOrbitShot.equals(afterDrag)).toBe(false);
 });

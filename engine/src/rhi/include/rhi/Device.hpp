@@ -65,6 +65,8 @@ public:
     // camera). No-op (logged) if no volume is loaded -- unlike
     // setWindowLevel/setColormapPreset, the zoom clamp this pairs with
     // needs real AABB data, so there is nothing sensible to orbit yet.
+    // Also a no-op (logged) when the current view mode is not Orbit3D
+    // (see setViewMode) -- the 2D axial slice view has no camera to orbit.
     virtual void orbitCamera(float deltaYawPixels, float deltaPitchPixels) = 0;
 
     // wheelDeltaSign: pre-normalized by the caller to +-1 per wheel
@@ -73,8 +75,27 @@ public:
     // trackpad vs. mouse wheel -- rather than needing deltaMode-aware
     // normalization logic here). Distance adjusts by an adaptive step
     // (faster when far away already), clamped relative to the loaded
-    // volume's own size. No-op (logged) if no volume is loaded.
+    // volume's own size. No-op (logged) if no volume is loaded, or when
+    // the current view mode is not Orbit3D (see setViewMode).
     virtual void zoomCamera(float wheelDeltaSign) = 0;
+
+    // Selects which render pipeline drives renderFrame() (PRD §9 slice-
+    // panning gap, issue #37): 0 = Orbit3D (default -- the existing
+    // REQ-R06 orbit-camera raymarch view), 1 = AxialSlice2D (a real 2D
+    // single-slice cross-sectional view, see setAxialSliceIndex). An
+    // engine-owned uint32_t enum rather than a string, matching
+    // setColormapPreset's own reasoning -- an invalid value is rejected
+    // (logged), leaving the current mode unchanged. Safe to call before
+    // any volume is loaded -- like setWindowLevel/setColormapPreset, this
+    // only stores a plain value consumed by the next renderFrame().
+    virtual void setViewMode(uint32_t mode) = 0;
+
+    // Selects the Z slice (raw voxel index, not normalized) the
+    // AxialSlice2D view samples. No-op (logged) if no volume is loaded --
+    // there is no depth to clamp against yet, mirroring orbitCamera's
+    // no-volume no-op. Otherwise clamped to [0, depth-1]. On loadVolume,
+    // the engine defaults this to depth/2 (the volume's middle slice).
+    virtual void setAxialSliceIndex(uint32_t index) = 0;
 };
 
 }  // namespace omnimed3d::rhi

@@ -30,6 +30,20 @@
           <input id="dicom-files-input" type="file" multiple accept=".dcm,application/dicom" class="file-input" />
         </div>
       </div>
+      <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D axial-slice
+           view-mode toggle + slice slider. viewControls.ts owns showing/
+           hiding #axial-slice-row based on the active mode. -->
+      <div class="panel-section">
+        <div class="row preset-buttons view-mode-buttons">
+          <button type="button" data-view-mode="0">3D Orbit</button>
+          <button type="button" data-view-mode="1">2D Slice</button>
+        </div>
+        <div class="row" id="axial-slice-row" hidden>
+          <label for="axial-slice-index">Slice</label>
+          <input id="axial-slice-index" type="range" min="0" max="0" step="1" />
+          <span id="axial-slice-index-value" class="value"></span>
+        </div>
+      </div>
       <div class="panel-section">
         <div class="row">
           <label for="window-center">Window Center</label>

@@ -29,6 +29,8 @@ public:
     void setColormapPreset(uint32_t presetId) override;
     void orbitCamera(float deltaYawPixels, float deltaPitchPixels) override;
     void zoomCamera(float wheelDeltaSign) override;
+    void setViewMode(uint32_t mode) override;
+    void setAxialSliceIndex(uint32_t index) override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -47,10 +49,27 @@ private:
     // Raymarch pipeline setup -- built once when the device becomes ready,
     // independent of any loaded volume (bind group *layout* is static; the
     // bind group itself, which references specific texture views, is
-    // rebuilt per loadVolume() call -- see rebuildBindGroup()).
+    // rebuilt per loadVolume() call -- see rebuildBindGroup()). Also builds
+    // the axial-slice pipeline (issue #37) -- both pipelines share
+    // bindGroupLayout_/pipelineLayout_/uboBuffer_/bindGroup_ unchanged (see
+    // createRenderPipelineFor()'s own comment for why that's valid).
     void createPipeline();
     void createSamplerAndLut();
     void rebuildBindGroup();
+
+    // Factors out the blend-state/color-target/pipeline-descriptor
+    // boilerplate shared by both render pipelines (issue #37) -- the only
+    // difference between the raymarch and axial-slice pipelines is which
+    // shader module they run; bindGroupLayout_/pipelineLayout_ are built
+    // once by createPipeline() and passed in unchanged. Both shaders
+    // declare the exact same 5-entry bind group layout (uniform buffer,
+    // volume tex, sampler, mask tex, LUT tex), so one WGPUBindGroup
+    // (bindGroup_, referencing uboBuffer_ sized for the larger
+    // RaymarchUBO) is valid for whichever pipeline is bound -- WebGPU
+    // validates the bound buffer range against each shader's own
+    // reflected minimum size, and RaymarchUBO's 224 bytes comfortably
+    // covers AxialSliceUBO's 32.
+    WGPURenderPipeline createRenderPipelineFor(WGPUShaderModule module);
 
     // Frames a default camera and world-space AABB from the loaded
     // volume's voxel dimensions + physical spacing, resetting
@@ -102,6 +121,19 @@ private:
     // Rebuilt in rebuildBindGroup() -- depends on volumeTextureView_/
     // maskTextureView_, which change every loadVolume() call.
     WGPUBindGroup bindGroup_ = nullptr;
+
+    // Axial-slice pipeline (issue #37, PRD §9 slice-panning gap) -- shares
+    // bindGroupLayout_/pipelineLayout_/uboBuffer_/bindGroup_ with the
+    // raymarch pipeline above; only the shader module and pipeline object
+    // differ. See createRenderPipelineFor()'s header comment.
+    WGPUShaderModule axialShaderModule_ = nullptr;
+    WGPURenderPipeline axialPipeline_ = nullptr;
+
+    // 0 = Orbit3D (default), 1 = AxialSlice2D -- see setViewMode().
+    uint32_t viewMode_ = 0;
+    // Raw voxel Z index for the AxialSlice2D view -- defaulted to
+    // depth/2 on loadVolume(), see setAxialSliceIndex().
+    uint32_t axialSliceIndex_ = 0;
 
     // Camera + AABB. aabbMin_/aabbMax_ and the cameraYaw_/cameraPitch_/
     // cameraDistance_ defaults are (re)framed per loadVolume() call (see

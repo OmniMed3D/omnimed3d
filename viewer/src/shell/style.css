@@ -117,6 +117,24 @@ canvas {
   filter: brightness(1.25);
 }
 
+/* Issue #37: first pressed-state treatment in this codebase -- reuses the
+   existing primary-action color (.upload-btn's #2a3a5c) rather than
+   inventing a new palette token, plus a brighter border as a second,
+   distinct cue. Scoped to .view-mode-buttons so it doesn't also apply to
+   the colormap preset buttons above, which have no concept of "active"
+   (each click just fires a one-shot preset apply). */
+.view-mode-buttons button.active {
+  background: #2a3a5c;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* .row sets display:flex, which otherwise beats the UA [hidden]
+   stylesheet's display:none on specificity -- this selector (0,2,0) beats
+   .row alone (0,1,0). */
+.row[hidden] {
+  display: none;
+}
+
 @media (max-width: 640px) {
   #control-panel {
     width: calc(100vw - 24px);

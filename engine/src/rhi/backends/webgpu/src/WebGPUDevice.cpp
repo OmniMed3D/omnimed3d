@@ -1,5 +1,6 @@
 #include "rhi/webgpu/WebGPUDevice.hpp"
 
+#include "axial_slice.wgsl.hpp"
 #include "volume_raymarch.wgsl.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -59,6 +60,25 @@ static_assert(offsetof(RaymarchUBO, rayParams) == 176);
 static_assert(offsetof(RaymarchUBO, window) == 192);
 static_assert(offsetof(RaymarchUBO, maskParams) == 208);
 static_assert(sizeof(RaymarchUBO) == 224);
+
+// Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang (issue
+// #37) -- deliberately a separate, smaller struct rather than reusing
+// RaymarchUBO: the 2D slice view needs no camera/AABB/ray-march fields,
+// and forcing one shared struct would make RaymarchUBO's own "mirrors the
+// shader field for field" comment above untrue for whichever shader
+// didn't declare all its fields.
+struct AxialSliceUBO {
+    glm::vec4 sliceParams;  // x=sliceIndex (raw voxel index), y=windowCenter, z=windowWidth, w unused
+    glm::vec4 maskParams;   // x=overlayEnabled, y=overlayAlpha, zw unused
+};
+
+static_assert(offsetof(AxialSliceUBO, sliceParams) == 0);
+static_assert(offsetof(AxialSliceUBO, maskParams) == 16);
+static_assert(sizeof(AxialSliceUBO) == 32);
+
+// View modes for WebGPUDevice::setViewMode() (issue #37).
+constexpr uint32_t kViewModeOrbit3D = 0;
+constexpr uint32_t kViewModeAxialSlice2D = 1;
 
 // Baseline clinical window/level presets (REQ-R03) -- values sourced from
 // Mini-Engine-reference's medical-volume primer doc, per PRD Appendix A's
@@ -208,14 +228,64 @@ void WebGPUDevice::createSamplerAndLut() {
     setColormapPreset(kDefaultColormapPreset);
 }
 
-void WebGPUDevice::createPipeline() {
+namespace {
+WGPUShaderModule createShaderModuleFromWgsl(WGPUDevice device, char const* wgslSource) {
     WGPUShaderModuleDescriptor shaderDesc{};
-    WGPUShaderSourceWGSL wgslSource{};
-    wgslSource.chain.sType = WGPUSType_ShaderSourceWGSL;
-    wgslSource.code = WGPUStringView{kVolumeRaymarchWgsl, WGPU_STRLEN};
-    shaderDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&wgslSource);
-    shaderModule_ = wgpuDeviceCreateShaderModule(device_, &shaderDesc);
+    WGPUShaderSourceWGSL wgslSourceDesc{};
+    wgslSourceDesc.chain.sType = WGPUSType_ShaderSourceWGSL;
+    wgslSourceDesc.code = WGPUStringView{wgslSource, WGPU_STRLEN};
+    shaderDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&wgslSourceDesc);
+    return wgpuDeviceCreateShaderModule(device, &shaderDesc);
+}
+}  // namespace
 
+WGPURenderPipeline WebGPUDevice::createRenderPipelineFor(WGPUShaderModule module) {
+    WGPUBlendComponent colorBlend{};
+    colorBlend.operation = WGPUBlendOperation_Add;
+    colorBlend.srcFactor = WGPUBlendFactor_One;
+    colorBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+
+    WGPUBlendComponent alphaBlend{};
+    alphaBlend.operation = WGPUBlendOperation_Add;
+    alphaBlend.srcFactor = WGPUBlendFactor_One;
+    alphaBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+
+    WGPUBlendState blendState{};
+    blendState.color = colorBlend;
+    blendState.alpha = alphaBlend;
+
+    WGPUColorTargetState colorTarget{};
+    colorTarget.format = WGPUTextureFormat_BGRA8Unorm;
+    colorTarget.blend = &blendState;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState{};
+    fragmentState.module = module;
+    fragmentState.entryPoint = WGPUStringView{"fragmentMain", WGPU_STRLEN};
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+
+    WGPURenderPipelineDescriptor pipelineDesc{};
+    pipelineDesc.layout = pipelineLayout_;
+    pipelineDesc.vertex.module = module;
+    pipelineDesc.vertex.entryPoint = WGPUStringView{"vertexMain", WGPU_STRLEN};
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+    pipelineDesc.fragment = &fragmentState;
+    return wgpuDeviceCreateRenderPipeline(device_, &pipelineDesc);
+}
+
+void WebGPUDevice::createPipeline() {
+    shaderModule_ = createShaderModuleFromWgsl(device_, kVolumeRaymarchWgsl);
+    axialShaderModule_ = createShaderModuleFromWgsl(device_, kAxialSliceWgsl);
+
+    // Shared by both pipelines (issue #37) -- both shaders declare the
+    // exact same 5-entry layout, see createRenderPipelineFor()'s header
+    // comment for why one bind group layout/pipeline layout/UBO buffer is
+    // valid for both.
     std::array<WGPUBindGroupLayoutEntry, 5> entries{};
     entries[0].binding = 0;
     entries[0].visibility = WGPUShaderStage_Fragment;
@@ -250,43 +320,14 @@ void WebGPUDevice::createPipeline() {
     layoutDesc.bindGroupLayouts = &bindGroupLayout_;
     pipelineLayout_ = wgpuDeviceCreatePipelineLayout(device_, &layoutDesc);
 
-    WGPUBlendComponent colorBlend{};
-    colorBlend.operation = WGPUBlendOperation_Add;
-    colorBlend.srcFactor = WGPUBlendFactor_One;
-    colorBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    pipeline_ = createRenderPipelineFor(shaderModule_);
+    axialPipeline_ = createRenderPipelineFor(axialShaderModule_);
 
-    WGPUBlendComponent alphaBlend{};
-    alphaBlend.operation = WGPUBlendOperation_Add;
-    alphaBlend.srcFactor = WGPUBlendFactor_One;
-    alphaBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
-
-    WGPUBlendState blendState{};
-    blendState.color = colorBlend;
-    blendState.alpha = alphaBlend;
-
-    WGPUColorTargetState colorTarget{};
-    colorTarget.format = WGPUTextureFormat_BGRA8Unorm;
-    colorTarget.blend = &blendState;
-    colorTarget.writeMask = WGPUColorWriteMask_All;
-
-    WGPUFragmentState fragmentState{};
-    fragmentState.module = shaderModule_;
-    fragmentState.entryPoint = WGPUStringView{"fragmentMain", WGPU_STRLEN};
-    fragmentState.targetCount = 1;
-    fragmentState.targets = &colorTarget;
-
-    WGPURenderPipelineDescriptor pipelineDesc{};
-    pipelineDesc.layout = pipelineLayout_;
-    pipelineDesc.vertex.module = shaderModule_;
-    pipelineDesc.vertex.entryPoint = WGPUStringView{"vertexMain", WGPU_STRLEN};
-    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
-    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
-    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
-    pipelineDesc.multisample.count = 1;
-    pipelineDesc.multisample.mask = 0xFFFFFFFF;
-    pipelineDesc.fragment = &fragmentState;
-    pipeline_ = wgpuDeviceCreateRenderPipeline(device_, &pipelineDesc);
-
+    // Sized for the larger of the two UBOs (RaymarchUBO, 224 bytes) --
+    // AxialSliceUBO (32 bytes) is written into the same buffer's leading
+    // bytes when the axial-slice pipeline is active. See
+    // createRenderPipelineFor()'s header comment for why WebGPU accepts
+    // one buffer/bind group across both pipelines.
     WGPUBufferDescriptor uboDesc{};
     uboDesc.size = sizeof(RaymarchUBO);
     uboDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
@@ -404,24 +445,36 @@ void WebGPUDevice::renderFrame() {
         renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
         renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
 
-        glm::vec3 const halfExtent = (aabbMax_ - aabbMin_) * 0.5F;
-        float const diagonal = glm::length(halfExtent) * 2.0F;
+        if (viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
+            AxialSliceUBO ubo{};
+            ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
+            ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
 
-        RaymarchUBO ubo{};
-        ubo.invView = invView_;
-        ubo.invProj = invProj_;
-        ubo.cameraPos = glm::vec4{cameraPos_, 0.0F};
-        ubo.aabbMin = glm::vec4{aabbMin_, 0.0F};
-        ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
-        ubo.rayParams = glm::vec4{diagonal / 384.0F, 512.0F, 8.0F, 0.0F};
-        ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
-        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+            wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
 
-        wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+            wgpuRenderPassEncoderSetPipeline(pass, axialPipeline_);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
+            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        } else {
+            glm::vec3 const halfExtent = (aabbMax_ - aabbMin_) * 0.5F;
+            float const diagonal = glm::length(halfExtent) * 2.0F;
 
-        wgpuRenderPassEncoderSetPipeline(pass, pipeline_);
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
-        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+            RaymarchUBO ubo{};
+            ubo.invView = invView_;
+            ubo.invProj = invProj_;
+            ubo.cameraPos = glm::vec4{cameraPos_, 0.0F};
+            ubo.aabbMin = glm::vec4{aabbMin_, 0.0F};
+            ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
+            ubo.rayParams = glm::vec4{diagonal / 384.0F, 512.0F, 8.0F, 0.0F};
+            ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
+            ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+
+            wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+
+            wgpuRenderPassEncoderSetPipeline(pass, pipeline_);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
+            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        }
     }
 
     wgpuRenderPassEncoderEnd(pass);
@@ -536,6 +589,10 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     volumeWidth_ = width;
     volumeHeight_ = height;
     volumeDepth_ = depth;
+    // Defaults the AxialSlice2D view to the volume's middle slice (issue
+    // #37) -- mirrors frameCameraForVolume()'s own reset-defaults-on-load
+    // pattern for the Orbit3D camera below.
+    axialSliceIndex_ = depth > 0 ? depth / 2 : 0;
 
     frameCameraForVolume(width, height, depth, spacingX, spacingY, spacingZ);
     rebuildBindGroup();
@@ -602,8 +659,8 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
 }
 
 void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
-    if (!hasVolume_) {
-        std::printf("WebGPUDevice::orbitCamera: no volume loaded, ignoring\n");
+    if (!hasVolume_ || viewMode_ != kViewModeOrbit3D) {
+        std::printf("WebGPUDevice::orbitCamera: no volume loaded or not in Orbit3D mode, ignoring\n");
         return;
     }
 
@@ -616,8 +673,8 @@ void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
 }
 
 void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
-    if (!hasVolume_) {
-        std::printf("WebGPUDevice::zoomCamera: no volume loaded, ignoring\n");
+    if (!hasVolume_ || viewMode_ != kViewModeOrbit3D) {
+        std::printf("WebGPUDevice::zoomCamera: no volume loaded or not in Orbit3D mode, ignoring\n");
         return;
     }
 
@@ -634,6 +691,22 @@ void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
     cameraDistance_ = std::clamp(cameraDistance_, extent * 0.3F, extent * 10.0F);
 
     updateCameraMatrices();
+}
+
+void WebGPUDevice::setViewMode(uint32_t mode) {
+    if (mode != kViewModeOrbit3D && mode != kViewModeAxialSlice2D) {
+        std::printf("WebGPUDevice::setViewMode: invalid mode=%u, ignoring\n", mode);
+        return;
+    }
+    viewMode_ = mode;
+}
+
+void WebGPUDevice::setAxialSliceIndex(uint32_t index) {
+    if (!hasVolume_) {
+        std::printf("WebGPUDevice::setAxialSliceIndex: no volume loaded, ignoring\n");
+        return;
+    }
+    axialSliceIndex_ = std::min(index, volumeDepth_ - 1);
 }
 
 }  // namespace omnimed3d::rhi::webgpu

@@ -18,7 +18,12 @@
 const DEFAULT_WINDOW_CENTER = 40;
 const DEFAULT_WINDOW_WIDTH = 400;
 
-function bindRangeInput(inputId: string, valueId: string, initial: number, onInput: (value: number) => void): void {
+export function bindRangeInput(
+  inputId: string,
+  valueId: string,
+  initial: number,
+  onInput: (value: number) => void,
+): void {
   const input = document.getElementById(inputId) as HTMLInputElement | null;
   const valueLabel = document.getElementById(valueId);
   if (!input || !valueLabel) {

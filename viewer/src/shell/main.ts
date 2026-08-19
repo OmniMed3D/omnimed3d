@@ -26,6 +26,7 @@
 import { setupFilePicker } from "./filePicker.js";
 import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
+import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -55,6 +56,8 @@ interface EngineModule {
   _engine_set_colormap_preset(presetId: number): void;
   _engine_orbit_camera(deltaYawPixels: number, deltaPitchPixels: number): void;
   _engine_zoom_camera(wheelDeltaSign: number): void;
+  _engine_set_view_mode(mode: number): void;
+  _engine_set_axial_slice_index(index: number): void;
 }
 
 declare global {
@@ -201,6 +204,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
       msg.spacingZ,
     );
   });
+  notifyVolumeLoaded(msg.depth);
 }
 
 function engineApplyMaskSlice(msg: MaskSliceMessage): void {
@@ -285,6 +289,7 @@ async function main() {
   setupFilePicker(loadVolumeFromFiles);
   setupCameraControls();
   setupWindowLevelControls();
+  setupViewControls();
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
 }
