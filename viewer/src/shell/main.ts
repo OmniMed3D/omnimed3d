@@ -27,6 +27,7 @@ import { setupFilePicker } from "./filePicker.js";
 import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
+import { setupCanvasResize } from "./canvasResize.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -58,6 +59,7 @@ interface EngineModule {
   _engine_zoom_camera(wheelDeltaSign: number): void;
   _engine_set_view_mode(mode: number): void;
   _engine_set_axial_slice_index(index: number): void;
+  _engine_resize(width: number, height: number): void;
 }
 
 declare global {
@@ -103,14 +105,24 @@ interface MaskSliceMessage {
   data: ArrayBuffer;
 }
 
-function waitForEngineReady(): Promise<void> {
+// Issue #40: resolves false on timeout instead of polling forever --
+// previously a WebGPU-unavailable browser/device (no adapter, so
+// _engine_is_ready() never becomes true) left the Shell stuck at "shell:
+// loading..." indefinitely with no user-facing signal. 15s matches the
+// timeout the e2e suite already uses for #shell-status waits.
+function waitForEngineReady(timeoutMs = 15000): Promise<boolean> {
   return new Promise((resolve) => {
+    const deadline = performance.now() + timeoutMs;
     function poll() {
       // Must not call _engine_is_ready() before onRuntimeInitialized has
       // fired (index.html sets this flag there) -- doing so trips
       // Emscripten's ASSERTIONS=1 check and aborts the whole module.
       if (window.__engineRuntimeInitialized && window.Module._engine_is_ready()) {
-        resolve();
+        resolve(true);
+        return;
+      }
+      if (performance.now() >= deadline) {
+        resolve(false);
         return;
       }
       requestAnimationFrame(poll);
@@ -225,8 +237,18 @@ function engineApplyMaskSlice(msg: MaskSliceMessage): void {
 }
 
 async function main() {
-  await waitForEngineReady();
+  const engineReady = await waitForEngineReady();
+  if (!engineReady) {
+    // Issue #40: WebGPU-unavailable (or otherwise stuck) fallback -- see
+    // waitForEngineReady's own comment. Stop here rather than proceeding
+    // to construct Workers/wire message routing against an engine that
+    // will never respond.
+    document.getElementById("shell-status")!.textContent = "shell: engine failed to start";
+    document.getElementById("engine-error")!.hidden = false;
+    return;
+  }
   document.getElementById("shell-status")!.textContent = "shell: engine ready";
+  setupCanvasResize();
 
   const parseWorker = new Worker(new URL("../workers/parse-worker/src/worker.ts", import.meta.url), {
     type: "module",

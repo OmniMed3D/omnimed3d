@@ -6,6 +6,24 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- Issue #40: canvas is first in the DOM and fills the viewport
+         (style.css) -- everything else below stacks visibly on top of it
+         without needing z-index, since later-DOM-order positioned
+         elements paint over earlier ones by default. Initial
+         width/height are a placeholder only; canvasResize.ts overwrites
+         them (via engine_resize) as soon as a ResizeObserver fires,
+         which happens immediately on observe(), before or shortly after
+         first paint. -->
+    <canvas id="canvas" width="640" height="480"></canvas>
+
+    <!-- Issue #40: shown only if the engine never becomes ready within
+         waitForEngineReady()'s timeout (e.g. no WebGPU adapter on this
+         browser/device) -- see main.ts. Hidden by default. -->
+    <div id="engine-error" hidden>
+      This browser or device doesn't support the graphics features this
+      viewer needs. Try a recent version of Google Chrome.
+    </div>
+
     <!-- #status is Emscripten's own runtime status (Module.setStatus) --
          don't also write Shell-side progress there, it gets clobbered by
          the runtime's own updates. Shell progress goes in #shell-status
@@ -13,7 +31,6 @@
          document.title for its own progress rather than #status). -->
     <div id="status">loading...</div>
     <div id="shell-status">shell: loading...</div>
-    <canvas id="canvas" width="640" height="480"></canvas>
     <pre id="log"></pre>
 
     <!-- Issue #34 (REQ-R06): file picker + window/level control panel.
