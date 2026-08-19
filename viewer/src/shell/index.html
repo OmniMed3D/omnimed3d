@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title>OmniMed3D Shell</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <!-- #status is Emscripten's own runtime status (Module.setStatus) --
@@ -14,6 +15,41 @@
     <div id="shell-status">shell: loading...</div>
     <canvas id="canvas" width="640" height="480"></canvas>
     <pre id="log"></pre>
+
+    <!-- Issue #34 (REQ-R06): file picker + window/level control panel.
+         Camera controls (cameraControls.ts) have no DOM of their own --
+         they listen directly on #canvas/window. -->
+    <div id="control-panel">
+      <div class="panel-section">
+        <div class="row">
+          <label for="dicom-folder-input" class="upload-btn">Load DICOM folder</label>
+          <input id="dicom-folder-input" type="file" webkitdirectory multiple class="file-input" />
+        </div>
+        <div class="row">
+          <label for="dicom-files-input" class="upload-btn secondary">Load DICOM files</label>
+          <input id="dicom-files-input" type="file" multiple accept=".dcm,application/dicom" class="file-input" />
+        </div>
+      </div>
+      <div class="panel-section">
+        <div class="row">
+          <label for="window-center">Window Center</label>
+          <input id="window-center" type="range" min="-1000" max="1000" step="1" />
+          <span id="window-center-value" class="value"></span>
+        </div>
+        <div class="row">
+          <label for="window-width">Window Width</label>
+          <input id="window-width" type="range" min="1" max="4000" step="1" />
+          <span id="window-width-value" class="value"></span>
+        </div>
+        <div class="row preset-buttons">
+          <!-- data-colormap-preset values must match WebGPUDevice.cpp's kColormapPresets order. -->
+          <button type="button" data-colormap-preset="0">Lung</button>
+          <button type="button" data-colormap-preset="1">Bone</button>
+          <button type="button" data-colormap-preset="2">Soft Tissue</button>
+          <button type="button" data-colormap-preset="3">Brain</button>
+        </div>
+      </div>
+    </div>
 
     <script type="text/javascript">
       // Classic (non-MODULARIZE) Emscripten output for the rendering engine

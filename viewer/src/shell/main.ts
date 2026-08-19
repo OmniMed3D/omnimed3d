@@ -8,14 +8,24 @@
  * - the malloc/HEAPU8/free pattern for crossing into WASM linear memory,
  *   the same pattern engine/tests/wasm_smoke/shell.html already proved.
  *
- * Not yet the full Shell (REQ-R06) -- no file-picking UI exists yet, so
- * `omnimed3dTestHooks` below exposes the entry points a real UI (or, for
- * now, the Playwright e2e test in viewer/tests/e2e/) drives directly.
+ * `loadVolumeFromFiles` below is the shared entry point for turning
+ * picked files into a loaded volume -- both `filePicker.ts` (issue #34,
+ * REQ-R06) and `omnimed3dTestHooks` (kept for the Playwright e2e tests in
+ * viewer/tests/e2e/) go through the same Worker instances and volumeId
+ * bookkeeping, so out-of-order/stale-volumeId behavior is identical
+ * regardless of which one drove the load. `cameraControls.ts`/
+ * `windowLevelControls.ts` call the engine's WASM camera/window-level
+ * exports directly (no Shell-owned state to route through -- unlike
+ * volume/mask data, those calls don't need a volumeId or Worker hop).
+ *
  * Issue #20 ("Finalize Mask Data Contract and Rendering Integration")
- * tracks this wiring; an earlier version of this file's comment
- * mislabeled it "issue #21" (that number is unrelated -- see
- * docs/prd/CHANGELOG.md's own correction of the same mistake).
+ * tracks the original mask-routing wiring; an earlier version of this
+ * file's comment mislabeled it "issue #21" (that number is unrelated --
+ * see docs/prd/CHANGELOG.md's own correction of the same mistake).
  */
+import { setupFilePicker } from "./filePicker.js";
+import { setupCameraControls } from "./cameraControls.js";
+import { setupWindowLevelControls } from "./windowLevelControls.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -41,6 +51,10 @@ interface EngineModule {
     dataPtr: number,
     byteLength: number,
   ): void;
+  _engine_set_window_level(center: number, width: number): void;
+  _engine_set_colormap_preset(presetId: number): void;
+  _engine_orbit_camera(deltaYawPixels: number, deltaPitchPixels: number): void;
+  _engine_zoom_camera(wheelDeltaSign: number): void;
 }
 
 declare global {
@@ -114,11 +128,46 @@ let nextNumericVolumeId = 1;
 const volumeIdMap = new Map<string, number>();
 let currentVolumeId: string | null = null;
 
+// Assigned once in main() -- module-scope (not a main()-local) so
+// loadVolumeFromFiles can reach the same Worker instance
+// omnimed3dTestHooks/the message-routing handlers below use, rather than
+// each caller getting its own disconnected Worker with its own state.
+let parseWorkerInstance: Worker | undefined;
+
+// True once the Inference Worker has ack'd an "init" (model load). Issue
+// #34 adds a real file-picker that can load a volume without any model
+// ever being loaded (no "load model" UI exists yet -- out of scope, see
+// the plan this issue implements: the repo's only model fixture is a
+// dummy, plumbing-only ONNX graph, see
+// tests/fixtures/generate-dummy-onnx.py). Before this flag existed,
+// hu-slice was unconditionally forwarded to the Inference Worker, which
+// threw ("received a slice before 'init'") the first time a real
+// file-picker load happened with no model loaded -- reachable only via
+// the e2e test before, which always initialized a (dummy) model first.
+let inferenceWorkerReady = false;
+
 function mintVolumeId(): string {
   const id = crypto.randomUUID();
   volumeIdMap.set(id, nextNumericVolumeId++);
   currentVolumeId = id;
   return id;
+}
+
+/**
+ * Shared entry point for turning picked files into a loaded volume
+ * (issue #34) -- mints a volumeId and posts a `parse-series` message to
+ * the real Parse Worker, the same pattern `omnimed3dTestHooks`-driven
+ * flows already used by hand. `files` may be a single- or multi-file
+ * series (e.g. one file per axial slice).
+ */
+export async function loadVolumeFromFiles(files: File[]): Promise<string> {
+  if (!parseWorkerInstance) {
+    throw new Error("loadVolumeFromFiles called before the Shell finished initializing");
+  }
+  const volumeId = mintVolumeId();
+  const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
+  parseWorkerInstance.postMessage({ type: "parse-series", volumeId, files: buffers }, buffers);
+  return volumeId;
 }
 
 function withWasmBuffer<T>(byteLength: number, fn: (ptr: number) => T): T {
@@ -178,6 +227,7 @@ async function main() {
   const parseWorker = new Worker(new URL("../workers/parse-worker/src/worker.ts", import.meta.url), {
     type: "module",
   });
+  parseWorkerInstance = parseWorker;
   const inferenceWorker = new Worker(new URL("../workers/inference-worker/src/worker.ts", import.meta.url), {
     type: "module",
   });
@@ -206,16 +256,22 @@ async function main() {
   parseWorker.onmessage = (event: MessageEvent<HuSliceMessage | VolumeReadyMessage>) => {
     const msg = event.data;
     if (msg.type === "hu-slice") {
-      inferenceWorker.postMessage(msg, [msg.data]);
+      if (inferenceWorkerReady) {
+        inferenceWorker.postMessage(msg, [msg.data]);
+      } else {
+        console.log("Shell: dropping hu-slice -- no model loaded in the Inference Worker yet");
+      }
     } else if (msg.type === "volume-ready") {
       engineLoadVolume(msg);
     }
   };
 
-  inferenceWorker.onmessage = (event: MessageEvent<MaskSliceMessage>) => {
+  inferenceWorker.onmessage = (event: MessageEvent<MaskSliceMessage | { type: string }>) => {
     const msg = event.data;
-    if (msg.type === "mask-slice") {
-      engineApplyMaskSlice(msg);
+    if (msg.type === "init-complete") {
+      inferenceWorkerReady = true;
+    } else if (msg.type === "mask-slice") {
+      engineApplyMaskSlice(msg as MaskSliceMessage);
     }
   };
 
@@ -226,8 +282,11 @@ async function main() {
     currentVolumeId: () => currentVolumeId,
   };
 
-  document.getElementById("shell-status")!.textContent =
-    "shell: ready for input (no file-picker UI yet -- see omnimed3dTestHooks)";
+  setupFilePicker(loadVolumeFromFiles);
+  setupCameraControls();
+  setupWindowLevelControls();
+
+  document.getElementById("shell-status")!.textContent = "shell: ready for input";
 }
 
 main();

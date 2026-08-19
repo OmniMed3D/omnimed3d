@@ -27,6 +27,8 @@ public:
                          void const* data, size_t byteLength) override;
     void setWindowLevel(float center, float width) override;
     void setColormapPreset(uint32_t presetId) override;
+    void orbitCamera(float deltaYawPixels, float deltaPitchPixels) override;
+    void zoomCamera(float wheelDeltaSign) override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -50,16 +52,20 @@ private:
     void createSamplerAndLut();
     void rebuildBindGroup();
 
-    // Auto-frames a default camera and world-space AABB from the loaded
-    // volume's voxel dimensions + physical spacing -- no interactive camera
-    // controls yet (REQ-R06 / roadmap step 8, separate not-yet-started
-    // work), just a fixed, automatically-reasonable view so the raymarch
-    // output is visually inspectable. World axes already match the
-    // canonical LPS convention the Parse Worker normalizes to upstream
-    // (viewer/README.md) -- up=+Z puts patient-Superior at the top of the
-    // frame.
+    // Frames a default camera and world-space AABB from the loaded
+    // volume's voxel dimensions + physical spacing, resetting
+    // cameraYaw_/cameraPitch_/cameraDistance_ to their defaults. World
+    // axes already match the canonical LPS convention the Parse Worker
+    // normalizes to upstream (viewer/README.md) -- up=+Z puts
+    // patient-Superior at the top of the frame.
     void frameCameraForVolume(uint32_t width, uint32_t height, uint32_t depth,
                                float spacingX, float spacingY, float spacingZ);
+
+    // Recomputes invView_/invProj_ from the current
+    // cameraYaw_/cameraPitch_/cameraDistance_ + aabbMin_/aabbMax_ --
+    // called after frameCameraForVolume() resets those, and again after
+    // orbitCamera()/zoomCamera() update them interactively (REQ-R06).
+    void updateCameraMatrices();
 
     WGPUInstance instance_ = nullptr;
     WGPUAdapter adapter_ = nullptr;
@@ -97,13 +103,20 @@ private:
     // maskTextureView_, which change every loadVolume() call.
     WGPUBindGroup bindGroup_ = nullptr;
 
-    // Camera + AABB, auto-framed per loadVolume() call -- see
-    // frameCameraForVolume().
+    // Camera + AABB. aabbMin_/aabbMax_ and the cameraYaw_/cameraPitch_/
+    // cameraDistance_ defaults are (re)framed per loadVolume() call (see
+    // frameCameraForVolume()); the latter three are then interactively
+    // updated by orbitCamera()/zoomCamera() (REQ-R06) via
+    // updateCameraMatrices(), which recomputes invView_/invProj_/
+    // cameraPos_ from them.
     glm::mat4 invView_{1.0F};
     glm::mat4 invProj_{1.0F};
     glm::vec3 cameraPos_{0.0F};
     glm::vec3 aabbMin_{0.0F};
     glm::vec3 aabbMax_{0.0F};
+    float cameraYaw_ = 0.0F;
+    float cameraPitch_ = 0.0F;
+    float cameraDistance_ = 0.0F;
 
     // Window/level + mask overlay parameters -- defaults applied in
     // createPipeline(); overridden via setWindowLevel()/setColormapPreset()

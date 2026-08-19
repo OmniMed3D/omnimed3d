@@ -4,6 +4,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,12 @@ constexpr uint32_t kCanvasWidth = 640;
 constexpr uint32_t kCanvasHeight = 480;
 
 constexpr uint32_t kLutSize = 256;
+
+// REQ-R06 interactive camera tuning -- rad/px, matching Mini-Engine-
+// reference's WASM/mobile-tuned Camera::rotate() sensitivity (this is a
+// browser-only target, so their separate native-build constant doesn't
+// apply here).
+constexpr float kOrbitSensitivity = 0.0025F;
 
 void logStringView(char const* prefix, WGPUStringView message) {
     if (message.data && message.length > 0) {
@@ -300,24 +307,33 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
     aabbMin_ = -halfExtent;
     aabbMax_ = halfExtent;
 
-    float const distance = glm::length(halfExtent) * 2.5F;
-    float const azimuth = glm::radians(35.0F);
-    float const elevation = glm::radians(25.0F);
+    cameraYaw_ = glm::radians(35.0F);
+    cameraPitch_ = glm::radians(25.0F);
+    cameraDistance_ = glm::length(halfExtent) * 2.5F;
+
+    updateCameraMatrices();
+}
+
+void WebGPUDevice::updateCameraMatrices() {
+    // Spherical-coordinate orbit camera (yaw/pitch/distance around the
+    // AABB's center), matching Mini-Engine-reference's validated
+    // Camera::updateCameraVectors(). up=+Z (patient Superior) puts the
+    // top of the patient at the top of the frame -- Mini-Engine's own
+    // hard-learned lesson ("row 0 = Superior must map to screen top"),
+    // applied here to the camera rather than a pixel-row flip since this
+    // engine's world axes are already LPS-canonical by the time
+    // loadVolume() is called.
     glm::vec3 const eye{
-        distance * std::cos(elevation) * std::sin(azimuth),
-        distance * std::cos(elevation) * std::cos(azimuth) * -1.0F,
-        distance * std::sin(elevation),
+        cameraDistance_ * std::cos(cameraPitch_) * std::sin(cameraYaw_),
+        cameraDistance_ * std::cos(cameraPitch_) * std::cos(cameraYaw_) * -1.0F,
+        cameraDistance_ * std::sin(cameraPitch_),
     };
     cameraPos_ = eye;
 
-    // up=+Z (patient Superior) puts the top of the patient at the top of
-    // the frame -- Mini-Engine-reference's own hard-learned lesson ("row 0
-    // = Superior must map to screen top"), applied here to the camera
-    // rather than a pixel-row flip since this engine's world axes are
-    // already LPS-canonical by the time loadVolume() is called.
     glm::mat4 const view = glm::lookAt(eye, glm::vec3{0.0F}, glm::vec3{0.0F, 0.0F, 1.0F});
     float const aspect = static_cast<float>(kCanvasWidth) / static_cast<float>(kCanvasHeight);
-    glm::mat4 const proj = glm::perspective(glm::radians(45.0F), aspect, distance * 0.1F, distance * 3.0F);
+    glm::mat4 const proj =
+        glm::perspective(glm::radians(45.0F), aspect, cameraDistance_ * 0.1F, cameraDistance_ * 3.0F);
 
     invView_ = glm::inverse(view);
     invProj_ = glm::inverse(proj);
@@ -583,6 +599,41 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
     ColormapPreset const& preset = kColormapPresets[presetId];
     windowCenter_ = preset.center;
     windowWidth_ = preset.width;
+}
+
+void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
+    if (!hasVolume_) {
+        std::printf("WebGPUDevice::orbitCamera: no volume loaded, ignoring\n");
+        return;
+    }
+
+    cameraYaw_ -= deltaYawPixels * kOrbitSensitivity;
+    cameraPitch_ -= deltaPitchPixels * kOrbitSensitivity;
+    // Gimbal-flip guard -- yaw is intentionally left unclamped (free spin).
+    cameraPitch_ = std::clamp(cameraPitch_, glm::radians(-89.0F), glm::radians(89.0F));
+
+    updateCameraMatrices();
+}
+
+void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
+    if (!hasVolume_) {
+        std::printf("WebGPUDevice::zoomCamera: no volume loaded, ignoring\n");
+        return;
+    }
+
+    glm::vec3 const halfExtent = (aabbMax_ - aabbMin_) * 0.5F;
+    float const extent = glm::length(halfExtent);
+
+    // Adaptive step (faster when already far away, via cameraDistance_'s
+    // own contribution), matching Mini-Engine-reference's Camera::zoom()
+    // -- but with a floor relative to this volume's own size rather than
+    // their fixed absolute 1.5, since world units here are physical mm
+    // and vary per volume.
+    float const zoomSpeed = std::max(extent * 0.05F, cameraDistance_ * 0.08F);
+    cameraDistance_ -= wheelDeltaSign * zoomSpeed;
+    cameraDistance_ = std::clamp(cameraDistance_, extent * 0.3F, extent * 10.0F);
+
+    updateCameraMatrices();
 }
 
 }  // namespace omnimed3d::rhi::webgpu

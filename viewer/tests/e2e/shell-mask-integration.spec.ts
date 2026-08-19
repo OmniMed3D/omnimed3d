@@ -21,6 +21,13 @@ import { expect, test } from "@playwright/test";
  * screenshot" note, referenced in an earlier version of this file, was a
  * manual, non-reproducible, one-off step -- confirmed via
  * docs/verification/shell-mask-integration.md, not assumed).
+ *
+ * The fourth test (issue #34 DoD) drives the real, production UI --
+ * `#dicom-files-input`, mouse drag on `#canvas`, wheel, and the
+ * window/level slider/preset controls -- instead of
+ * `omnimed3dTestHooks`, automating PRD §9's "successful initial
+ * interaction (rotation, zoom) by non-developer testers within 3
+ * unassisted attempts" criterion rather than leaving it as a manual claim.
  */
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
@@ -146,9 +153,7 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
   expect(countLines(/WebGPUDevice::applyMaskSlice: volumeId=1 .* applied/)).toBe(staleAppliedCountBefore);
 });
 
-test("raymarch pass actually draws real DICOM data, not just the flat clear color (issue #29)", async ({
-  page,
-}) => {
+test("raymarch pass actually draws real DICOM data, not just the flat clear color (issue #29)", async ({ page }) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
 
@@ -256,4 +261,59 @@ test("mask overlay actually composites over the rendered volume (issue #29)", as
   // Same real-not-fabricated check as the previous test: a genuinely
   // composited overlay changes the rendered (and thus encoded PNG) output.
   expect(volumeOnlyShot.equals(withMaskShot)).toBe(false);
+});
+
+test("real UI: file picker, camera drag, wheel zoom, and window/level controls all visually work (issue #34)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+  async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  const canvas = page.locator("#canvas");
+  const beforeLoad = await canvas.screenshot();
+
+  // Real file-picker input, not omnimed3dTestHooks.
+  await page.locator("#dicom-files-input").setInputFiles(ctSmallDcmPath);
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+  await page.waitForTimeout(500);
+  const afterLoad = await canvas.screenshot();
+  expect(beforeLoad.equals(afterLoad)).toBe(false);
+
+  // Mouse-driven orbit: drag across the canvas.
+  const box = (await canvas.boundingBox())!;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  await page.mouse.move(centerX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(centerX + 80, centerY + 40, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const afterDrag = await canvas.screenshot();
+  expect(afterLoad.equals(afterDrag)).toBe(false);
+
+  // Wheel zoom.
+  await page.mouse.wheel(0, -200);
+  await page.waitForTimeout(300);
+  const afterZoom = await canvas.screenshot();
+  expect(afterDrag.equals(afterZoom)).toBe(false);
+
+  // Window/level slider.
+  const widthSlider = page.locator("#window-width");
+  await widthSlider.fill("1500");
+  await widthSlider.dispatchEvent("input");
+  await page.waitForTimeout(300);
+  const afterSlider = await canvas.screenshot();
+  expect(afterZoom.equals(afterSlider)).toBe(false);
+
+  // Colormap preset button.
+  await page.locator('[data-colormap-preset="1"]').click();
+  await page.waitForTimeout(300);
+  const afterPreset = await canvas.screenshot();
+  expect(afterSlider.equals(afterPreset)).toBe(false);
 });

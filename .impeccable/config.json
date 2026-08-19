@@ -1,0 +1,12 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [
+      "viewer/src/workers/**",
+      "viewer/tests/**",
+      "viewer/scripts/**",
+      "viewer/*.config.ts"
+    ],
+    "ignoreValues": []
+  }
+}
