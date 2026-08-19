@@ -41,11 +41,30 @@ export function bindRangeInput(
   });
 }
 
+// Preset center/width values, indexed by presetId -- must match
+// WebGPUDevice.cpp's kColormapPresets exactly (0=Lung, 1=Bone, 2=Soft
+// Tissue, 3=Brain). Kept in sync here (rather than read back from the
+// engine, which has no readback export) so a preset click can update the
+// slider UI/labels to match, not just the engine's own state -- without
+// this, the sliders silently went stale after a preset click and the
+// next manual drag would overwrite the preset with the pre-click values.
+const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = {
+  0: { center: -600, width: 1500 }, // Lung
+  1: { center: 300, width: 1500 }, // Bone
+  2: { center: 40, width: 400 }, // Soft Tissue
+  3: { center: 40, width: 80 }, // Brain
+};
+
 export function setupWindowLevelControls(): void {
   let center = DEFAULT_WINDOW_CENTER;
   let width = DEFAULT_WINDOW_WIDTH;
 
   const applyWindowLevel = () => window.Module._engine_set_window_level(center, width);
+
+  const centerInput = document.getElementById("window-center") as HTMLInputElement | null;
+  const centerLabel = document.getElementById("window-center-value");
+  const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
+  const widthLabel = document.getElementById("window-width-value");
 
   bindRangeInput("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
     center = value;
@@ -61,6 +80,21 @@ export function setupWindowLevelControls(): void {
     button.addEventListener("click", () => {
       const presetId = Number(button.dataset["colormapPreset"]);
       window.Module._engine_set_colormap_preset(presetId);
+
+      const preset = PRESET_WINDOW_LEVELS[presetId];
+      if (!preset) {
+        return;
+      }
+      center = preset.center;
+      width = preset.width;
+      if (centerInput && centerLabel) {
+        centerInput.value = String(center);
+        centerLabel.textContent = String(center);
+      }
+      if (widthInput && widthLabel) {
+        widthInput.value = String(width);
+        widthLabel.textContent = String(width);
+      }
     });
   });
 }

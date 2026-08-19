@@ -316,11 +316,18 @@ test("real UI: file picker, camera drag, wheel zoom, and window/level controls a
   const afterSlider = await canvas.screenshot();
   expect(afterZoom.equals(afterSlider)).toBe(false);
 
-  // Colormap preset button.
+  // Colormap preset button -- also confirms the window/level sliders and
+  // their labels update to match the preset (previously they went stale
+  // after a preset click, so the next manual drag silently overwrote the
+  // preset with the pre-click values).
   await page.locator('[data-colormap-preset="1"]').click();
   await page.waitForTimeout(300);
   const afterPreset = await canvas.screenshot();
   expect(afterSlider.equals(afterPreset)).toBe(false);
+  await expect(page.locator("#window-center")).toHaveValue("300");
+  await expect(page.locator("#window-center-value")).toHaveText("300");
+  await expect(page.locator("#window-width")).toHaveValue("1500");
+  await expect(page.locator("#window-width-value")).toHaveText("1500");
 });
 
 test("view-mode toggle switches to a 2D axial slice view and the slice slider pans through it (issue #37, PRD §9 slice-panning)", async ({
