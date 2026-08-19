@@ -19,7 +19,7 @@ independently (its own dependencies, `typecheck`/`test` scripts).
 
 | Directory | What it does | Owner |
 | --- | --- | --- |
-| `src/shell/` | Real message routing and Engine WASM wiring (issue #20's remaining DoD): mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). **Not yet** the full Web Application Shell (REQ-R06) — no file-picking UI exists, so `window.omnimed3dTestHooks` exposes the entry points a real UI will eventually drive. Also not yet visually verifiable — see "What's not here yet". | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
+| `src/shell/` | Real message routing and Engine WASM wiring: mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). As of issue #34, also the real Web Application Shell UI (REQ-R06): a file picker (`filePicker.ts`), mouse-driven orbit camera (`cameraControls.ts`), and a window/level panel (`windowLevelControls.ts`) — `window.omnimed3dTestHooks` stays available alongside these for `tests/e2e/`, sharing the same underlying Worker instances. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
 | `src/workers/parse-worker/` | DICOM parsing (REQ-A05) — loads the shared [`dicom-parser`](../dicom-parser/README.md) WASM build, converts pixel data to Hounsfield Units, and produces both a per-slice output for the Inference Worker and an assembled volume for the rendering engine. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
 | `src/workers/inference-worker/` | AI segmentation inference (REQ-A03/A09/A16/A17) — runs a model adapter's preprocess/infer/postprocess over each Hounsfield-Unit slice the Parse Worker produces, emitting the REQ-C01 mask contract. | AI track (`CODEOWNERS` path override on this specific subtree) |
 
@@ -35,7 +35,17 @@ npm install
 npm run typecheck   # all packages
 npm test             # all packages (unit-level, vitest)
 npm run build        # vite build, src/shell/ -> dist/
-npm run dev           # vite dev server, src/shell/
+npm run dev           # vite dev server, src/shell/ (foreground)
+```
+
+To run the dev server in the background instead of tying up a terminal
+(`scripts/dev-server.ps1`, Windows only -- tracks the process via a PID
+file so it can be stopped cleanly, child processes included):
+
+```powershell
+npm run dev:start    # starts in the background, prints the URL
+npm run dev:status   # is it running?
+npm run dev:stop     # stops it (and its child node/vite processes)
 ```
 
 `parse-worker`'s tests load a real compiled WASM artifact
@@ -51,8 +61,10 @@ generated locally first (gitignored, not part of a fresh clone) — see
 
 Verifies the real Shell against real Workers in a real browser
 (Playwright + Chromium) — see `tests/e2e/shell-mask-integration.spec.ts`'s
-own doc comment for exactly what it checks and what it deliberately
-doesn't (no visual assertions yet — see "What's not here yet"). One-time
+own doc comment for exactly what each of its 4 tests checks, including
+real visual (screenshot-diff) assertions against real DICOM data (issue
+number 29) and the real UI shell driven end-to-end (issue number 34) —
+see "What's not here yet" for what's still deliberately out of scope. One-time
 setup, then per-run:
 
 ```zsh
@@ -108,19 +120,17 @@ Playwright's bundled build).
 
 ## What's not here yet
 
-- A real file-picking UI — `src/shell/` routes messages correctly (see
-  above) but nothing yet drives it from user interaction; that's
-  `window.omnimed3dTestHooks`' job today.
-- Interactive camera controls (rotation/zoom/pan) and a real
-  window/level UI. `WebGPUDevice::renderFrame()`
-  (`engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp`) now runs a real
-  front-to-back raymarch with clinical window/level and mask-overlay
-  compositing (issue #29, REQ-R02/R03) — verified visually against real
-  DICOM data (see above) — but the camera is a fixed, auto-framed
-  default and window/level presets are only reachable via the
-  `engine_set_window_level`/`engine_set_colormap_preset` WASM exports
-  directly, not a UI control. That's REQ-R06 / roadmap step 8, separate
-  not-yet-started `viewer/` work.
+- Slice panning (2D axial scroll, separate from the 3D orbit camera) and
+  any Inference Worker/model-loading UI — neither is wired up yet
+  (issue #34's explicit scope boundary; the repo's only model fixture is
+  a dummy, plumbing-only ONNX graph with nothing real to point a "load
+  model" control at). Loading a volume via the file picker with no model
+  loaded is a supported, non-error state — `hu-slice` messages are
+  dropped with a console log rather than forwarded, until a model is
+  initialized (currently only `omnimed3dTestHooks.inferenceWorker` can
+  do that).
+- Mobile touch/pinch input for the camera — mouse-driven controls only
+  (issue #34's explicit scope boundary).
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
   exists yet (see "DICOM orientation normalization" below); only
