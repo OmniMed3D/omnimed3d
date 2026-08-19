@@ -39,6 +39,11 @@ import { expect, test } from "@playwright/test";
  * and at a mobile-width viewport under 640px (the P0 target per
  * REQ-R07), and confirms rendering still works and re-frames correctly
  * (no stretch) after a resize with a volume already loaded.
+ *
+ * The seventh test (issue #42 DoD) verifies the file-load progress
+ * indicator (loadingIndicator.ts) actually appears while a real load is
+ * in flight and clears once it completes -- previously nothing
+ * indicated a load was happening at all.
  */
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
@@ -497,4 +502,46 @@ test("canvas backing store is responsive, not a fixed 640x480 box (issue #40)", 
   await page.waitForTimeout(300);
   const afterResizeShot = await canvas.screenshot();
   expect(beforeResizeShot.equals(afterResizeShot)).toBe(false);
+});
+
+test("a loading indicator appears during a real file load and clears after (issue #42)", async ({ page }) => {
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+  async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  const indicator = page.locator("#loading-indicator");
+  await expect(indicator).toBeHidden();
+
+  // CT_small.dcm is tiny (single 128x128 file) -- the real load can
+  // finish inside a single tick, too fast for real-time polling
+  // (toBeVisible) to reliably observe the indicator's on/off flash. A
+  // MutationObserver installed before the load starts records the
+  // transition deterministically regardless of how fast it happens,
+  // rather than racing wall-clock polling against it.
+  await page.evaluate(() => {
+    (window as { __indicatorWasVisible?: boolean }).__indicatorWasVisible = false;
+    const el = document.getElementById("loading-indicator")!;
+    new MutationObserver(() => {
+      if (!el.hidden) {
+        (window as { __indicatorWasVisible?: boolean }).__indicatorWasVisible = true;
+      }
+    }).observe(el, { attributes: true, attributeFilter: ["hidden"] });
+  });
+
+  // Real file-picker input, not omnimed3dTestHooks -- exercises the same
+  // loadVolumeFromFiles path a real user's click drives.
+  await page.locator("#dicom-files-input").setInputFiles(ctSmallDcmPath);
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+
+  const wasVisible = await page.evaluate(
+    () => (window as { __indicatorWasVisible?: boolean }).__indicatorWasVisible,
+  );
+  expect(wasVisible).toBe(true);
+  // Final state: cleared once the load completes.
+  await expect(indicator).toBeHidden();
 });
