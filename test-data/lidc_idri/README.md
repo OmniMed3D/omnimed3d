@@ -1,13 +1,29 @@
 # LIDC-IDRI demo CT series
 
 `LIDC-IDRI-0001/` is one real, de-identified patient CT series (133
-axial slices, 512×512) from the LIDC-IDRI collection, used as a demo
-dataset for the volume renderer — real patient-scale data shows off the
-engine in a way a synthetic or single-slice fixture (see
-`engine/tests/fixtures/CT_small.dcm`) can't. Tracked via [Git
-LFS](../../../../.gitattributes) rather than a plain blob, so it doesn't
+axial slices, 512×512) from the LIDC-IDRI collection. Tracked via [Git
+LFS](../../.gitattributes) rather than a plain blob, so it doesn't
 permanently bloat every clone's `.git` history the way a normal commit
 of ~68MB of binary data would.
+
+Lives at the repo root (not under `engine/`) because it's a shared,
+cross-module resource, not engine-only — mirroring `dicom-parser/`'s own
+"shared, one owner" precedent (see `.github/CODEOWNERS`):
+
+- **engine/viewer**: the "Load Demo CT" button
+  (`viewer/src/shell/demoCtControls.ts`) loads this series so the volume
+  renderer can be shown off with real patient-scale data, which a
+  synthetic or single-slice fixture (see
+  `engine/tests/fixtures/CT_small.dcm`) can't do. Synced into the
+  viewer's servable `public/` tree via `npm run sync-demo-ct`
+  (`viewer/scripts/sync-demo-ct.mjs`), not committed there a second time.
+- **ai-pipeline**: `docs/verification/inference-worker.md` already
+  references specific instances from this same patient
+  (`LIDC-IDRI-0001_inst00xx`) for inference-worker verification, and
+  `ai-pipeline/quantization/`'s own calibration pool draws from the same
+  LIDC-IDRI collection (see `ai-pipeline/quantization/README.md`) --
+  this committed copy is available to reuse there too instead of
+  maintaining a separate local-only download for the same patient.
 
 Only the CT series was kept from this patient's original download — a
 separate 2-image Digital X-Ray (DX modality) study also exists for this

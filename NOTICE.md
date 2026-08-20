@@ -43,4 +43,14 @@ The medical image analysis (segmentation) features of this project are fine-tune
 
 ---
 
+## 4. Datasets
+
+Real medical imaging data used for demo/testing purposes is licensed and attributed as follows.
+
+| Dataset | License | Copyright / Source |
+| :--- | :--- | :--- |
+| **LIDC-IDRI** (`test-data/lidc_idri/LIDC-IDRI-0001/`) | CC BY 3.0 | Armato SG 3rd, McLennan G, Bidaut L, McNitt-Gray MF, Meyer CR, Reeves AP, Zhao B, Aberle DR, Henschke CI, Hoffman EA, Kazerooni EA, MacMahon H, van Beek EJR, Yankelevitz D, et al. (2015). Data From LIDC-IDRI. The Cancer Imaging Archive.<br>[https://doi.org/10.7937/K9/TCIA.2015.LO9QL9SX](https://doi.org/10.7937/K9/TCIA.2015.LO9QL9SX)<br>See `test-data/lidc_idri/README.md` for the full required citations (Data Citation, Publication Citation, and Required Acknowledgement) and where in the product this data is used. |
+
+---
+
 If you discover any omissions in this notice or potential license violations, please report them to the project maintainers via an Issue.

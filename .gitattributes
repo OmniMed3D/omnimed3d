@@ -3,6 +3,13 @@
 # patient CT series, tracked via Git LFS rather than as a plain blob so
 # it doesn't permanently bloat every clone's .git history. Scoped to this
 # one directory -- engine/tests/fixtures/CT_small.dcm (40KB) stays a
-# normal blob, it's far too small to need LFS. See
-# engine/tests/fixtures/lidc_idri/README.md for citation/attribution.
-engine/tests/fixtures/lidc_idri/**/*.dcm filter=lfs diff=lfs merge=lfs -text
+# normal blob, it's far too small to need LFS. Lives at the repo root
+# (not under engine/) since it's a shared resource, not engine-only --
+# docs/verification/inference-worker.md already referenced this same
+# LIDC-IDRI-0001 patient for AI-track verification before this data was
+# ever committed here, and ai-pipeline's own quantization calibration
+# pool draws from the same LIDC-IDRI collection (see
+# ai-pipeline/quantization/README.md) -- same "shared, one owner"
+# precedent as dicom-parser/ (see .github/CODEOWNERS). See
+# test-data/lidc_idri/README.md for citation/attribution.
+test-data/lidc_idri/**/*.dcm filter=lfs diff=lfs merge=lfs -text
