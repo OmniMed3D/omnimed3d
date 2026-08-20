@@ -533,6 +533,27 @@ button.upload-btn:disabled:hover {
   border-color: var(--border-strong);
 }
 
+/* REQ-R04 quality tier: 3 discrete options, not 2 (view-mode) or 4
+   (colormap presets) -- overrides .preset-buttons' 2-column grid so all
+   three sit on one row instead of wrapping a lone third button alone. */
+.quality-buttons {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Gradient-shading toggle (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+   §4.3) -- first checkbox control in this panel. Reuses .row's label
+   styling; the checkbox itself is left native (no custom track/thumb like
+   input[type=range] gets) since it's a single infrequent on/off, not a
+   precision control worth the same investment. */
+.checkbox-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0 0 0 auto;
+  accent-color: var(--accent-bright);
+  cursor: pointer;
+}
+
 /* .row sets display:flex, which otherwise beats the UA [hidden]
    stylesheet's display:none on specificity -- this selector (0,2,0) beats
    .row alone (0,1,0). */
