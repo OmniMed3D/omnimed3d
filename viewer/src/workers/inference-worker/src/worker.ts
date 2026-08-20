@@ -3,8 +3,7 @@
  * wrapper around pipeline.ts — kept deliberately minimal since browser
  * bundling and the exact Parse Worker -> Inference Worker message shape
  * are not decided yet (REQ-C04 is still mostly open; see
- * ai-pipeline/inference-worker-handoff.md §5). Not integration-tested in a
- * browser as part of this pass — see the plan's "Deferred" section.
+ * ai-pipeline/inference-worker-handoff.md §5).
  *
  * The OUTGOING `mask-slice` shape (§5.3.2) is fixed; the INCOMING shape
  * below is this worker's own provisional assumption for a single HU slice,
@@ -18,6 +17,23 @@ import { runSlice, type MaskSliceMessage } from "./pipeline.js";
 interface InitMessage {
   type: "init";
   modelPath: string;
+  /**
+   * URL/path of the model's external-data companion file (e.g.
+   * "lungmask_r231.onnx.data"), for models exported with
+   * save_as_external_data=True (currently just the FP32 variant — INT8/FP16
+   * are single-file). Omit for single-file models.
+   *
+   * Without this, `ort.InferenceSession.create()` fails even in a real
+   * browser (not just Node) — found via e2e/latency-browser.spec.ts:
+   * "Failed to load external data file ..., error: Module.MountedFiles is
+   * not available" — ONNX Runtime Web's external-data resolution expects a
+   * Node-style mounted file by default and does not fetch a same-directory
+   * URL on its own, contrary to what a purely Node-side test (which worked
+   * around this with a manual `readFileSync`, see test/pipeline.test.ts)
+   * would suggest. Fetching the bytes ourselves and passing them via
+   * `externalData` (below) works in both environments.
+   */
+  externalDataPath?: string;
 }
 
 interface HuSliceMessage {
@@ -39,7 +55,16 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
 
   if (msg.type === "init") {
     adapter = new LungmaskAdapter(msg.modelPath);
-    session = await ort.InferenceSession.create(msg.modelPath);
+    const options: ort.InferenceSession.SessionOptions = {};
+    if (msg.externalDataPath) {
+      const bytes = new Uint8Array(await (await fetch(msg.externalDataPath)).arrayBuffer());
+      // The embedded external-data reference inside the ONNX graph is the
+      // bare filename (see MODEL_SPEC.md / test/pipeline.test.ts) -- the
+      // served file must keep that same name for this to line up.
+      const externalDataName = msg.externalDataPath.split("/").pop()!;
+      options.externalData = [{ path: externalDataName, data: bytes }];
+    }
+    session = await ort.InferenceSession.create(msg.modelPath, options);
     // Callers have no other way to know the (async) session load finished
     // -- without this ack, a caller sending hu-slice right after init()
     // races the load and hits the "received a slice before 'init'" error
