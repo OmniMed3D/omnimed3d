@@ -30,6 +30,23 @@ separate 2-image Digital X-Ray (DX modality) study also exists for this
 patient in the source collection but isn't part of the CT volume and
 isn't included here.
 
+## Getting this data
+
+The `.dcm` files here are real content, not placeholders — but Git LFS
+only delivers that content automatically if `git-lfs` is installed
+*before* you clone/pull. Without it, `git` still succeeds, silently
+leaving small text pointer files (~130 bytes each) in place of the real
+~516KB-per-slice DICOM data. If you already cloned without it:
+
+```zsh
+# Install once per machine: https://git-lfs.com
+git lfs install
+git lfs pull
+```
+
+See [`viewer/README.md`](../../viewer/README.md#building-and-testing)
+for what to run next to actually use this data (`npm run sync-demo-ct`).
+
 ## License and attribution (CC BY 3.0)
 
 Source: [LIDC-IDRI](https://www.cancerimagingarchive.net/collection/lidc-idri/)
