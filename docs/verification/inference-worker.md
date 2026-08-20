@@ -258,8 +258,9 @@ compute-heavy." Section 3 above only ever measured the browser side; this
 section supplies the missing native-side number
 (`ai-pipeline/quantization/benchmark_native_latency.py`). Computing the
 actual multiplier still requires a *real-browser* infer number (Section 3
-was measured under Node, not a browser — see its own caveats); that's
-tracked as a separate, not-yet-done issue and isn't computed here.
+was measured under Node, not a browser — see its own caveats); Section 6
+below adds that real-browser number and computes the multiplier against
+this section's data.
 
 **Methodology:** same single input slice Section 3 used
 (`LIDC-IDRI-0001_inst0034`, entry 0 of the ground-truth manifest), same
@@ -312,7 +313,101 @@ further here since it isn't part of the multiplier's definition.
   quirk.
 - FP32 mean infer: 481-598ms across the two runs.
 
-**Still open:** the actual overhead multiplier (browser / native) isn't
-computed in this section — it needs a real-browser (not Node) infer
-number for the numerator, which doesn't exist yet. Once that lands, divide
-its per-model mean by the corresponding row here.
+**Still open (resolved in Section 6):** the actual overhead multiplier
+(browser / native) isn't computed in this section — it needed a
+real-browser (not Node) infer number for the numerator, which didn't
+exist yet at the time this section was written. Section 6 below adds that
+number and computes it.
+
+## 6. Real-Browser Latency Benchmark (2026-08-21)
+
+Section 3's latency numbers were all measured under Node (vitest), not a
+real browser — flagged there as an open gap. This section closes it via a
+new standalone harness: `bench/` + `e2e/latency-browser.spec.ts` (own
+`vite.config.ts`/`playwright.config.ts`, scoped entirely inside
+`inference-worker/` rather than the Shell's shared e2e suite, since this
+only needs the Inference Worker itself — see that spec file's module doc
+comment for the full rationale). `bench.ts` calls the same
+`LungmaskAdapter`/`ort.InferenceSession` directly on the page's main
+thread — same as Section 3's `measure()` — rather than through the
+Worker's postMessage protocol, so this measures the same thing
+(preprocess/infer/postprocess wall-clock time) without also mixing in
+message-passing overhead. Same methodology as Section 3 throughout: same
+single slice (`LIDC-IDRI-0001_inst0034`), same 5 iterations, same "mean of
+wall-clock ms, no separate warmup excluded from the mean."
+
+**Environment:** MacBook M1 (same hardware as Section 3), real Chromium
+(Playwright's bundled `chrome-headless-shell`, headless), `onnxruntime-web`
+1.27.0 (same resolved version Section 3 used) — this time actually
+running in a browser JS engine, not Node's.
+
+**Two real bugs found and fixed getting this running** (both in
+`inference-worker/`'s own scope, not benchmark-harness quirks):
+
+1. **FP32's external-data loading was broken in the browser, not just
+   Node.** Section 1 already knew Node needed a manual `readFileSync`
+   workaround for the FP32 model's external-data file
+   (`lungmask_r231.onnx.data`); whether a real browser needed the same
+   workaround was open. It does — worse, `worker.ts`'s `init` handler had
+   no external-data handling at all, so **loading the real FP32 model in
+   the actual production Inference Worker was silently broken in every
+   browser**, never caught because the Shell's own e2e tests only ever
+   exercised a dummy no-external-data model
+   (`viewer/tests/fixtures/dummy-lungmask.onnx`). Fixed in `worker.ts`:
+   `InitMessage` gained an optional `externalDataPath`; when set, the
+   worker fetches those bytes itself and passes them via
+   `ort.InferenceSession.create()`'s `externalData` option, rather than
+   relying on `onnxruntime-web` to resolve a same-directory URL on its own
+   (it doesn't — the failure was `Module.MountedFiles is not available`,
+   an Emscripten Node-mount mechanism, not a browser fetch).
+2. **Playwright's `page.route().fulfill()` can't serve files over 100MB.**
+   Routing the 116MB `.onnx.data` file through Playwright crashed the
+   whole browser process before the page even loaded
+   (`Too large read data is pending: capacity=104857600 ... Connection
+   closed, not enough capacity` — Chromium's CDP pipe has a hard 100MB
+   cap). Not a `worker.ts` bug — a benchmark-harness-only issue, fixed by
+   serving that one file through Vite's own `/@fs/` static-file path
+   instead (a real HTTP response, never touching the CDP pipe). See
+   `vite.config.ts`'s `server.fs.allow` comment.
+
+**Results (isolated run):**
+
+| Model | Preprocess (ms) | Infer (ms) | Postprocess (ms) | Budget: infer+postprocess (ms) | Under 500ms? |
+| --- | --- | --- | --- | --- | --- |
+| FP32 | 69.4 | 2957.0 | 2.4 | 2959.4 | No |
+| INT8 | 59.8 | 2886.0 | 3.9 | 2889.9 | No |
+| FP16 | 61.0 | 2891.8 | 2.4 | 2894.2 | No |
+
+**This is a genuinely surprising result, flagged rather than smoothed
+over:** every model is roughly 3.5-4x slower here than the corresponding
+Node number in Section 3 (FP32 792ms, INT8 723ms, FP16 813ms) — expected
+directionally (Node's WASM environment isn't the same as a browser's), but
+not by this much. More strikingly, **INT8's advantage disappears**: Section
+3 and the native-baseline benchmark both found INT8 clearly fastest; here
+all three models cluster within ~70ms of each other. That specific pattern
+change (not just "everything got slower") suggests execution is going
+through a materially different path here, not just a slower version of the
+same one.
+
+**Leading (unconfirmed) hypothesis:** `onnxruntime-web`'s multi-threaded
+WASM backend needs `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy`
+headers (for `SharedArrayBuffer`) to use real threads; this benchmark's
+minimal `vite.config.ts` sets neither. If the threaded WASM binary silently
+falls back to a slower single-threaded path without erroring, that could
+explain both the across-the-board slowdown and INT8 losing its edge
+(INT8's speed advantage over FP32/FP16, per Section 3's graph-node
+analysis, comes from doing genuinely less/cheaper compute per thread — a
+single-thread bottleneck could plausibly flatten that gap). **Not verified
+— no COOP/COEP experiment has actually been run yet.** Tracked as an open
+follow-up, not resolved here.
+
+**Still open:** the actual On-Device Overhead Multiplier (browser ÷
+native, PRD Section 4) can now be computed using this section's numbers
+against `ai-pipeline/quantization/benchmark_native_latency.py`'s (native:
+FP32 481-598ms, INT8 155-208ms, FP16 454-562ms across two runs) — every
+model is well over the <3x target using these browser numbers (FP32
+~5-6x, INT8 ~14-19x, FP16 ~5-6x) — but given the COOP/COEP question above
+is unresolved, this multiplier may currently be measuring "browser +
+possibly-degraded threading" rather than "browser" cleanly. Worth
+re-computing once that's investigated rather than treating today's ratio
+as final.

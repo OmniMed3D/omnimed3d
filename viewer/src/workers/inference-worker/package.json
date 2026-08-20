@@ -6,14 +6,18 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "typecheck:bench": "tsc --noEmit -p tsconfig.bench.json",
     "test": "vitest run",
-    "bench": "vitest run test/latency-benchmark.test.ts"
+    "bench": "vitest run test/latency-benchmark.test.ts",
+    "bench:browser": "playwright test"
   },
   "dependencies": {
     "onnxruntime-web": "^1.19.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "typescript": "^5.6.3",
+    "vite": "^5.4.21",
     "vitest": "^2.1.4"
   }
 }

@@ -26,6 +26,8 @@ viewer/src/shell/public/engine/
 # Playwright output
 viewer/test-results/
 viewer/playwright-report/
+viewer/src/workers/inference-worker/test-results/
+viewer/src/workers/inference-worker/playwright-report/
 
 # PID file for scripts/dev-server.ps1's background npm run dev tracking
 viewer/.dev-server.pid
