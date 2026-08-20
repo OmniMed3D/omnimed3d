@@ -29,6 +29,8 @@ import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
+import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
+import { setupInferenceControls } from "./inferenceControls.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -95,6 +97,11 @@ interface VolumeReadyMessage {
   spacingY: number;
   spacingZ: number;
   data: ArrayBuffer;
+}
+
+interface ParseErrorMessage {
+  type: "parse-error";
+  message: string;
 }
 
 interface MaskSliceMessage {
@@ -181,6 +188,9 @@ export async function loadVolumeFromFiles(files: File[]): Promise<string> {
     throw new Error("loadVolumeFromFiles called before the Shell finished initializing");
   }
   setLoading(true);
+  // Clear a stale error from a previous failed attempt -- this is the
+  // user trying again.
+  document.getElementById("load-error")!.hidden = true;
   try {
     const volumeId = mintVolumeId();
     const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
@@ -189,12 +199,19 @@ export async function loadVolumeFromFiles(files: File[]): Promise<string> {
   } catch (error) {
     // Only the synchronous/promise-rejection path here (a bad File read)
     // clears loading itself -- once the parse-series message is posted,
-    // loading stays true until engineLoadVolume's success path clears it.
-    // A malformed-file/Parse-Worker-side failure leaving the indicator
-    // stuck is a known, separate gap (Nielsen #9, not in this issue's
-    // scope).
+    // loading stays true until either engineLoadVolume's success path or
+    // parseWorker.onerror's failure path clears it.
     setLoading(false);
     throw error;
+  }
+}
+
+function showLoadError(): void {
+  setLoading(false);
+  const loadError = document.getElementById("load-error");
+  if (loadError) {
+    loadError.textContent = "Couldn't load this file -- it may not be a valid or supported DICOM series.";
+    loadError.hidden = false;
   }
 }
 
@@ -231,6 +248,9 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   });
   notifyVolumeLoaded(msg.depth);
   setLoading(false);
+  // Visual polish pass: the empty-canvas hint has served its purpose
+  // once a volume has actually rendered.
+  document.getElementById("empty-hint")!.hidden = true;
 }
 
 function engineApplyMaskSlice(msg: MaskSliceMessage): void {
@@ -272,6 +292,20 @@ async function main() {
     type: "module",
   });
 
+  // Follow-up: a bad/unsupported file (e.g. not real DICOM, or a
+  // compressed transfer syntax dicom-parser doesn't support -- see
+  // CLAUDE.md #10) is now caught inside worker.ts's onmessage and
+  // reported via a "parse-error" message (see below) -- self.onmessage
+  // there is async, so a synchronous throw inside it becomes an
+  // unhandled promise rejection rather than the worker's "error" event,
+  // and onerror here never fires for it (confirmed via real browser e2e
+  // testing). onerror stays wired as the fallback for genuinely uncaught
+  // worker failures (e.g. a syntax error in worker.ts itself).
+  parseWorker.onerror = (event: ErrorEvent) => {
+    console.error("Shell: Parse Worker error", event.message, event);
+    showLoadError();
+  };
+
   // A full absolute URL (not an origin-relative path) is required here --
   // a dynamic import() of a root-relative specifier from inside a Worker
   // module fails to resolve in Chromium (empirically confirmed), even
@@ -293,7 +327,7 @@ async function main() {
   parseWorker.postMessage({ type: "init", wasmModulePath });
   await parseWorkerReady;
 
-  parseWorker.onmessage = (event: MessageEvent<HuSliceMessage | VolumeReadyMessage>) => {
+  parseWorker.onmessage = (event: MessageEvent<HuSliceMessage | VolumeReadyMessage | ParseErrorMessage>) => {
     const msg = event.data;
     if (msg.type === "hu-slice") {
       if (inferenceWorkerReady) {
@@ -303,6 +337,9 @@ async function main() {
       }
     } else if (msg.type === "volume-ready") {
       engineLoadVolume(msg);
+    } else if (msg.type === "parse-error") {
+      console.error("Shell: Parse Worker reported a parse error", msg.message);
+      showLoadError();
     }
   };
 
@@ -326,8 +363,15 @@ async function main() {
   setupCameraControls();
   setupWindowLevelControls();
   setupViewControls();
+  setupPanelDrag();
+  setupPanelCollapse();
+  setupInferenceControls(inferenceWorker);
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
+  // Visual polish pass: shown only once there's actually something to
+  // prompt -- not during the earlier load/init states, which already
+  // have their own status text.
+  document.getElementById("empty-hint")!.hidden = false;
 }
 
 main();

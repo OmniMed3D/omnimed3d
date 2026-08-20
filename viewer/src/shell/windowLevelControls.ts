@@ -41,6 +41,49 @@ export function bindRangeInput(
   });
 }
 
+// Follow-up: numeric direct-entry (critique heuristic #7, Flexibility
+// and Efficiency -- drag-only precision on a 1-4000-wide range was a
+// real gap for anyone dialing in an exact HU window). #window-center-value
+// / #window-width-value are real <input type=number> elements now, not
+// read-only <span>s -- kept as a separate helper from bindRangeInput
+// (still used as-is by viewControls.ts's slice slider, a read-only-label
+// case that doesn't need this) rather than changing that shared function's
+// contract for every caller.
+function bindRangeWithNumericEntry(
+  rangeId: string,
+  valueId: string,
+  initial: number,
+  onInput: (value: number) => void,
+): void {
+  const rangeInput = document.getElementById(rangeId) as HTMLInputElement | null;
+  const numberInput = document.getElementById(valueId) as HTMLInputElement | null;
+  if (!rangeInput || !numberInput) {
+    console.error(`windowLevelControls: #${rangeId} or #${valueId} not found in the DOM`);
+    return;
+  }
+
+  rangeInput.value = String(initial);
+  numberInput.value = String(initial);
+
+  rangeInput.addEventListener("input", () => {
+    const value = Number(rangeInput.value);
+    numberInput.value = String(value);
+    onInput(value);
+  });
+
+  // "change" (fires on blur/Enter), not "input" -- applying on every
+  // keystroke would fire mid-typing intermediate values (e.g. "-", "-5",
+  // "-50" while typing "-500").
+  numberInput.addEventListener("change", () => {
+    const min = Number(rangeInput.min);
+    const max = Number(rangeInput.max);
+    const clamped = Math.min(Math.max(Number(numberInput.value), min), max);
+    numberInput.value = String(clamped);
+    rangeInput.value = String(clamped);
+    onInput(clamped);
+  });
+}
+
 // Preset center/width values, indexed by presetId -- must match
 // WebGPUDevice.cpp's kColormapPresets exactly (0=Lung, 1=Bone, 2=Soft
 // Tissue, 3=Brain). Kept in sync here (rather than read back from the
@@ -55,6 +98,11 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
   3: { center: 40, width: 80 }, // Brain
 };
 
+// The engine's own default-on-load preset (kDefaultColormapPreset in
+// WebGPUDevice.cpp) -- Soft Tissue. Marked active on setup so the UI
+// agrees with engine state from the first frame, not just after a click.
+const DEFAULT_PRESET_ID = 2;
+
 export function setupWindowLevelControls(): void {
   let center = DEFAULT_WINDOW_CENTER;
   let width = DEFAULT_WINDOW_WIDTH;
@@ -62,20 +110,35 @@ export function setupWindowLevelControls(): void {
   const applyWindowLevel = () => window.Module._engine_set_window_level(center, width);
 
   const centerInput = document.getElementById("window-center") as HTMLInputElement | null;
-  const centerLabel = document.getElementById("window-center-value");
+  const centerLabel = document.getElementById("window-center-value") as HTMLInputElement | null;
   const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
-  const widthLabel = document.getElementById("window-width-value");
-
-  bindRangeInput("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
-    center = value;
-    applyWindowLevel();
-  });
-  bindRangeInput("window-width", "window-width-value", DEFAULT_WINDOW_WIDTH, (value) => {
-    width = value;
-    applyWindowLevel();
-  });
-
+  const widthLabel = document.getElementById("window-width-value") as HTMLInputElement | null;
   const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]");
+
+  // Visual polish pass: presets now get the same selected-state feedback
+  // the view-mode toggle already had (critique heuristic #4,
+  // Consistency). Manually dragging a slider afterward clears the active
+  // state -- the displayed values no longer necessarily match any
+  // preset once the user has diverged from it, so claiming one is still
+  // "selected" would misrepresent state (the same class of bug the
+  // preset/slider desync fix closed).
+  function setActivePreset(presetId: number | null): void {
+    presetButtons.forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
+    });
+  }
+
+  bindRangeWithNumericEntry("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
+    center = value;
+    setActivePreset(null);
+    applyWindowLevel();
+  });
+  bindRangeWithNumericEntry("window-width", "window-width-value", DEFAULT_WINDOW_WIDTH, (value) => {
+    width = value;
+    setActivePreset(null);
+    applyWindowLevel();
+  });
+
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const presetId = Number(button.dataset["colormapPreset"]);
@@ -89,12 +152,15 @@ export function setupWindowLevelControls(): void {
       width = preset.width;
       if (centerInput && centerLabel) {
         centerInput.value = String(center);
-        centerLabel.textContent = String(center);
+        centerLabel.value = String(center);
       }
       if (widthInput && widthLabel) {
         widthInput.value = String(width);
-        widthLabel.textContent = String(width);
+        widthLabel.value = String(width);
       }
+      setActivePreset(presetId);
     });
   });
+
+  setActivePreset(DEFAULT_PRESET_ID);
 }

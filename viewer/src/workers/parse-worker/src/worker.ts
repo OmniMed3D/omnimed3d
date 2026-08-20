@@ -44,6 +44,21 @@ interface ParseSeriesMessage {
 
 type IncomingMessage = InitMessage | ParseFileMessage | ParseSeriesMessage;
 
+/** A bad/unsupported file (see pipeline.ts's UnsupportedPixelDataError/
+ * InconsistentSeriesError, or a dicom-parser-wasm throw for non-DICOM
+ * bytes) surfaces here rather than as a thrown exception. self.onmessage
+ * is async, so a synchronous throw inside it rejects the handler's own
+ * Promise instead of raising the worker's "error" event -- the browser
+ * only translates *that* event into ErrorEvent on the main thread's
+ * Worker.onerror; an unhandled rejection inside a worker fires
+ * "unhandledrejection" on the worker's own global scope instead, which
+ * the main thread never sees (confirmed via real browser e2e testing,
+ * not assumed). */
+export interface ParseErrorMessage {
+  type: "parse-error";
+  message: string;
+}
+
 let wasm: DicomParserWasm | undefined;
 
 function requireWasm(): DicomParserWasm {
@@ -57,36 +72,44 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
   const worker = self as unknown as Worker;
 
-  if (msg.type === "init") {
-    wasm = await DicomParserWasm.load(msg.wasmModulePath);
-    // Callers have no other way to know the (async) WASM load finished --
-    // without this ack, a caller sending parse-file/parse-series right
-    // after init() races the load and hits requireWasm()'s "received a
-    // file before 'init'" error (found via real browser e2e testing,
-    // viewer/tests/e2e/shell-mask-integration.spec.ts).
-    worker.postMessage({ type: "init-complete" });
-    return;
-  }
-
-  if (msg.type === "parse-file") {
-    const result: HuSliceMessage = parseSliceToHu(
-      requireWasm(),
-      new Uint8Array(msg.fileBytes),
-      msg.volumeId,
-      msg.sliceIndex,
-    );
-    worker.postMessage(result, [result.data]);
-    return;
-  }
-
-  if (msg.type === "parse-series") {
-    const files = msg.files.map((f) => new Uint8Array(f));
-    const { sliceMessages, volume } = assembleSeries(requireWasm(), files, msg.volumeId);
-
-    for (const sliceMessage of sliceMessages) {
-      worker.postMessage(sliceMessage, [sliceMessage.data]);
+  try {
+    if (msg.type === "init") {
+      wasm = await DicomParserWasm.load(msg.wasmModulePath);
+      // Callers have no other way to know the (async) WASM load finished --
+      // without this ack, a caller sending parse-file/parse-series right
+      // after init() races the load and hits requireWasm()'s "received a
+      // file before 'init'" error (found via real browser e2e testing,
+      // viewer/tests/e2e/shell-mask-integration.spec.ts).
+      worker.postMessage({ type: "init-complete" });
+      return;
     }
-    const volumeMessage: VolumeReadyMessage = volume;
-    worker.postMessage(volumeMessage, [volumeMessage.data]);
+
+    if (msg.type === "parse-file") {
+      const result: HuSliceMessage = parseSliceToHu(
+        requireWasm(),
+        new Uint8Array(msg.fileBytes),
+        msg.volumeId,
+        msg.sliceIndex,
+      );
+      worker.postMessage(result, [result.data]);
+      return;
+    }
+
+    if (msg.type === "parse-series") {
+      const files = msg.files.map((f) => new Uint8Array(f));
+      const { sliceMessages, volume } = assembleSeries(requireWasm(), files, msg.volumeId);
+
+      for (const sliceMessage of sliceMessages) {
+        worker.postMessage(sliceMessage, [sliceMessage.data]);
+      }
+      const volumeMessage: VolumeReadyMessage = volume;
+      worker.postMessage(volumeMessage, [volumeMessage.data]);
+    }
+  } catch (error) {
+    const errorMessage: ParseErrorMessage = {
+      type: "parse-error",
+      message: error instanceof Error ? error.message : String(error),
+    };
+    worker.postMessage(errorMessage);
   }
 };
