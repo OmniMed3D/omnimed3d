@@ -183,6 +183,12 @@ canvas {
   top: 12px;
   right: 12px;
   width: 264px;
+  /* §5.3/§6.2/§6.3/§6.4 added enough panel-sections (TF Detail, Clip) that
+     the panel can now exceed the viewport height on shorter screens, with
+     no way to reach the lower controls -- internal scroll rather than
+     letting it overflow past the bottom edge uncontactably. */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   padding: 14px;
   background: var(--panel-bg);
   -webkit-backdrop-filter: blur(10px);
@@ -552,6 +558,41 @@ button.upload-btn:disabled:hover {
   margin: 0 0 0 auto;
   accent-color: var(--accent-bright);
   cursor: pointer;
+}
+
+/* Custom colormap color pickers (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+   §5.3) -- native swatch, just resized/bordered to sit quietly in a
+   .row alongside its label instead of the browser's larger default box. */
+input[type="color"] {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+/* Clip box rows (§6.4): two range sliders share one .row instead of the
+   usual slider+value-label pair -- narrower each so both fit without the
+   row overflowing the panel's fixed width. */
+#clip-x-min,
+#clip-x-max,
+#clip-y-min,
+#clip-y-max,
+#clip-z-min,
+#clip-z-max {
+  min-width: 0;
 }
 
 /* .row sets display:flex, which otherwise beats the UA [hidden]

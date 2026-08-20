@@ -28,6 +28,9 @@ import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
 import { setupQualityControls } from "./qualityControls.js";
+import { setupTfDetailControls } from "./tfDetailControls.js";
+import { setupClipControls, notifyVolumeAabbLoaded } from "./clipControls.js";
+import { setupCustomColormapControls } from "./customColormapControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
@@ -66,6 +69,20 @@ interface EngineModule {
   _engine_resize(width: number, height: number): void;
   _engine_set_quality_tier(tier: number): void;
   _engine_set_shading_enabled(enabled: number): void;
+  _engine_set_extinction(extinction: number): void;
+  _engine_set_density_scale(scale: number): void;
+  _engine_set_threshold(threshold: number): void;
+  _engine_set_clip_box(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): void;
+  _engine_set_gradient_opacity_strength(strength: number): void;
+  _engine_set_occlusion_enabled(enabled: number): void;
+  _engine_set_custom_lut_colors(
+    lowR: number,
+    lowG: number,
+    lowB: number,
+    highR: number,
+    highG: number,
+    highB: number,
+  ): void;
 }
 
 declare global {
@@ -250,6 +267,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
     );
   });
   notifyVolumeLoaded(msg.depth);
+  notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
   setLoading(false);
   // Visual polish pass: the empty-canvas hint has served its purpose
   // once a volume has actually rendered.
@@ -367,6 +385,9 @@ async function main() {
   setupWindowLevelControls();
   setupViewControls();
   setupQualityControls();
+  setupTfDetailControls();
+  setupClipControls();
+  setupCustomColormapControls();
   setupPanelDrag();
   setupPanelCollapse();
   setupInferenceControls(inferenceWorker);

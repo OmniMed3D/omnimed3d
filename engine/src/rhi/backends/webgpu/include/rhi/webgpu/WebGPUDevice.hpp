@@ -9,6 +9,17 @@
 
 namespace omnimed3d::rhi::webgpu {
 
+// Plain 8-bit RGB color -- shared between the compile-time colormap
+// preset table (WebGPUDevice.cpp's anonymous namespace) and the
+// writeLutColors()/writePreintegratedLutColors() helpers declared below,
+// which both the fixed presets and setCustomColormap() (§5.3) funnel
+// through.
+struct ColorRGB {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+};
+
 // WebGPU implementation of rhi::Device, targeting the browser canvas via
 // Emscripten's emdawnwebgpu port. Verified against the exact struct/callback
 // shapes in this repo's installed webgpu.h (emsdk 4.0.10) -- see
@@ -33,6 +44,13 @@ public:
     void setAxialSliceIndex(uint32_t index) override;
     void setQualityTier(uint32_t tier) override;
     void setShadingEnabled(bool enabled) override;
+    void setExtinction(float extinction) override;
+    void setDensityScale(float scale) override;
+    void setThreshold(float threshold) override;
+    void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) override;
+    void setGradientOpacityStrength(float strength) override;
+    void setOcclusionEnabled(bool enabled) override;
+    void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
     void resize(uint32_t width, uint32_t height) override;
 
 private:
@@ -80,6 +98,11 @@ private:
     // Bakes one colormap preset's pre-integrated (front,back) table into
     // preintegratedLutTexture_ -- see the .cpp definition's header comment.
     void writePreintegratedLut(uint32_t presetId);
+    // Shared low/high-color LUT writers underlying both writeLutPreset()
+    // and setCustomColormap() (§5.3's Custom preset) -- see the .cpp
+    // definitions' header comments.
+    void writeLutColors(ColorRGB lowColor, ColorRGB highColor);
+    void writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor);
     void rebuildBindGroup();
 
     // Factors out the blend-state/color-target/pipeline-descriptor
@@ -258,6 +281,30 @@ private:
     // camera/params are static) -- reset to 0 by markAccumulationDirty(),
     // incremented once per renderFrame() call otherwise.
     float accumFrameIndex_ = 0.0F;
+
+    // TF detail controls (§5.3) -- were fixed constants before these
+    // setters existed (extinction) or simply didn't exist (the rest).
+    // Defaults exactly reproduce Branch 1's behavior for anyone who never
+    // touches these new controls.
+    float extinction_ = 8.0F;
+    float densityScale_ = 1.0F;
+    float threshold_ = 0.0F;
+    float gradientOpacityStrength_ = 0.0F;
+    bool occlusionEnabled_ = false;
+
+    // Clipping box (§6.4), world mm -- reset to the full aabbMin_/aabbMax_
+    // on every loadVolume() (frameCameraForVolume()), since a clip region
+    // sized for a previous volume would otherwise misclip a newly loaded
+    // one of different physical size.
+    glm::vec3 clipMin_{0.0F};
+    glm::vec3 clipMax_{0.0F};
+
+    // Custom colormap (§5.3's 5th preset) -- applied via setCustomColormap(),
+    // independent of kColormapPresets/setColormapPreset(). Defaults are
+    // arbitrary (never rendered with until setCustomColormap() is called
+    // at least once).
+    ColorRGB customLowColor_{0, 0, 0};
+    ColorRGB customHighColor_{255, 255, 255};
 };
 
 }  // namespace omnimed3d::rhi::webgpu

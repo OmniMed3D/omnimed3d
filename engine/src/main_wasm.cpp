@@ -114,4 +114,47 @@ void engine_set_shading_enabled(uint32_t enabled) {
     g_device.setShadingEnabled(enabled != 0);
 }
 
+// TF detail controls -- see rhi::Device::setExtinction/setDensityScale/
+// setThreshold's header comments.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_extinction(float extinction) {
+    g_device.setExtinction(extinction);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_set_density_scale(float scale) {
+    g_device.setDensityScale(scale);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_set_threshold(float threshold) {
+    g_device.setThreshold(threshold);
+}
+
+// Clip box (world mm) -- see rhi::Device::setClipBox's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_clip_box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+    g_device.setClipBox(minX, minY, minZ, maxX, maxY, maxZ);
+}
+
+// See rhi::Device::setGradientOpacityStrength's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_gradient_opacity_strength(float strength) {
+    g_device.setGradientOpacityStrength(strength);
+}
+
+// Directional Occlusion Shading toggle -- see
+// rhi::Device::setOcclusionEnabled's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_occlusion_enabled(uint32_t enabled) {
+    g_device.setOcclusionEnabled(enabled != 0);
+}
+
+// Custom colormap (5th preset) -- low/high RGB in [0,1]. See
+// rhi::Device::setCustomColormap's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_custom_lut_colors(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
+    g_device.setCustomColormap(lowR, lowG, lowB, highR, highG, highB);
+}
+
 }  // extern "C"

@@ -22,8 +22,12 @@ struct RaymarchUBO
     float4 rayParams;      // x=stepSize, y=maxSteps, z=extinction, w unused
     float4 window;         // x=windowCenter, y=windowWidth, zw unused
     float4 maskParams;     // x=overlayEnabled (0/1), y=overlayAlpha, zw unused
-    float4 shadingParams;  // xyz=light direction (world, normalized), w=shading enabled (0/1)
-    float4 jitterParams;   // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
+    float4 shadingParams;    // xyz=light direction (world, normalized), w=shading enabled (0/1)
+    float4 jitterParams;     // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
+    float4 clipMin;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
+    float4 clipMax;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
+    float4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
+    float4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<RaymarchUBO> ubo;
@@ -61,6 +65,15 @@ static const float3 kBackgroundColor = float3(0.05, 0.05, 0.12);
 // easy to reason about at a glance.
 static const float kShadingAmbient = 0.35;
 static const float kShadingDiffuse = 0.65;
+
+// Normalizes computeGradient()'s magnitude output (of windowed n, per mm)
+// into roughly [0,1] for gradientOpacityStrength (§6.3) -- an untuned
+// reference value; the strength slider is the actual user-facing control,
+// this constant just sets its effective sensitivity. Not derived from
+// window width because the gradient is already computed on window-
+// normalized n (see computeGradient's header comment), so this only needs
+// to account for typical edge sharpness relative to voxel spacing.
+static const float kGradientOpacityReferenceMagnitude = 2.0;
 
 struct VertexOutput
 {
@@ -100,32 +113,74 @@ void intersectAABB(float3 rayOrigin, float3 rayDir, float3 boxMin, float3 boxMax
     tFar = min(min(tBig.x, tBig.y), tBig.z);
 }
 
-// Central-difference density gradient at uvw, converted from
-// normalized-texture-space to world-space mm by dividing each axis by its
-// own physical voxel spacing (worldTexelSize) -- doing this per-axis
-// rather than with one scalar step matters on anisotropic volumes
-// (thick-slice CT/MR): using a single isotropic step would skew the
-// computed gradient direction toward the coarser axis. -(gradient)
-// points from higher to lower density, i.e. outward from tissue, which is
-// the convention fragmentMain's N.L term below expects.
-float3 computeGradient(float3 uvw, float3 texelUvw, float3 worldTexelSize)
+// Window/level normalization, factored out so computeGradient() and
+// computeOcclusion() (§6.2/§6.3) can share it with fragmentMain's own main
+// sample without duplicating the formula three times.
+float sampleN(float3 uvw, float windowCenter, float windowWidth)
 {
-    float dx = volumeTex.SampleLevel(linearSampler, uvw + float3(texelUvw.x, 0.0, 0.0), 0.0) -
-               volumeTex.SampleLevel(linearSampler, uvw - float3(texelUvw.x, 0.0, 0.0), 0.0);
-    float dy = volumeTex.SampleLevel(linearSampler, uvw + float3(0.0, texelUvw.y, 0.0), 0.0) -
-               volumeTex.SampleLevel(linearSampler, uvw - float3(0.0, texelUvw.y, 0.0), 0.0);
-    float dz = volumeTex.SampleLevel(linearSampler, uvw + float3(0.0, 0.0, texelUvw.z), 0.0) -
-               volumeTex.SampleLevel(linearSampler, uvw - float3(0.0, 0.0, texelUvw.z), 0.0);
+    float raw = volumeTex.SampleLevel(linearSampler, uvw, 0.0);
+    return clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
+}
+
+// Central-difference gradient of the *windowed* density n (not raw HU) at
+// uvw, converted from normalized-texture-space to world-space mm by
+// dividing each axis by its own physical voxel spacing (worldTexelSize) --
+// doing this per-axis rather than with one scalar step matters on
+// anisotropic volumes (thick-slice CT/MR): using a single isotropic step
+// would skew the computed gradient direction toward the coarser axis.
+// Using n instead of raw HU doesn't change the returned *direction* (n is
+// just raw HU rescaled by a positive per-window constant, and normalize()
+// removes magnitude entirely), but it does give outMagnitude a bounded,
+// window-relative range instead of one that varies wildly with each
+// volume's raw HU scale -- needed for gradientOpacityStrength (§6.3) to
+// have predictable behavior across different loaded volumes/windows.
+// -(gradient) points from higher to lower density, i.e. outward from
+// tissue, which is the convention fragmentMain's N.L term expects.
+float3 computeGradient(float3 uvw, float3 texelUvw, float3 worldTexelSize, float windowCenter, float windowWidth,
+                        out float outMagnitude)
+{
+    float dx = sampleN(uvw + float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth) -
+               sampleN(uvw - float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth);
+    float dy = sampleN(uvw + float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth) -
+               sampleN(uvw - float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth);
+    float dz = sampleN(uvw + float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth) -
+               sampleN(uvw - float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth);
     float3 gradWorld = float3(dx, dy, dz) / worldTexelSize;
-    float gradLen = length(gradWorld);
-    if (gradLen < 1e-8)
+    outMagnitude = length(gradWorld);
+    if (outMagnitude < 1e-8)
     {
         // Flat/uniform region: no well-defined gradient direction. A zero
         // vector makes the caller's N.L term evaluate to 0 (ambient-only
         // shading there) rather than risking a normalize(0) NaN.
         return float3(0.0, 0.0, 0.0);
     }
-    return -gradWorld / gradLen;
+    return -gradWorld / outMagnitude;
+}
+
+// Directional Occlusion Shading (§6.2) -- a handful of short secondary
+// density samples marching from uvw toward the light, averaged into an
+// approximate self-occlusion factor in [0,1]. Far cheaper than a full
+// self-shadow ray march (which would reuse the *primary* ray's full
+// stepSize/maxSteps budget per shading sample); this is deliberately a
+// coarse approximation, not a shadow map or a physically exact
+// visibility term.
+float computeOcclusion(float3 uvw, float3 lightDirWorld, float3 worldTexelSize, float sampleWorldStep,
+                        float windowCenter, float windowWidth)
+{
+    const int kOcclusionSamples = 3;
+    float3 uvwStep = (lightDirWorld / worldTexelSize) * sampleWorldStep;
+    float occlusion = 0.0;
+    float3 sampleUvw = uvw;
+    for (int i = 0; i < kOcclusionSamples; i++)
+    {
+        sampleUvw += uvwStep;
+        if (any(sampleUvw < 0.0) || any(sampleUvw > 1.0))
+        {
+            break;
+        }
+        occlusion += sampleN(sampleUvw, windowCenter, windowWidth);
+    }
+    return saturate(occlusion / float(kOcclusionSamples));
 }
 
 // Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
@@ -154,8 +209,14 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     float3 rayOrigin = ubo.cameraPos.xyz;
     float3 rayDir = normalize(worldFar.xyz - rayOrigin);
 
+    // Traversal is bounded by the clip box (§6.4), which defaults to the
+    // full AABB when no clipping is set -- see intersectAABB's own header
+    // comment. uvw/boxSize below stay anchored to the *original* AABB
+    // (ubo.aabbMin/aabbMax) regardless of clipping, so texture sampling
+    // coordinates and the mask overlay stay correctly aligned with the
+    // (possibly partially hidden) volume rather than drifting.
     float tNear, tFar;
-    intersectAABB(rayOrigin, rayDir, ubo.aabbMin.xyz, ubo.aabbMax.xyz, tNear, tFar);
+    intersectAABB(rayOrigin, rayDir, ubo.clipMin.xyz, ubo.clipMax.xyz, tNear, tFar);
     if (tNear >= tFar)
     {
         discard;
@@ -164,12 +225,17 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float stepSize = ubo.rayParams.x;
     const int maxSteps = int(ubo.rayParams.y);
     const float extinction = ubo.rayParams.z;
+    const float densityScale = ubo.rayParams.w;
     const float windowCenter = ubo.window.x;
     const float windowWidth = ubo.window.y;
     const bool maskEnabled = ubo.maskParams.x > 0.5;
     const float maskAlpha = ubo.maskParams.y;
     const bool shadingEnabled = ubo.shadingParams.w > 0.5;
     const float3 lightDir = ubo.shadingParams.xyz;
+    const bool occlusionEnabled = ubo.occlusionParams.x > 0.5;
+    const float occlusionStrength = ubo.occlusionParams.y;
+    const float threshold = ubo.tfParams.x;
+    const float gradientOpacityStrength = ubo.tfParams.y;
     const float3 boxSize = ubo.aabbMax.xyz - ubo.aabbMin.xyz;
 
     uint maskW, maskH, maskD;
@@ -208,19 +274,36 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         float3 worldPos = rayOrigin + rayDir * t;
         float3 uvw = (worldPos - ubo.aabbMin.xyz) / boxSize;
 
-        float raw = volumeTex.SampleLevel(linearSampler, uvw, 0.0);
-        float n = clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
+        float n = sampleN(uvw, windowCenter, windowWidth);
         float frontN = (prevN < 0.0) ? n : prevN;
         float4 preint = preintegratedLutTex.SampleLevel(linearSampler, float2(frontN, n), 0.0);
         float3 stepColor = preint.rgb;
-        float sBar = preint.a;
+        // densityScale (§5.3) is a global multiplier on the pre-integrated
+        // classification value, independent of window/level -- 1.0 (the
+        // default) leaves this exactly as before.
+        float sBar = preint.a * densityScale;
         prevN = n;
+
+        // Computed once, shared by shading's N.L term and gradient-opacity
+        // modulation below -- skipped entirely when neither needs it.
+        bool needsGradient = shadingEnabled || gradientOpacityStrength > 0.0;
+        float3 normal = float3(0.0, 0.0, 0.0);
+        float gradMagnitude = 0.0;
+        if (needsGradient)
+        {
+            normal = computeGradient(uvw, texelUvw, worldTexelSize, windowCenter, windowWidth, gradMagnitude);
+        }
 
         if (shadingEnabled)
         {
-            float3 normal = computeGradient(uvw, texelUvw, worldTexelSize);
             float diffuseTerm = max(dot(normal, lightDir), 0.0);
-            float lit = kShadingAmbient + kShadingDiffuse * diffuseTerm;
+            // Directional Occlusion Shading (§6.2) -- only meaningful
+            // alongside shading, since it modulates the diffuse term.
+            float occlusionFactor =
+                occlusionEnabled
+                    ? computeOcclusion(uvw, lightDir, worldTexelSize, stepSize * 2.0, windowCenter, windowWidth)
+                    : 0.0;
+            float lit = kShadingAmbient + kShadingDiffuse * diffuseTerm * (1.0 - occlusionFactor * occlusionStrength);
             stepColor *= lit;
         }
 
@@ -230,6 +313,27 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         // sBar (the pre-integrated average classification value across
         // this step) replaces the single-point n used previously.
         float alpha = 1.0 - exp(-extinction * sBar * stepSize);
+
+        // Threshold cutoff (§5.3): density below this contributes no
+        // opacity, independent of window/level -- lets background/noise
+        // be cut out. Gated on the step's own n, not sBar, so it reflects
+        // the actual sampled point rather than a pre-integrated average.
+        if (n < threshold)
+        {
+            alpha = 0.0;
+        }
+
+        // Gradient-magnitude opacity modulation (§6.3, a scoped-down
+        // stand-in for a full 2D transfer function -- see
+        // engine/docs/RENDERING_SPEC.md for why). strength=0 is a no-op;
+        // strength=1 fully re-weights alpha by normalized edge strength,
+        // suppressing homogeneous-region noise and emphasizing boundaries.
+        if (gradientOpacityStrength > 0.0)
+        {
+            float normalizedGrad = saturate(gradMagnitude / kGradientOpacityReferenceMagnitude);
+            alpha *= lerp(1.0, normalizedGrad, gradientOpacityStrength);
+        }
+
         accum.rgb += (1.0 - accum.a) * stepColor * alpha;
         accum.a += (1.0 - accum.a) * alpha;
 
