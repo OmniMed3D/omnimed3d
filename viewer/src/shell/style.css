@@ -290,6 +290,25 @@ canvas {
   line-height: 1.4;
 }
 
+/* Demo CT attribution disclosure (#demo-ct-status's <details>, CC BY 3.0
+   citation text) -- native <details>/<summary> left mostly unstyled
+   (no custom disclosure triangle) since it's an infrequent, low-emphasis
+   element; only recolored/resized to sit quietly inside .hint-text
+   instead of the browser's default black-on-white chrome. */
+.hint-text details {
+  margin-top: 4px;
+}
+
+.hint-text summary {
+  cursor: pointer;
+  color: var(--accent-bright);
+}
+
+.hint-text details p {
+  margin: 4px 0 0;
+  white-space: pre-line;
+}
+
 .section-label {
   display: block;
   font-size: 10.5px;
@@ -593,6 +612,31 @@ input[type="color"]::-webkit-color-swatch {
 #clip-z-min,
 #clip-z-max {
   min-width: 0;
+}
+
+/* Control tooltips (tooltipManager.ts) -- a single shared element
+   appended to <body>, positioned via JS (getBoundingClientRect()), not a
+   CSS ::after popup on each control. See tooltipManager.ts's header
+   comment for why: #control-panel's overflow-y:auto also computes
+   overflow-x:auto per the CSS Overflow spec, so any descendant
+   positioned to escape the panel's own box gets clipped by it regardless
+   of direction. position:fixed here means the tooltip is unaffected by
+   both the panel's scroll offset and its clipping box. */
+#control-tooltip {
+  position: fixed;
+  z-index: 30;
+  max-width: 200px;
+  padding: 6px 10px;
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-panel);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+  pointer-events: none;
 }
 
 /* .row sets display:flex, which otherwise beats the UA [hidden]
