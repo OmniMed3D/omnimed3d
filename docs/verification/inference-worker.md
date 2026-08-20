@@ -247,3 +247,72 @@ quantization) faithfully reproduces the original model's decisions — the
 porting and quantization work introduces no meaningful fidelity loss.
 Whether the original model's decisions are themselves clinically accurate
 is a separate, still-open question.
+
+## 5. Native ONNX Runtime Latency Baseline (2026-08-21)
+
+PRD Section 4 defines an "On-Device Overhead Multiplier" — browser
+(`onnxruntime-web`) inference time divided by native `onnxruntime`
+inference time for the same model, target < 3x — specifically to
+decouple "running in a browser" overhead from "this model is just
+compute-heavy." Section 3 above only ever measured the browser side; this
+section supplies the missing native-side number
+(`ai-pipeline/quantization/benchmark_native_latency.py`). Computing the
+actual multiplier still requires a *real-browser* infer number (Section 3
+was measured under Node, not a browser — see its own caveats); that's
+tracked as a separate, not-yet-done issue and isn't computed here.
+
+**Methodology:** same single input slice Section 3 used
+(`LIDC-IDRI-0001_inst0034`, entry 0 of the ground-truth manifest), same
+iteration count (5) and same "mean of wall-clock ms, no separate warmup
+excluded from the mean" approach, so the two numbers are directly
+comparable rather than incidentally similar. Only the forward pass
+(`session.run()`) is timed — matching what Section 3 calls "infer".
+Postprocess (argmax + NN upscale) isn't reimplemented in Python here since
+it's TypeScript-only in this project and Section 3 already found it
+negligible (1-3ms), so its absence from this measurement doesn't affect
+comparability.
+
+**Environment:** same MacBook M1 hardware as Section 3, but native Python
+`onnxruntime` 1.23.2 (via `viewer/src/workers/inference-worker/.venv`),
+`CPUExecutionProvider` — **not** the `onnxruntime-web` 1.27.0 resolved in
+Section 3. This is a different package and a different (though close)
+version; the eventual multiplier will carry a small amount of
+version-skew noise alongside the browser-vs-native difference it's meant
+to isolate. Flagged here, not treated as negligible without checking.
+
+**Results (two separate isolated runs, shown both to be transparent about
+run-to-run noise — consistent with Section 3's own finding that this kind
+of benchmark is noisy):**
+
+| Run | Model | mean infer (ms) | per-iteration samples (ms) |
+| --- | --- | --- | --- |
+| 1 | FP32 | 597.6 | 778.0, 520.6, 668.5, 505.0, 515.9 |
+| 1 | INT8 | 208.3 | 198.0, 330.8, 173.8, 170.1, 168.7 |
+| 1 | FP16 | 487.2 | 546.1, 508.6, 478.9, 480.4, 421.7 |
+| 2 | FP32 | 486.5 | 465.4, 465.2, 471.2, 562.7, 467.9 |
+| 2 | INT8 | 155.4 | 164.3, 158.8, 145.4, 147.1, 161.3 |
+| 2 | FP16 | 561.6 | 465.8, 447.5, 441.1, 792.0, 661.6 |
+
+Preprocess (not part of the infer figure above): 62.2ms (run 1), 20.3ms
+(run 2) — noisy in the same way the infer numbers are, not investigated
+further here since it isn't part of the multiplier's definition.
+
+**What this shows:**
+- **INT8 is fastest in both runs** (155-208ms) — qualitatively consistent
+  with Section 3's browser-side finding that INT8 came out fastest there
+  too, despite having far more graph nodes (190 added quantize/dequantize
+  nodes per Section 3's graph inspection).
+- **FP16 is not reliably faster than FP32 here, and is noisier** (its run-2
+  samples span 441-792ms) — consistent with Section 3's explanation that
+  FP16 conversion on this backend only adds data-conversion (Cast) nodes
+  around unchanged FP32-precision compute, with no native FP16 execution
+  path on CPU. The same qualitative pattern showing up independently on
+  the native side (different runtime, different language) is a second,
+  independent data point for that explanation rather than a WASM-specific
+  quirk.
+- FP32 mean infer: 481-598ms across the two runs.
+
+**Still open:** the actual overhead multiplier (browser / native) isn't
+computed in this section — it needs a real-browser (not Node) infer
+number for the numerator, which doesn't exist yet. Once that lands, divide
+its per-model mean by the corresponding row here.
