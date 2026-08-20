@@ -35,6 +35,8 @@ import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
 import { setupInferenceControls } from "./inferenceControls.js";
+import { setupDemoCtControls } from "./demoCtControls.js";
+import { setupTooltips } from "./tooltipManager.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -203,9 +205,18 @@ function mintVolumeId(): string {
  * flows already used by hand. `files` may be a single- or multi-file
  * series (e.g. one file per axial slice).
  */
-export async function loadVolumeFromFiles(files: File[]): Promise<string> {
+/**
+ * File-agnostic core of loadVolumeFromFiles -- mints a volumeId and posts
+ * a `parse-series` message to the real Parse Worker. Split out (2026-08-21,
+ * demo-CT loader follow-up) because nothing downstream of this point ever
+ * touches `File`-specific APIs (confirmed against parse-worker/src/
+ * worker.ts and pipeline.ts -- the `ParseSeriesMessage` contract is plain
+ * `ArrayBuffer[]`), so a caller that already has buffers (e.g. from
+ * `fetch()` rather than a picked `File`) can skip straight to this.
+ */
+export async function loadVolumeFromBuffers(buffers: ArrayBuffer[]): Promise<string> {
   if (!parseWorkerInstance) {
-    throw new Error("loadVolumeFromFiles called before the Shell finished initializing");
+    throw new Error("loadVolumeFromBuffers called before the Shell finished initializing");
   }
   setLoading(true);
   // Clear a stale error from a previous failed attempt -- this is the
@@ -213,24 +224,41 @@ export async function loadVolumeFromFiles(files: File[]): Promise<string> {
   document.getElementById("load-error")!.hidden = true;
   try {
     const volumeId = mintVolumeId();
-    const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
     parseWorkerInstance.postMessage({ type: "parse-series", volumeId, files: buffers }, buffers);
     return volumeId;
   } catch (error) {
-    // Only the synchronous/promise-rejection path here (a bad File read)
-    // clears loading itself -- once the parse-series message is posted,
-    // loading stays true until either engineLoadVolume's success path or
+    // Only the synchronous/promise-rejection path here clears loading
+    // itself -- once the parse-series message is posted, loading stays
+    // true until either engineLoadVolume's success path or
     // parseWorker.onerror's failure path clears it.
     setLoading(false);
     throw error;
   }
 }
 
-function showLoadError(): void {
+/**
+ * Shared entry point for turning picked files into a loaded volume
+ * (issue #34) -- the same pattern `omnimed3dTestHooks`-driven flows
+ * already used by hand. `files` may be a single- or multi-file series
+ * (e.g. one file per axial slice).
+ */
+export async function loadVolumeFromFiles(files: File[]): Promise<string> {
+  const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
+  return loadVolumeFromBuffers(buffers);
+}
+
+/**
+ * message defaults to the file-picker's own wording -- callers with a more
+ * specific failure (e.g. the demo-CT loader's manifest-fetch 404, which
+ * isn't "an invalid file" but a dev-setup problem) can override it.
+ */
+export function showLoadError(
+  message = "Couldn't load this file -- it may not be a valid or supported DICOM series.",
+): void {
   setLoading(false);
   const loadError = document.getElementById("load-error");
   if (loadError) {
-    loadError.textContent = "Couldn't load this file -- it may not be a valid or supported DICOM series.";
+    loadError.textContent = message;
     loadError.hidden = false;
   }
 }
@@ -391,6 +419,8 @@ async function main() {
   setupPanelDrag();
   setupPanelCollapse();
   setupInferenceControls(inferenceWorker);
+  setupDemoCtControls(loadVolumeFromBuffers, showLoadError);
+  setupTooltips();
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
   // Visual polish pass: shown only once there's actually something to

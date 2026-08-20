@@ -93,6 +93,14 @@
           <label for="dicom-files-input" class="upload-btn secondary">Load DICOM files</label>
           <input id="dicom-files-input" type="file" multiple accept=".dcm,application/dicom" class="file-input" />
         </div>
+        <!-- Real, de-identified LIDC-IDRI patient CT (133 slices, CC BY
+             3.0 -- see test-data/lidc_idri/README.md) served
+             from public/demo-ct/ (npm run sync-demo-ct), not committed
+             there directly. demoCtControls.ts owns the button/status. -->
+        <div class="row">
+          <button type="button" id="load-demo-ct" class="upload-btn secondary">Load Demo CT</button>
+        </div>
+        <p id="demo-ct-status" class="hint-text"></p>
         <!-- Issue #42: shown between file selection and engine_load_volume
              completing -- loadingIndicator.ts owns hidden/visible. -->
         <div class="row" id="loading-indicator" hidden>
@@ -122,12 +130,12 @@
       <div class="panel-section">
         <span class="section-label">View</span>
         <div class="row preset-buttons view-mode-buttons">
-          <button type="button" data-view-mode="0">3D Orbit</button>
-          <button type="button" data-view-mode="1">2D Slice</button>
+          <button type="button" data-view-mode="0" data-tooltip-key="view-mode-0">3D Orbit</button>
+          <button type="button" data-view-mode="1" data-tooltip-key="view-mode-1">2D Slice</button>
         </div>
         <div class="row" id="axial-slice-row" hidden>
           <label for="axial-slice-index">Slice</label>
-          <input id="axial-slice-index" type="range" min="0" max="0" step="1" />
+          <input id="axial-slice-index" type="range" min="0" max="0" step="1" data-tooltip-key="axial-slice-index" />
           <span id="axial-slice-index-value" class="value"></span>
         </div>
       </div>
@@ -139,13 +147,13 @@
       <div class="panel-section">
         <span class="section-label">Rendering</span>
         <div class="row preset-buttons quality-buttons">
-          <button type="button" data-quality-tier="0">Low</button>
-          <button type="button" data-quality-tier="1">Medium</button>
-          <button type="button" data-quality-tier="2">High</button>
+          <button type="button" data-quality-tier="0" data-tooltip-key="quality-tier-0">Low</button>
+          <button type="button" data-quality-tier="1" data-tooltip-key="quality-tier-1">Medium</button>
+          <button type="button" data-quality-tier="2" data-tooltip-key="quality-tier-2">High</button>
         </div>
         <div class="row checkbox-row">
           <label for="shading-enabled">Shading</label>
-          <input id="shading-enabled" type="checkbox" checked />
+          <input id="shading-enabled" type="checkbox" checked data-tooltip-key="shading-enabled" />
         </div>
       </div>
       <div class="panel-section">
@@ -157,7 +165,7 @@
              both ways. -->
         <div class="row">
           <label for="window-center">Window Center</label>
-          <input id="window-center" type="range" min="-1000" max="1000" step="1" />
+          <input id="window-center" type="range" min="-1000" max="1000" step="1" data-tooltip-key="window-center" />
           <input
             id="window-center-value"
             class="value"
@@ -170,7 +178,7 @@
         </div>
         <div class="row">
           <label for="window-width">Window Width</label>
-          <input id="window-width" type="range" min="1" max="4000" step="1" />
+          <input id="window-width" type="range" min="1" max="4000" step="1" data-tooltip-key="window-width" />
           <input
             id="window-width-value"
             class="value"
@@ -183,10 +191,10 @@
         </div>
         <div class="row preset-buttons">
           <!-- data-colormap-preset values must match WebGPUDevice.cpp's kColormapPresets order. -->
-          <button type="button" data-colormap-preset="0">Lung</button>
-          <button type="button" data-colormap-preset="1">Bone</button>
-          <button type="button" data-colormap-preset="2">Soft Tissue</button>
-          <button type="button" data-colormap-preset="3">Brain</button>
+          <button type="button" data-colormap-preset="0" data-tooltip-key="colormap-preset-0">Lung</button>
+          <button type="button" data-colormap-preset="1" data-tooltip-key="colormap-preset-1">Bone</button>
+          <button type="button" data-colormap-preset="2" data-tooltip-key="colormap-preset-2">Soft Tissue</button>
+          <button type="button" data-colormap-preset="3" data-tooltip-key="colormap-preset-3">Brain</button>
         </div>
         <!-- §5.3 Custom preset: a 5th colormap, not one of
              WebGPUDevice's fixed kColormapPresets indices -- the color
@@ -195,13 +203,20 @@
              button is a visual-state indicator only, not a click target
              that itself changes anything (colorControls.ts). -->
         <div class="row preset-buttons">
-          <button type="button" data-colormap-preset="4" id="custom-preset-button">Custom</button>
+          <button
+            type="button"
+            data-colormap-preset="4"
+            id="custom-preset-button"
+            data-tooltip-key="custom-preset-button"
+          >
+            Custom
+          </button>
         </div>
         <div class="row">
           <label for="custom-low-color">Low Color</label>
-          <input id="custom-low-color" type="color" value="#000000" />
+          <input id="custom-low-color" type="color" value="#000000" data-tooltip-key="custom-low-color" />
           <label for="custom-high-color">High Color</label>
-          <input id="custom-high-color" type="color" value="#ffffff" />
+          <input id="custom-high-color" type="color" value="#ffffff" data-tooltip-key="custom-high-color" />
         </div>
       </div>
       <!-- §5.3 TF detail controls: previously-fixed constants (extinction)
@@ -211,27 +226,27 @@
         <span class="section-label">TF Detail</span>
         <div class="row">
           <label for="extinction">Extinction</label>
-          <input id="extinction" type="range" min="0.1" max="30" step="0.1" />
+          <input id="extinction" type="range" min="0.1" max="30" step="0.1" data-tooltip-key="extinction" />
           <input id="extinction-value" class="value" type="number" min="0.1" max="30" step="0.1" aria-label="Extinction value" />
         </div>
         <div class="row">
           <label for="density-scale">Density Scale</label>
-          <input id="density-scale" type="range" min="0" max="5" step="0.05" />
+          <input id="density-scale" type="range" min="0" max="5" step="0.05" data-tooltip-key="density-scale" />
           <input id="density-scale-value" class="value" type="number" min="0" max="5" step="0.05" aria-label="Density Scale value" />
         </div>
         <div class="row">
           <label for="threshold">Threshold</label>
-          <input id="threshold" type="range" min="0" max="0.5" step="0.01" />
+          <input id="threshold" type="range" min="0" max="0.5" step="0.01" data-tooltip-key="threshold" />
           <input id="threshold-value" class="value" type="number" min="0" max="0.5" step="0.01" aria-label="Threshold value" />
         </div>
         <div class="row">
           <label for="gradient-opacity">Edge Emphasis</label>
-          <input id="gradient-opacity" type="range" min="0" max="1" step="0.05" />
+          <input id="gradient-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="gradient-opacity" />
           <span id="gradient-opacity-value" class="value"></span>
         </div>
         <div class="row checkbox-row">
           <label for="occlusion-enabled">Occlusion Shading</label>
-          <input id="occlusion-enabled" type="checkbox" />
+          <input id="occlusion-enabled" type="checkbox" data-tooltip-key="occlusion-enabled" />
         </div>
       </div>
       <!-- §6.4 clip box: 3 axes, each a min/max pair over the loaded
@@ -242,21 +257,71 @@
         <span class="section-label">Clip</span>
         <div class="row">
           <label for="clip-x-min">X</label>
-          <input id="clip-x-min" type="range" min="-1" max="1" step="0.1" aria-label="Clip X minimum" />
-          <input id="clip-x-max" type="range" min="-1" max="1" step="0.1" aria-label="Clip X maximum" />
+          <input
+            id="clip-x-min"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip X minimum"
+            data-tooltip-key="clip-x-min"
+          />
+          <input
+            id="clip-x-max"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip X maximum"
+            data-tooltip-key="clip-x-max"
+          />
         </div>
         <div class="row">
           <label for="clip-y-min">Y</label>
-          <input id="clip-y-min" type="range" min="-1" max="1" step="0.1" aria-label="Clip Y minimum" />
-          <input id="clip-y-max" type="range" min="-1" max="1" step="0.1" aria-label="Clip Y maximum" />
+          <input
+            id="clip-y-min"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip Y minimum"
+            data-tooltip-key="clip-y-min"
+          />
+          <input
+            id="clip-y-max"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip Y maximum"
+            data-tooltip-key="clip-y-max"
+          />
         </div>
         <div class="row">
           <label for="clip-z-min">Z</label>
-          <input id="clip-z-min" type="range" min="-1" max="1" step="0.1" aria-label="Clip Z minimum" />
-          <input id="clip-z-max" type="range" min="-1" max="1" step="0.1" aria-label="Clip Z maximum" />
+          <input
+            id="clip-z-min"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip Z minimum"
+            data-tooltip-key="clip-z-min"
+          />
+          <input
+            id="clip-z-max"
+            type="range"
+            min="-1"
+            max="1"
+            step="0.1"
+            aria-label="Clip Z maximum"
+            data-tooltip-key="clip-z-max"
+          />
         </div>
         <div class="row">
-          <button type="button" id="clip-reset" class="upload-btn secondary">Reset Clip</button>
+          <button type="button" id="clip-reset" class="upload-btn secondary" data-tooltip-key="clip-reset">
+            Reset Clip
+          </button>
         </div>
       </div>
     </div>

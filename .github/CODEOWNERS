@@ -11,6 +11,14 @@
 /ai-pipeline/  @hyuniverse
 /infra/        @hyuniverse
 
+# Shared, cross-module test/demo data (currently: the LIDC-IDRI demo CT
+# series consumed by engine/viewer's "Load Demo CT" button, and
+# available for ai-pipeline to reuse rather than maintaining a separate
+# local-only download of the same patient) -- one owner maintains the
+# committed files, same "shared, not one module's alone" pattern as
+# dicom-parser/ above. See test-data/lidc_idri/README.md.
+/test-data/  @nowead
+
 # AI-track subtree inside viewer/ — single consumer (this web app), no
 # independent build target, so it lives with Shell/Parse Worker for
 # bundling rather than as a standalone package. See docs/adr/0003.

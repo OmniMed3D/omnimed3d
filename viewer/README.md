@@ -57,6 +57,24 @@ model-fixture tests similarly need `ai-pipeline/quantization/calibration_data/`
 generated locally first (gitignored, not part of a fresh clone) — see
 `src/workers/inference-worker/scripts/export_reference_fixtures.py`.
 
+The "Load Demo CT" button (`src/shell/demoCtControls.ts`) needs
+[`../test-data/lidc_idri/`](../test-data/lidc_idri/README.md) — a real
+patient CT series checked in via **Git LFS**, not a plain blob (~68MB).
+If `git lfs` isn't installed on your machine, a normal `git clone`/`git
+pull` still succeeds but leaves small text *pointer* files in that
+directory instead of real DICOM data — install it
+([git-lfs.com](https://git-lfs.com)) and re-pull (or run `git lfs pull`)
+before continuing. Then, same as `sync-engine-wasm` above, copy it into
+the Shell's servable path:
+
+```zsh
+npm run sync-demo-ct   # copies test-data/lidc_idri/* into src/shell/public/demo-ct/
+```
+
+This script itself checks for the pointer-file case (any source file
+under ~10KB) and fails with a `git lfs pull` reminder rather than
+silently copying unusable stub data.
+
 ### Browser e2e tests (`tests/e2e/`)
 
 Verifies the real Shell against real Workers in a real browser
@@ -78,6 +96,7 @@ npx playwright install chromium
 cd engine && cmake --preset wasm-macos && cmake --build build_wasm   # or wasm-windows
 cd ../viewer
 npm run sync-engine-wasm   # copies engine/build_wasm/* into src/shell/public/engine/
+npm run sync-demo-ct       # copies test-data/lidc_idri/* into src/shell/public/demo-ct/ (needs git-lfs, see above)
 npm run test:e2e
 ```
 
