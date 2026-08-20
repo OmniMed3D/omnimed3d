@@ -114,6 +114,61 @@ public:
     // setQualityTier.
     virtual void setShadingEnabled(bool enabled) = 0;
 
+    // Beer-Lambert absorption coefficient for the raymarch pass (was a
+    // fixed constant before this control existed). Higher values make the
+    // volume look denser/more opaque at the same window/level. Safe to
+    // call before any volume is loaded, like setQualityTier.
+    virtual void setExtinction(float extinction) = 0;
+
+    // Scales the pre-integrated classification value ("sBar") used for
+    // absorption before it reaches the extinction term -- a global
+    // density multiplier independent of window/level. 1.0 leaves behavior
+    // unchanged from before this control existed.
+    virtual void setDensityScale(float scale) = 0;
+
+    // Hard cutoff (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+    // §5.3): normalized density samples below this threshold contribute
+    // no opacity, letting background/noise be cut out independently of
+    // window/level. In normalized [0,1] units, same space as the
+    // window/level-mapped density. 0.0 (default) disables the cutoff
+    // entirely.
+    virtual void setThreshold(float threshold) = 0;
+
+    // Restricts the raymarch traversal to an axis-aligned sub-box of the
+    // loaded volume's world-space AABB (§6.4) -- reveals interior
+    // structure without a full MPR view. Values are clamped to stay
+    // within the volume's own AABB and min<max per axis; texture sampling
+    // coordinates are unaffected (still derived from the full AABB), only
+    // the ray's traversal range changes. Reset to the full AABB on every
+    // loadVolume() call -- a clip region from a previously loaded
+    // (differently sized) volume would otherwise misclip the new one.
+    virtual void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) = 0;
+
+    // Scales each raymarch step's opacity by a function of the local
+    // density-gradient magnitude (§6.3, a scoped-down stand-in for a full
+    // 2D transfer function -- see engine/docs/RENDERING_SPEC.md for why).
+    // 0.0 (default) leaves opacity exactly as before; higher values
+    // increasingly suppress homogeneous-region noise and emphasize
+    // boundaries. Reuses the gradient already computed for shading when
+    // shading is enabled.
+    virtual void setGradientOpacityStrength(float strength) = 0;
+
+    // Toggles Directional Occlusion Shading (§6.2) -- a handful of short
+    // secondary density samples toward the light per raymarch step,
+    // approximating self-shadowing far more cheaply than a full
+    // self-shadow ray march. Only has a visible effect when shading
+    // (setShadingEnabled) is also on, since it modulates the shading
+    // pass's diffuse term.
+    virtual void setOcclusionEnabled(bool enabled) = 0;
+
+    // Sets a fifth, user-defined colormap (§5.3's "Custom" preset) --
+    // low/high RGB in [0,1], distinct from setColormapPreset's fixed
+    // 0-3 index range. Does not change window/level (unlike
+    // setColormapPreset) -- Custom is purely a color choice layered on
+    // whatever window/level is already set.
+    virtual void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG,
+                                    float highB) = 0;
+
     // Resizes the render surface and recomputes the Orbit3D camera's
     // aspect ratio to match (issue #40 -- the canvas was previously a
     // fixed 640x480 box with no way to reconfigure it). width/height are

@@ -16,14 +16,17 @@
 
 ### 1.2 3D Orbit volume rendering (`volume_raymarch.slang`)
 
-Front-to-back raymarch through an R16Float HU 3D texture. Per step:
+Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal range (`tNear`/`tFar`) is computed against the **clip box** (§1.4a), not the volume's full AABB — texture sampling coordinates (`uvw`) stay anchored to the full AABB regardless, so clipping only shortens/moves the visible range without touching how the volume or mask textures are sampled. Per step:
 
 1. **Window/level normalization** — clamps raw HU into `[0,1]` as `n`, using `windowCenter`/`windowWidth`. (`engine_set_window_level`, `engine_set_colormap_preset`)
-2. **Pre-integrated transfer-function lookup** — samples a 256×256 2D LUT (binding 5) at `(frontN, backN)` to get this step segment's average color (`colorBar`) and average classification value (`sBar`). Compared to the previous single-point classification, this reduces thin high-contrast structures being missed between steps at low quality tiers (fewer/coarser steps). When `sf==sb` (consecutive steps' `n` values are nearly equal) it converges to the original single-point classification exactly.
-3. **Gradient-based Lambert shading** (optional, `engine_set_shading_enabled`) — a central-difference density gradient is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.35) + diffuse(0.65)*max(N·L,0)`. The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes.
-4. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction` currently fixed at `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
-5. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest); a nonzero class additively composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at alpha 0.6. (Mask on/off and alpha themselves have no UI/export yet — still hardcoded.)
-6. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a fixed background color (`(0.05,0.05,0.12)`) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingEnabled`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
+2. **Pre-integrated transfer-function lookup** — samples a 256×256 2D LUT (binding 5) at `(frontN, backN)` to get this step segment's average color (`colorBar`) and average classification value (`sBar`). Compared to a single-point classification, this reduces thin high-contrast structures being missed between steps at low quality tiers (fewer/coarser steps). When `sf==sb` (consecutive steps' `n` values are nearly equal) it converges to the original single-point classification exactly. `sBar` is then scaled by `densityScale` (§1.4a, default `1.0` — no change) before it reaches absorption.
+3. **Gradient computation** — a central-difference gradient of the *windowed* density `n` (not raw HU, so its magnitude stays in a bounded, window-relative range) is computed once per step, shared by shading's normal and gradient-opacity's magnitude below. Skipped entirely when neither shading nor gradient-opacity is active, to avoid the extra sampling cost.
+4. **Gradient-based Lambert shading** (optional, `engine_set_shading_enabled`) — the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.35) + diffuse(0.65)*max(N·L,0)*(1-occlusion*occlusionStrength)`. The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is also on) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
+5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
+6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
+7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
+8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest); a nonzero class additively composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at alpha 0.6. (Mask on/off and alpha themselves have no UI/export yet — still hardcoded.)
+9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a fixed background color (`(0.05,0.05,0.12)`) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingEnabled`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
 
@@ -41,21 +44,30 @@ Per-pixel sampling of a fixed Z plane (`AxialSliceUBO`). After window/level norm
 
 **Anisotropic voxel spacing guard**: stepSize is additionally clamped to at most 1.5x the finest of the loaded volume's `spacingX/Y/Z` (`finestSpacing`), and `maxSteps` is grown to compensate so the ray still reaches the far face (final hard cap: 2048 steps). This guard is effectively inert on near-isotropic volumes.
 
+### 1.4a TF detail and clip box controls
+
+TF detail (`engine_set_extinction`, `engine_set_density_scale`, `engine_set_threshold`, `engine_set_gradient_opacity_strength`, `engine_set_occlusion_enabled`) — see §1.2 steps 2/4/5/6/7 for exactly how each applies. Gradient-magnitude opacity modulation is a deliberately scoped-down stand-in for a full 2D transfer function (intensity + gradient magnitude as two LUT axes, Kniss-style): the pre-integrated LUT (§1.6) already uses its second axis for the front/back sample pair, so a genuine second classification axis isn't available without a 3D texture, which wasn't judged worth the complexity yet.
+
+Clip box (`engine_set_clip_box(minX, minY, minZ, maxX, maxY, maxZ)`) — restricts the raymarch traversal range to an axis-aligned sub-box of the loaded volume's world-space AABB, revealing interior structure without a full MPR view. Values are clamped to the volume's own AABB and to `min<=max` per axis. Reset to the full AABB on every `loadVolume()` call.
+
 ### 1.5 UBO layout
 
-`RaymarchUBO` (256 bytes, kept byte-synchronized between C++ and Slang via `static_assert(offsetof(...))` on both sides):
+`RaymarchUBO` (320 bytes, kept byte-synchronized between C++ and Slang via `static_assert(offsetof(...))` on both sides):
 
 ```
 invView, invProj             mat4 x2
 cameraPos, aabbMin, aabbMax  vec4 x3 (world mm)
-rayParams                    x=stepSize, y=maxSteps, z=extinction, w=unused
+rayParams                    x=stepSize, y=maxSteps, z=extinction, w=densityScale
 window                       x=center, y=width, zw=unused
 maskParams                   x=overlayEnabled, y=overlayAlpha, zw=unused
 shadingParams                xyz=light direction, w=shading enabled (0/1)
 jitterParams                 x=accumFrameIndex, y=accumulation enabled (reserved, always 1), zw=unused
+clipMin, clipMax             vec4 x2, world mm -- raymarch traversal bound (clip box)
+occlusionParams              x=DOS enabled (0/1), y=strength (fixed 1.0, no slider yet), zw=unused
+tfParams                     x=threshold, y=gradient-opacity strength, zw=unused
 ```
 
-`AxialSliceUBO` (48 bytes) — `sliceParams`/`maskParams`/`fitParams`. Both structs share one `uboBuffer_` (sized for the larger of the two) and one 6-entry bind group layout.
+`AxialSliceUBO` (48 bytes) — `sliceParams`/`maskParams`/`fitParams`. Both structs share one `uboBuffer_` (sized for the larger of the two) and one 6-entry bind group layout. Clipping, extinction/density-scale/threshold, gradient-opacity, and DOS only affect the raymarch pipeline — the axial-slice view (§1.3) doesn't read any of `RaymarchUBO`'s new fields.
 
 ### 1.6 Texture bindings (bind group 0)
 
@@ -90,21 +102,27 @@ Orbit3D rendering is now two passes:
 | Soft Tissue (default) | 40 / 400 | dark red-brown → soft pink |
 | Brain | 40 / 80 | dark gray → warm light gray |
 
+A 5th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, highR,G,B)`, values in `[0,1]`) is layered on top of these four — unlike the fixed presets, it doesn't change window/level, only the color ramp. Not one of `kColormapPresets`' indices; the "Custom" button in the UI is a visual-active-state indicator only (its click doesn't call `engine_set_colormap_preset`), while the two color pickers own actually applying the colors.
+
 ### 1.9 Controls exposed in the viewer UI
 
 | Control | Panel section | WASM export |
 | --- | --- | --- |
 | Window Center / Width (slider + numeric entry) | Window & Level | `engine_set_window_level` |
-| 4 preset buttons | Window & Level | `engine_set_colormap_preset` |
+| 4 preset buttons + Custom (5th, color pickers) | Window & Level | `engine_set_colormap_preset`, `engine_set_custom_lut_colors` |
 | View mode (3D Orbit / 2D Slice) | View | `engine_set_view_mode` |
 | Axial slice index | View | `engine_set_axial_slice_index` |
 | Quality tier (Low/Medium/High) | Rendering | `engine_set_quality_tier` |
 | Shading on/off | Rendering | `engine_set_shading_enabled` |
+| Extinction / Density Scale / Threshold (slider + numeric entry) | TF Detail | `engine_set_extinction`, `engine_set_density_scale`, `engine_set_threshold` |
+| Edge Emphasis (gradient-opacity strength) | TF Detail | `engine_set_gradient_opacity_strength` |
+| Occlusion Shading on/off | TF Detail | `engine_set_occlusion_enabled` |
+| Clip X/Y/Z min+max sliders, Reset button | Clip | `engine_set_clip_box` |
 | Camera orbit/zoom (mouse drag/wheel, not in the panel) | — | `engine_orbit_camera`, `engine_zoom_camera` |
 
 ### 1.10 Parameters not yet exposed via UI/export
 
-Extinction coefficient (fixed at 8.0), light direction / ambient & diffuse strength (fixed), mask overlay on/off and alpha (fixed at true/0.6), density scale, threshold, clipping region, the color transfer function's second axis (gradient magnitude). Targeted for the next branch (`feat/engine-clinical-shading-controls`).
+Light direction / ambient & diffuse shading strength (fixed constants), mask overlay on/off and alpha (fixed at true/0.6), occlusion strength (fixed at full effect when enabled — no slider yet), the color transfer function's second axis as a genuine classification axis (gradient magnitude is only used as an opacity modulator, §1.4a, not a second LUT axis). No further branch is currently planned against this list — pick these up if a concrete need comes up.
 
 ---
 

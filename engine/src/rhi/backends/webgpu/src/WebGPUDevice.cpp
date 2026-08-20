@@ -51,8 +51,12 @@ struct RaymarchUBO {
     glm::vec4 rayParams;      // x=stepSize, y=maxSteps, z=extinction, w unused
     glm::vec4 window;         // x=center, y=width, zw unused
     glm::vec4 maskParams;     // x=overlayEnabled, y=overlayAlpha, zw unused
-    glm::vec4 shadingParams;  // xyz=light direction (world, normalized), w=shading enabled (0/1)
-    glm::vec4 jitterParams;   // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
+    glm::vec4 shadingParams;    // xyz=light direction (world, normalized), w=shading enabled (0/1)
+    glm::vec4 jitterParams;     // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
+    glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound (§6.4)
+    glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
+    glm::vec4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
+    glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
 };
 
 static_assert(offsetof(RaymarchUBO, invView) == 0);
@@ -65,7 +69,11 @@ static_assert(offsetof(RaymarchUBO, window) == 192);
 static_assert(offsetof(RaymarchUBO, maskParams) == 208);
 static_assert(offsetof(RaymarchUBO, shadingParams) == 224);
 static_assert(offsetof(RaymarchUBO, jitterParams) == 240);
-static_assert(sizeof(RaymarchUBO) == 256);
+static_assert(offsetof(RaymarchUBO, clipMin) == 256);
+static_assert(offsetof(RaymarchUBO, clipMax) == 272);
+static_assert(offsetof(RaymarchUBO, occlusionParams) == 288);
+static_assert(offsetof(RaymarchUBO, tfParams) == 304);
+static_assert(sizeof(RaymarchUBO) == 320);
 
 // Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang (issue
 // #37) -- deliberately a separate, smaller struct rather than reusing
@@ -101,13 +109,8 @@ constexpr uint32_t kViewModeAxialSlice2D = 1;
 // LUT color ramp instead of the original shared grayscale -- alpha still
 // ramps linearly with normalized density regardless of preset (see
 // writeLutPreset()), so only hue/tint distinguishes presets, not opacity
-// behavior.
-struct ColorRGB {
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-};
-
+// behavior. ColorRGB itself now lives in WebGPUDevice.hpp -- shared with
+// setCustomColormap()'s (§5.3) writeLutColors()/writePreintegratedLutColors().
 struct ColormapPreset {
     float center;
     float width;
@@ -142,11 +145,6 @@ constexpr std::array<QualityTier, 3> kQualityTiers{{
     {768.0F, 1024.0F},  // 2: High
 }};
 constexpr uint32_t kDefaultQualityTier = 1;
-
-// Beer-Lambert absorption coefficient -- fixed for this branch (Branch 2
-// exposes it as a real setter). See volume_raymarch.slang's compositing
-// comment for why Beer-Lambert rather than a plain linear scale.
-constexpr float kExtinction = 8.0F;
 
 // Fixed world-space light direction for gradient-based Lambert shading
 // (setShadingEnabled()) -- a camera-independent key light (not exposed as
@@ -312,16 +310,22 @@ void WebGPUDevice::createSamplerAndLut() {
 // bounds-checked by the caller.
 void WebGPUDevice::writeLutPreset(uint32_t presetId) {
     ColormapPreset const& preset = kColormapPresets[presetId];
+    writeLutColors(preset.lowColor, preset.highColor);
+}
 
+// Shared by writeLutPreset() (the 4 fixed presets) and setCustomColormap()
+// (§5.3's 5th, user-defined preset) -- see writeLutPreset()'s own header
+// comment for the ramp/alpha semantics, unchanged here.
+void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
     std::array<uint8_t, kLutSize * 4> lutData{};
     for (uint32_t i = 0; i < kLutSize; ++i) {
         float const t = static_cast<float>(i) / static_cast<float>(kLutSize - 1);
-        lutData[i * 4 + 0] = static_cast<uint8_t>(
-            std::lerp(static_cast<float>(preset.lowColor.r), static_cast<float>(preset.highColor.r), t));
-        lutData[i * 4 + 1] = static_cast<uint8_t>(
-            std::lerp(static_cast<float>(preset.lowColor.g), static_cast<float>(preset.highColor.g), t));
-        lutData[i * 4 + 2] = static_cast<uint8_t>(
-            std::lerp(static_cast<float>(preset.lowColor.b), static_cast<float>(preset.highColor.b), t));
+        lutData[i * 4 + 0] =
+            static_cast<uint8_t>(std::lerp(static_cast<float>(lowColor.r), static_cast<float>(highColor.r), t));
+        lutData[i * 4 + 1] =
+            static_cast<uint8_t>(std::lerp(static_cast<float>(lowColor.g), static_cast<float>(highColor.g), t));
+        lutData[i * 4 + 2] =
+            static_cast<uint8_t>(std::lerp(static_cast<float>(lowColor.b), static_cast<float>(highColor.b), t));
         lutData[i * 4 + 3] = static_cast<uint8_t>((i * 255) / (kLutSize - 1));
     }
 
@@ -362,12 +366,19 @@ void WebGPUDevice::writeLutPreset(uint32_t presetId) {
 // change -- see setColormapPreset().
 void WebGPUDevice::writePreintegratedLut(uint32_t presetId) {
     ColormapPreset const& preset = kColormapPresets[presetId];
+    writePreintegratedLutColors(preset.lowColor, preset.highColor);
+}
 
-    auto classColor = [&preset](float s) -> glm::vec3 {
+// Shared by writePreintegratedLut() (the 4 fixed presets) and
+// setCustomColormap() (§5.3's 5th, user-defined preset) -- see
+// writePreintegratedLut()'s own header comment for the bake algorithm,
+// unchanged here.
+void WebGPUDevice::writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor) {
+    auto classColor = [lowColor, highColor](float s) -> glm::vec3 {
         return glm::vec3{
-                   std::lerp(static_cast<float>(preset.lowColor.r), static_cast<float>(preset.highColor.r), s),
-                   std::lerp(static_cast<float>(preset.lowColor.g), static_cast<float>(preset.highColor.g), s),
-                   std::lerp(static_cast<float>(preset.lowColor.b), static_cast<float>(preset.highColor.b), s),
+                   std::lerp(static_cast<float>(lowColor.r), static_cast<float>(highColor.r), s),
+                   std::lerp(static_cast<float>(lowColor.g), static_cast<float>(highColor.g), s),
+                   std::lerp(static_cast<float>(lowColor.b), static_cast<float>(highColor.b), s),
                } /
                255.0F;
     };
@@ -687,6 +698,11 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
     aabbMin_ = -halfExtent;
     aabbMax_ = halfExtent;
     finestSpacing_ = std::min({spacingX, spacingY, spacingZ});
+    // Reset the clip box (§6.4) to the full volume -- a clip region sized
+    // for a previously loaded (differently sized) volume would otherwise
+    // misclip this new one.
+    clipMin_ = aabbMin_;
+    clipMax_ = aabbMax_;
 
     cameraYaw_ = glm::radians(35.0F);
     cameraPitch_ = glm::radians(25.0F);
@@ -855,11 +871,15 @@ void WebGPUDevice::renderFrame() {
         ubo.cameraPos = glm::vec4{cameraPos_, 0.0F};
         ubo.aabbMin = glm::vec4{aabbMin_, 0.0F};
         ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
-        ubo.rayParams = glm::vec4{stepSize, maxSteps, kExtinction, 0.0F};
+        ubo.rayParams = glm::vec4{stepSize, maxSteps, extinction_, densityScale_};
         ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
         ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
         ubo.shadingParams = glm::vec4{kLightDirection, shadingEnabled_ ? 1.0F : 0.0F};
         ubo.jitterParams = glm::vec4{accumFrameIndex_, 1.0F, 0.0F, 0.0F};
+        ubo.clipMin = glm::vec4{clipMin_, 0.0F};
+        ubo.clipMax = glm::vec4{clipMax_, 0.0F};
+        ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
+        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, 0.0F, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
         wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
@@ -1185,6 +1205,62 @@ void WebGPUDevice::setQualityTier(uint32_t tier) {
 
 void WebGPUDevice::setShadingEnabled(bool enabled) {
     shadingEnabled_ = enabled;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setExtinction(float extinction) {
+    extinction_ = std::max(extinction, 0.0F);
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setDensityScale(float scale) {
+    densityScale_ = std::max(scale, 0.0F);
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setThreshold(float threshold) {
+    threshold_ = std::clamp(threshold, 0.0F, 1.0F);
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+    glm::vec3 requestedMin{minX, minY, minZ};
+    glm::vec3 requestedMax{maxX, maxY, maxZ};
+    // Clamp to the volume's own AABB per axis, then guarantee min<=max --
+    // a caller passing a swapped or out-of-range pair shouldn't be able to
+    // produce a degenerate/inverted clip box.
+    for (int axis = 0; axis < 3; ++axis) {
+        requestedMin[axis] = std::clamp(requestedMin[axis], aabbMin_[axis], aabbMax_[axis]);
+        requestedMax[axis] = std::clamp(requestedMax[axis], aabbMin_[axis], aabbMax_[axis]);
+        if (requestedMin[axis] > requestedMax[axis]) {
+            std::swap(requestedMin[axis], requestedMax[axis]);
+        }
+    }
+    clipMin_ = requestedMin;
+    clipMax_ = requestedMax;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setGradientOpacityStrength(float strength) {
+    gradientOpacityStrength_ = std::clamp(strength, 0.0F, 1.0F);
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setOcclusionEnabled(bool enabled) {
+    occlusionEnabled_ = enabled;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
+    auto toByte = [](float value) -> uint8_t { return static_cast<uint8_t>(std::clamp(value, 0.0F, 1.0F) * 255.0F); };
+    customLowColor_ = ColorRGB{toByte(lowR), toByte(lowG), toByte(lowB)};
+    customHighColor_ = ColorRGB{toByte(highR), toByte(highG), toByte(highB)};
+    // Custom is not one of kColormapPresets' indices -- write both LUTs
+    // directly from the custom colors, matching what setColormapPreset()
+    // does for a fixed preset (window/level is deliberately left
+    // untouched, per this method's Device.hpp doc comment).
+    writeLutColors(customLowColor_, customHighColor_);
+    writePreintegratedLutColors(customLowColor_, customHighColor_);
     markAccumulationDirty();
 }
 

@@ -103,6 +103,23 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
 // agrees with engine state from the first frame, not just after a click.
 const DEFAULT_PRESET_ID = 2;
 
+// Visual polish pass: presets get the same selected-state feedback the
+// view-mode toggle already had (critique heuristic #4, Consistency).
+// Manually dragging a slider afterward clears the active state -- the
+// displayed values no longer necessarily match any preset once the user
+// has diverged from it, so claiming one is still "selected" would
+// misrepresent state (the same class of bug the preset/slider desync fix
+// closed). Exported (not a setupWindowLevelControls()-local closure) so
+// customColormapControls.ts's §5.3 Custom preset (id 4, also carrying
+// `data-colormap-preset` so it's included in the same querySelectorAll
+// here) can drive the same active-state feedback when a custom color is
+// picked, without duplicating this query/toggle logic.
+export function setActivePreset(presetId: number | null): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]").forEach((button) => {
+    button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
+  });
+}
+
 export function setupWindowLevelControls(): void {
   let center = DEFAULT_WINDOW_CENTER;
   let width = DEFAULT_WINDOW_WIDTH;
@@ -114,19 +131,6 @@ export function setupWindowLevelControls(): void {
   const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
   const widthLabel = document.getElementById("window-width-value") as HTMLInputElement | null;
   const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]");
-
-  // Visual polish pass: presets now get the same selected-state feedback
-  // the view-mode toggle already had (critique heuristic #4,
-  // Consistency). Manually dragging a slider afterward clears the active
-  // state -- the displayed values no longer necessarily match any
-  // preset once the user has diverged from it, so claiming one is still
-  // "selected" would misrepresent state (the same class of bug the
-  // preset/slider desync fix closed).
-  function setActivePreset(presetId: number | null): void {
-    presetButtons.forEach((button) => {
-      button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
-    });
-  }
 
   bindRangeWithNumericEntry("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
     center = value;
@@ -142,6 +146,15 @@ export function setupWindowLevelControls(): void {
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const presetId = Number(button.dataset["colormapPreset"]);
+      // Custom (§5.3, id 4) isn't one of kColormapPresets' 0-3 indices --
+      // its color application is owned by customColormapControls.ts (the
+      // color pickers call engine_set_custom_lut_colors directly), and it
+      // doesn't imply a specific window/level. This handler only needs to
+      // give it the same active-state feedback the other 4 presets get.
+      if (presetId === 4) {
+        setActivePreset(presetId);
+        return;
+      }
       window.Module._engine_set_colormap_preset(presetId);
 
       const preset = PRESET_WINDOW_LEVELS[presetId];
