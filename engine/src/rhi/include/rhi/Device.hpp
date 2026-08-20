@@ -97,6 +97,23 @@ public:
     // the engine defaults this to depth/2 (the volume's middle slice).
     virtual void setAxialSliceIndex(uint32_t index) = 0;
 
+    // Selects the raymarch step-count/quality tier (REQ-R04): 0=Low,
+    // 1=Medium (default), 2=High. Trades image fidelity (banding, thin-
+    // structure visibility) for frame time -- see kQualityTiers in
+    // WebGPUDevice.cpp for the concrete step counts. An engine-owned
+    // uint32_t enum, matching setViewMode/setColormapPreset's own
+    // reasoning. Safe to call before any volume is loaded (stores a plain
+    // value consumed by the next renderFrame()); an invalid tier is
+    // rejected (logged), leaving the current tier unchanged.
+    virtual void setQualityTier(uint32_t tier) = 0;
+
+    // Toggles gradient-based Lambert shading (central-difference density
+    // gradient as a pseudo-normal) on the raymarch pass. Off gives the
+    // original flat density-only look; on adds depth/form cues from
+    // simulated lighting. Safe to call before any volume is loaded, like
+    // setQualityTier.
+    virtual void setShadingEnabled(bool enabled) = 0;
+
     // Resizes the render surface and recomputes the Orbit3D camera's
     // aspect ratio to match (issue #40 -- the canvas was previously a
     // fixed 640x480 box with no way to reconfigure it). width/height are

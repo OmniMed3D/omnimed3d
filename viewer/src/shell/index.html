@@ -131,6 +131,23 @@
           <span id="axial-slice-index-value" class="value"></span>
         </div>
       </div>
+      <!-- REQ-R04 (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+           §4.1/§4.3): raymarch quality tier + gradient-shading toggle.
+           Quality reuses the preset-buttons pattern (data-quality-tier,
+           qualityControls.ts); Shading is a checkbox since it's a plain
+           on/off, not one of several discrete presets. -->
+      <div class="panel-section">
+        <span class="section-label">Rendering</span>
+        <div class="row preset-buttons quality-buttons">
+          <button type="button" data-quality-tier="0">Low</button>
+          <button type="button" data-quality-tier="1">Medium</button>
+          <button type="button" data-quality-tier="2">High</button>
+        </div>
+        <div class="row checkbox-row">
+          <label for="shading-enabled">Shading</label>
+          <input id="shading-enabled" type="checkbox" checked />
+        </div>
+      </div>
       <div class="panel-section">
         <span class="section-label">Window &amp; Level</span>
         <!-- Follow-up: #window-center-value/#window-width-value are real

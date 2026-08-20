@@ -27,6 +27,7 @@ import { setupFilePicker } from "./filePicker.js";
 import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
+import { setupQualityControls } from "./qualityControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
@@ -63,6 +64,8 @@ interface EngineModule {
   _engine_set_view_mode(mode: number): void;
   _engine_set_axial_slice_index(index: number): void;
   _engine_resize(width: number, height: number): void;
+  _engine_set_quality_tier(tier: number): void;
+  _engine_set_shading_enabled(enabled: number): void;
 }
 
 declare global {
@@ -363,6 +366,7 @@ async function main() {
   setupCameraControls();
   setupWindowLevelControls();
   setupViewControls();
+  setupQualityControls();
   setupPanelDrag();
   setupPanelCollapse();
   setupInferenceControls(inferenceWorker);

@@ -33,6 +33,12 @@ struct AxialSliceUBO
 [[vk::binding(2, 0)]] SamplerState linearSampler;   // volumeTex + lutTex
 [[vk::binding(3, 0)]] Texture3D<uint> maskTex;      // R8Uint class indices -- Load only, never filtered
 [[vk::binding(4, 0)]] Texture2D<float4> lutTex;     // 256x1 transfer-function LUT
+// Declared (not sampled) only so this shader's bind group layout stays
+// identical to volume_raymarch.slang's, which the two pipelines share
+// (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §6.1) -- a 2D
+// per-pixel slice has no ray segment to pre-integrate over, so this view
+// keeps using lutTex's direct per-pixel classification above instead.
+[[vk::binding(5, 0)]] Texture2D<float4> preintegratedLutTex;  // unused in this shader
 
 // Same fixed highlight color as volume_raymarch.slang -- one lung model,
 // one class set for this MVP, not a per-class palette.

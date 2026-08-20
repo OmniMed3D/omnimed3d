@@ -1,5 +1,6 @@
 #include "rhi/webgpu/WebGPUDevice.hpp"
 
+#include "accumulation_blit.wgsl.hpp"
 #include "axial_slice.wgsl.hpp"
 #include "volume_raymarch.wgsl.hpp"
 
@@ -10,11 +11,17 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace omnimed3d::rhi::webgpu {
 
 namespace {
 constexpr uint32_t kLutSize = 256;
+
+// Pre-integrated (front,back) transfer-function table (§6.1) -- see
+// writePreintegratedLut()'s header comment for the bake algorithm.
+constexpr uint32_t kPreintegratedLutSize = 256;
+constexpr uint32_t kPreintegrationSubSamples = 16;
 
 // REQ-R06 interactive camera tuning -- rad/px, matching Mini-Engine-
 // reference's WASM/mobile-tuned Camera::rotate() sensitivity (this is a
@@ -41,9 +48,11 @@ struct RaymarchUBO {
     glm::vec4 cameraPos;
     glm::vec4 aabbMin;
     glm::vec4 aabbMax;
-    glm::vec4 rayParams;   // x=stepSize, y=maxSteps, z=extinction, w unused
-    glm::vec4 window;      // x=center, y=width, zw unused
-    glm::vec4 maskParams;  // x=overlayEnabled, y=overlayAlpha, zw unused
+    glm::vec4 rayParams;      // x=stepSize, y=maxSteps, z=extinction, w unused
+    glm::vec4 window;         // x=center, y=width, zw unused
+    glm::vec4 maskParams;     // x=overlayEnabled, y=overlayAlpha, zw unused
+    glm::vec4 shadingParams;  // xyz=light direction (world, normalized), w=shading enabled (0/1)
+    glm::vec4 jitterParams;   // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
 };
 
 static_assert(offsetof(RaymarchUBO, invView) == 0);
@@ -54,7 +63,9 @@ static_assert(offsetof(RaymarchUBO, aabbMax) == 160);
 static_assert(offsetof(RaymarchUBO, rayParams) == 176);
 static_assert(offsetof(RaymarchUBO, window) == 192);
 static_assert(offsetof(RaymarchUBO, maskParams) == 208);
-static_assert(sizeof(RaymarchUBO) == 224);
+static_assert(offsetof(RaymarchUBO, shadingParams) == 224);
+static_assert(offsetof(RaymarchUBO, jitterParams) == 240);
+static_assert(sizeof(RaymarchUBO) == 256);
 
 // Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang (issue
 // #37) -- deliberately a separate, smaller struct rather than reusing
@@ -82,25 +93,94 @@ static_assert(sizeof(AxialSliceUBO) == 48);
 constexpr uint32_t kViewModeOrbit3D = 0;
 constexpr uint32_t kViewModeAxialSlice2D = 1;
 
-// Baseline clinical window/level presets (REQ-R03) -- values sourced from
-// Mini-Engine-reference's medical-volume primer doc, per PRD Appendix A's
-// explicit "referencing Mini-Engine's preset values" instruction. All four
-// share the same grayscale transfer-function LUT (createSamplerAndLut()) --
-// only window/level differs; a colored-per-preset LUT is not needed for
-// this pass's DoD (window/level presets, not a colormap gallery) and can be
-// added later without re-architecting.
+// Baseline clinical window/level presets (REQ-R03) -- center/width values
+// sourced from Mini-Engine-reference's medical-volume primer doc, per PRD
+// Appendix A's explicit "referencing Mini-Engine's preset values"
+// instruction. lowColor/highColor (docs/current/
+// RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) give each preset its own
+// LUT color ramp instead of the original shared grayscale -- alpha still
+// ramps linearly with normalized density regardless of preset (see
+// writeLutPreset()), so only hue/tint distinguishes presets, not opacity
+// behavior.
+struct ColorRGB {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+};
+
 struct ColormapPreset {
     float center;
     float width;
+    ColorRGB lowColor;
+    ColorRGB highColor;
 };
 
 constexpr std::array<ColormapPreset, 4> kColormapPresets{{
-    {-600.0F, 1500.0F},  // 0: Lung
-    {300.0F, 1500.0F},   // 1: Bone
-    {40.0F, 400.0F},     // 2: Soft Tissue (default)
-    {40.0F, 80.0F},      // 3: Brain
+    {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}},  // 0: Lung -- cool blue
+    {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}},   // 1: Bone -- warm ivory
+    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}},     // 2: Soft Tissue (default) -- warm red
+    {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}},      // 3: Brain -- neutral warm gray
 }};
 constexpr uint32_t kDefaultColormapPreset = 2;
+
+// REQ-R04 quality/step-count tiers -- WebGPUDevice::setQualityTier().
+// stepsAcrossDiagonal sizes stepSize (diagonal / this); maxSteps is a
+// safety-margin multiple of that (1.33x, matching the previous fixed
+// 512/384 ratio) so grazing rays that need more than "diagonal / stepSize"
+// steps still get to traverse the full box before hitting the loop's own
+// cap. Medium reproduces the engine's original fixed behavior exactly
+// (diagonal/384, 512 steps) so this is a strict generalization, not a
+// behavior change, for anyone who never touches the new control.
+struct QualityTier {
+    float stepsAcrossDiagonal;
+    float maxSteps;
+};
+
+constexpr std::array<QualityTier, 3> kQualityTiers{{
+    {192.0F, 256.0F},   // 0: Low
+    {384.0F, 512.0F},   // 1: Medium (default, matches the old hardcoded values)
+    {768.0F, 1024.0F},  // 2: High
+}};
+constexpr uint32_t kDefaultQualityTier = 1;
+
+// Beer-Lambert absorption coefficient -- fixed for this branch (Branch 2
+// exposes it as a real setter). See volume_raymarch.slang's compositing
+// comment for why Beer-Lambert rather than a plain linear scale.
+constexpr float kExtinction = 8.0F;
+
+// Fixed world-space light direction for gradient-based Lambert shading
+// (setShadingEnabled()) -- a camera-independent key light (not exposed as
+// a setter this branch; ambient/diffuse strength are likewise fixed
+// constants in the shader itself). Chosen off-axis from the default
+// camera framing (frameCameraForVolume()'s 35deg yaw / 25deg pitch) so
+// shaded volumes show visible form from the default view, not a flat
+// silhouette.
+const glm::vec3 kLightDirection = glm::normalize(glm::vec3{0.4F, -0.6F, 0.7F});
+
+// Anisotropic-spacing step-size guard (docs/current/
+// RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §6.6): the raymarch step size
+// is otherwise isotropic in world mm (derived from the AABB diagonal),
+// which can undersample a volume's finest axis on thick-slice/anisotropic
+// data. Clamping stepSize to at most 1.5x the finest axis's physical
+// spacing keeps thin structures along that axis from being stepped over
+// entirely; maxSteps is then grown (see renderFrame()) so a shrunk step
+// still reaches the far face, capped here so worst-case anisotropy can't
+// produce an unbounded per-pixel loop.
+constexpr float kFinestAxisStepMultiplier = 1.5F;
+constexpr float kMaxRayStepsHardCap = 2048.0F;
+
+// Caps accumFrameIndex_'s growth (mirrors Mini-Engine-reference's M4 v2
+// "Accumulation-N cap" lesson, docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+// §6.5): the temporal blend weight is 1/(accumFrameIndex_+1), which decays
+// toward zero forever if left uncapped -- after enough idle
+// requestAnimationFrame ticks (easily thousands within a few seconds),
+// any genuinely new content (e.g. a mask slice arriving asynchronously
+// after the volume has already been sitting on screen for a while) would
+// blend in with a weight too small to survive 8-bit swapchain
+// quantization, silently "freezing" the displayed image. Capping means
+// the running average always has at least 1/(kMaxAccumFrames+1) weight on
+// the newest frame.
+constexpr float kMaxAccumFrames = 31.0F;
 
 }  // namespace
 
@@ -158,6 +238,8 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     self->configureSurface();
     self->createSamplerAndLut();
     self->createPipeline();
+    self->createCompositePipeline();
+    self->createAccumulationResources();
     self->ready_ = true;
 }
 
@@ -193,16 +275,54 @@ void WebGPUDevice::createSamplerAndLut() {
     lutDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
     lutTexture_ = wgpuDeviceCreateTexture(device_, &lutDesc);
 
-    // Grayscale ramp -- r=g=b=a=t. One LUT shared by every colormap preset
-    // (only window/level differs between presets today); room to add
-    // colored ramps later without touching the bind group shape.
+    WGPUTextureViewDescriptor viewDesc{};
+    viewDesc.format = WGPUTextureFormat_RGBA8Unorm;
+    viewDesc.dimension = WGPUTextureViewDimension_2D;
+    viewDesc.mipLevelCount = 1;
+    viewDesc.arrayLayerCount = 1;
+    viewDesc.aspect = WGPUTextureAspect_All;
+    lutTextureView_ = wgpuTextureCreateView(lutTexture_, &viewDesc);
+
+    WGPUTextureDescriptor preintegratedDesc{};
+    preintegratedDesc.dimension = WGPUTextureDimension_2D;
+    preintegratedDesc.size = WGPUExtent3D{kPreintegratedLutSize, kPreintegratedLutSize, 1};
+    preintegratedDesc.format = WGPUTextureFormat_RGBA8Unorm;
+    preintegratedDesc.mipLevelCount = 1;
+    preintegratedDesc.sampleCount = 1;
+    preintegratedDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    preintegratedLutTexture_ = wgpuDeviceCreateTexture(device_, &preintegratedDesc);
+
+    WGPUTextureViewDescriptor preintegratedViewDesc{};
+    preintegratedViewDesc.format = WGPUTextureFormat_RGBA8Unorm;
+    preintegratedViewDesc.dimension = WGPUTextureViewDimension_2D;
+    preintegratedViewDesc.mipLevelCount = 1;
+    preintegratedViewDesc.arrayLayerCount = 1;
+    preintegratedViewDesc.aspect = WGPUTextureAspect_All;
+    preintegratedLutTextureView_ = wgpuTextureCreateView(preintegratedLutTexture_, &preintegratedViewDesc);
+
+    setColormapPreset(kDefaultColormapPreset);
+}
+
+// Writes kColormapPresets[presetId]'s color ramp into lutTexture_ (§4.2) --
+// r/g/b lerp from lowColor to highColor across the ramp, alpha keeps the
+// original linear-with-density ramp (a=t) regardless of preset, so only
+// hue changes, not the existing opacity-vs-density behavior. Called from
+// createSamplerAndLut() (initial default preset) and setColormapPreset()
+// (every subsequent preset click) -- presetId is assumed already
+// bounds-checked by the caller.
+void WebGPUDevice::writeLutPreset(uint32_t presetId) {
+    ColormapPreset const& preset = kColormapPresets[presetId];
+
     std::array<uint8_t, kLutSize * 4> lutData{};
     for (uint32_t i = 0; i < kLutSize; ++i) {
-        auto const value = static_cast<uint8_t>((i * 255) / (kLutSize - 1));
-        lutData[i * 4 + 0] = value;
-        lutData[i * 4 + 1] = value;
-        lutData[i * 4 + 2] = value;
-        lutData[i * 4 + 3] = value;
+        float const t = static_cast<float>(i) / static_cast<float>(kLutSize - 1);
+        lutData[i * 4 + 0] = static_cast<uint8_t>(
+            std::lerp(static_cast<float>(preset.lowColor.r), static_cast<float>(preset.highColor.r), t));
+        lutData[i * 4 + 1] = static_cast<uint8_t>(
+            std::lerp(static_cast<float>(preset.lowColor.g), static_cast<float>(preset.highColor.g), t));
+        lutData[i * 4 + 2] = static_cast<uint8_t>(
+            std::lerp(static_cast<float>(preset.lowColor.b), static_cast<float>(preset.highColor.b), t));
+        lutData[i * 4 + 3] = static_cast<uint8_t>((i * 255) / (kLutSize - 1));
     }
 
     WGPUTexelCopyTextureInfo dst{};
@@ -218,16 +338,107 @@ void WebGPUDevice::createSamplerAndLut() {
 
     WGPUExtent3D writeSize{kLutSize, 1, 1};
     wgpuQueueWriteTexture(queue_, &dst, lutData.data(), lutData.size(), &layout, &writeSize);
+}
 
-    WGPUTextureViewDescriptor viewDesc{};
-    viewDesc.format = WGPUTextureFormat_RGBA8Unorm;
-    viewDesc.dimension = WGPUTextureViewDimension_2D;
-    viewDesc.mipLevelCount = 1;
-    viewDesc.arrayLayerCount = 1;
-    viewDesc.aspect = WGPUTextureAspect_All;
-    lutTextureView_ = wgpuTextureCreateView(lutTexture_, &viewDesc);
+// Bakes kColormapPresets[presetId] into preintegratedLutTexture_ (§6.1,
+// Engel et al. "High-Quality Pre-Integrated Volume Rendering"). For every
+// (front, back) classification-value pair, numerically (trapezoidal)
+// integrates the segment assuming density varies linearly between them,
+// storing:
+//   rgb = average color across the segment, weighted by local absorption
+//   a   = "sBar", the average classification value across the segment
+//         (NOT scaled by extinction -- tau(s) = extinction*s is linear in
+//         s, so the extinction factor cancels out of the average and can
+//         stay a runtime-read UBO value; see volume_raymarch.slang's
+//         `alpha = 1 - exp(-extinction * sBar * stepSize)`). Note for a
+//         future branch: if a non-extinction-proportional feature (e.g. a
+//         hard threshold cutoff) is ever added to the absorption model,
+//         this bake must incorporate it directly rather than assuming
+//         tau(s)=s stays the whole shape -- shape and extinction would no
+//         longer factor apart cleanly.
+// Degenerates to the original single-point classification exactly when
+// front==back (no segment to integrate over). Only rebaked on a preset
+// (or future custom-color) change, not per frame or per window/level
+// change -- see setColormapPreset().
+void WebGPUDevice::writePreintegratedLut(uint32_t presetId) {
+    ColormapPreset const& preset = kColormapPresets[presetId];
 
-    setColormapPreset(kDefaultColormapPreset);
+    auto classColor = [&preset](float s) -> glm::vec3 {
+        return glm::vec3{
+                   std::lerp(static_cast<float>(preset.lowColor.r), static_cast<float>(preset.highColor.r), s),
+                   std::lerp(static_cast<float>(preset.lowColor.g), static_cast<float>(preset.highColor.g), s),
+                   std::lerp(static_cast<float>(preset.lowColor.b), static_cast<float>(preset.highColor.b), s),
+               } /
+               255.0F;
+    };
+    // Absorption "shape" at classification value s -- identity, matching
+    // tau(s) = extinction*s with extinction factored out (see this
+    // function's header comment).
+    auto shape = [](float s) -> float { return s; };
+
+    std::vector<uint8_t> lutData(static_cast<size_t>(kPreintegratedLutSize) * kPreintegratedLutSize * 4);
+
+    for (uint32_t back = 0; back < kPreintegratedLutSize; ++back) {
+        float const sb = static_cast<float>(back) / static_cast<float>(kPreintegratedLutSize - 1);
+        for (uint32_t front = 0; front < kPreintegratedLutSize; ++front) {
+            float const sf = static_cast<float>(front) / static_cast<float>(kPreintegratedLutSize - 1);
+
+            float sBar;
+            glm::vec3 colorBar;
+            if (std::abs(sb - sf) < 1e-4F) {
+                // Degenerate case: no segment to integrate over -- avoids
+                // a 0/0 divide below and exactly reproduces the original
+                // point-classification result for this one entry.
+                sBar = shape(sf);
+                colorBar = classColor(sf);
+            } else {
+                float const lo = std::min(sf, sb);
+                float const hi = std::max(sf, sb);
+                float shapeIntegral = 0.0F;
+                glm::vec3 colorShapeIntegral{0.0F};
+                float prevS = lo;
+                float prevShape = shape(lo);
+                glm::vec3 prevWeighted = classColor(lo) * prevShape;
+                for (uint32_t k = 1; k <= kPreintegrationSubSamples; ++k) {
+                    float const s =
+                        lo + (hi - lo) * (static_cast<float>(k) / static_cast<float>(kPreintegrationSubSamples));
+                    float const shapeS = shape(s);
+                    glm::vec3 const weighted = classColor(s) * shapeS;
+                    float const ds = s - prevS;
+                    shapeIntegral += 0.5F * (prevShape + shapeS) * ds;
+                    colorShapeIntegral += 0.5F * (prevWeighted + weighted) * ds;
+                    prevS = s;
+                    prevShape = shapeS;
+                    prevWeighted = weighted;
+                }
+                // Normalize by the traversed range so this is an average,
+                // not a raw integral -- makes sBar/colorBar degenerate to
+                // the point-classification values as sb->sf.
+                sBar = shapeIntegral / (hi - lo);
+                colorBar = (sBar > 1e-8F) ? (colorShapeIntegral / (hi - lo)) / sBar : classColor(sf);
+            }
+
+            size_t const idx = (static_cast<size_t>(back) * kPreintegratedLutSize + front) * 4;
+            lutData[idx + 0] = static_cast<uint8_t>(std::clamp(colorBar.r, 0.0F, 1.0F) * 255.0F);
+            lutData[idx + 1] = static_cast<uint8_t>(std::clamp(colorBar.g, 0.0F, 1.0F) * 255.0F);
+            lutData[idx + 2] = static_cast<uint8_t>(std::clamp(colorBar.b, 0.0F, 1.0F) * 255.0F);
+            lutData[idx + 3] = static_cast<uint8_t>(std::clamp(sBar, 0.0F, 1.0F) * 255.0F);
+        }
+    }
+
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = preintegratedLutTexture_;
+    dst.mipLevel = 0;
+    dst.origin = WGPUOrigin3D{0, 0, 0};
+    dst.aspect = WGPUTextureAspect_All;
+
+    WGPUTexelCopyBufferLayout layout{};
+    layout.offset = 0;
+    layout.bytesPerRow = kPreintegratedLutSize * 4;
+    layout.rowsPerImage = kPreintegratedLutSize;
+
+    WGPUExtent3D writeSize{kPreintegratedLutSize, kPreintegratedLutSize, 1};
+    wgpuQueueWriteTexture(queue_, &dst, lutData.data(), lutData.size(), &layout, &writeSize);
 }
 
 namespace {
@@ -241,23 +452,35 @@ WGPUShaderModule createShaderModuleFromWgsl(WGPUDevice device, char const* wgslS
 }
 }  // namespace
 
-WGPURenderPipeline WebGPUDevice::createRenderPipelineFor(WGPUShaderModule module) {
+WGPURenderPipeline WebGPUDevice::createRenderPipelineFor(WGPUShaderModule module,
+                                                           WGPUTextureFormat colorTargetFormat) {
+    // Constant/OneMinusConstant, not the shader-alpha-driven blend this
+    // used before jitter+temporal-accumulation existed (§6.5) --
+    // wgpuRenderPassEncoderSetBlendConstant() lets renderFrame() drive a
+    // per-frame temporal blend weight (1/(accumFrameIndex_+1) for the
+    // raymarch pass into accumulationTexture_, always 1.0 -- a full
+    // overwrite -- for the axial-slice pass into the swapchain, which
+    // doesn't participate in accumulation). Both shaders now resolve
+    // their own volume-opacity-vs-background compositing internally and
+    // always output alpha=1 (see volume_raymarch.slang's fragmentMain
+    // header comment) specifically so this blend stage is purely a
+    // temporal weight, not entangled with per-pixel volume alpha.
     WGPUBlendComponent colorBlend{};
     colorBlend.operation = WGPUBlendOperation_Add;
-    colorBlend.srcFactor = WGPUBlendFactor_One;
-    colorBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    colorBlend.srcFactor = WGPUBlendFactor_Constant;
+    colorBlend.dstFactor = WGPUBlendFactor_OneMinusConstant;
 
     WGPUBlendComponent alphaBlend{};
     alphaBlend.operation = WGPUBlendOperation_Add;
-    alphaBlend.srcFactor = WGPUBlendFactor_One;
-    alphaBlend.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
+    alphaBlend.srcFactor = WGPUBlendFactor_Constant;
+    alphaBlend.dstFactor = WGPUBlendFactor_OneMinusConstant;
 
     WGPUBlendState blendState{};
     blendState.color = colorBlend;
     blendState.alpha = alphaBlend;
 
     WGPUColorTargetState colorTarget{};
-    colorTarget.format = WGPUTextureFormat_BGRA8Unorm;
+    colorTarget.format = colorTargetFormat;
     colorTarget.blend = &blendState;
     colorTarget.writeMask = WGPUColorWriteMask_All;
 
@@ -285,10 +508,11 @@ void WebGPUDevice::createPipeline() {
     axialShaderModule_ = createShaderModuleFromWgsl(device_, kAxialSliceWgsl);
 
     // Shared by both pipelines (issue #37) -- both shaders declare the
-    // exact same 5-entry layout, see createRenderPipelineFor()'s header
-    // comment for why one bind group layout/pipeline layout/UBO buffer is
-    // valid for both.
-    std::array<WGPUBindGroupLayoutEntry, 5> entries{};
+    // exact same 6-entry layout (§6.1 added binding 5's pre-integrated
+    // LUT, declared but unused by axial_slice.slang -- see its own
+    // comment), see createRenderPipelineFor()'s header comment for why one
+    // bind group layout/pipeline layout/UBO buffer is valid for both.
+    std::array<WGPUBindGroupLayoutEntry, 6> entries{};
     entries[0].binding = 0;
     entries[0].visibility = WGPUShaderStage_Fragment;
     entries[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -312,6 +536,11 @@ void WebGPUDevice::createPipeline() {
     entries[4].texture.sampleType = WGPUTextureSampleType_Float;
     entries[4].texture.viewDimension = WGPUTextureViewDimension_2D;
 
+    entries[5].binding = 5;
+    entries[5].visibility = WGPUShaderStage_Fragment;
+    entries[5].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[5].texture.viewDimension = WGPUTextureViewDimension_2D;
+
     WGPUBindGroupLayoutDescriptor bglDesc{};
     bglDesc.entryCount = entries.size();
     bglDesc.entries = entries.data();
@@ -322,11 +551,15 @@ void WebGPUDevice::createPipeline() {
     layoutDesc.bindGroupLayouts = &bindGroupLayout_;
     pipelineLayout_ = wgpuDeviceCreatePipelineLayout(device_, &layoutDesc);
 
-    pipeline_ = createRenderPipelineFor(shaderModule_);
-    axialPipeline_ = createRenderPipelineFor(axialShaderModule_);
+    // pipeline_ (raymarch) now targets accumulationTexture_ (§6.5,
+    // RGBA16Float), not the swapchain -- axialPipeline_ still draws
+    // directly to the swapchain (BGRA8Unorm). See createRenderPipelineFor's
+    // header comment for why this format must match exactly.
+    pipeline_ = createRenderPipelineFor(shaderModule_, WGPUTextureFormat_RGBA16Float);
+    axialPipeline_ = createRenderPipelineFor(axialShaderModule_, WGPUTextureFormat_BGRA8Unorm);
 
-    // Sized for the larger of the two UBOs (RaymarchUBO, 224 bytes) --
-    // AxialSliceUBO (32 bytes) is written into the same buffer's leading
+    // Sized for the larger of the two UBOs (RaymarchUBO, 256 bytes) --
+    // AxialSliceUBO (48 bytes) is written into the same buffer's leading
     // bytes when the axial-slice pipeline is active. See
     // createRenderPipelineFor()'s header comment for why WebGPU accepts
     // one buffer/bind group across both pipelines.
@@ -334,6 +567,110 @@ void WebGPUDevice::createPipeline() {
     uboDesc.size = sizeof(RaymarchUBO);
     uboDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     uboBuffer_ = wgpuDeviceCreateBuffer(device_, &uboDesc);
+}
+
+// One-time setup for the accumulation-blit pass (§6.5) -- a 2-entry bind
+// group layout (texture + sampler) distinct from bindGroupLayout_/
+// pipelineLayout_ above, since this shader has entirely different
+// resources, not another consumer of the raymarch/axial-slice layout.
+// Blend is left at its WebGPU default (no blending -- a plain overwrite)
+// since accumulationTexture_ always holds a fully-resolved, opaque frame
+// by the time this pass reads it.
+void WebGPUDevice::createCompositePipeline() {
+    compositeShaderModule_ = createShaderModuleFromWgsl(device_, kAccumulationBlitWgsl);
+
+    std::array<WGPUBindGroupLayoutEntry, 2> entries{};
+    entries[0].binding = 0;
+    entries[0].visibility = WGPUShaderStage_Fragment;
+    entries[0].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[0].texture.viewDimension = WGPUTextureViewDimension_2D;
+
+    entries[1].binding = 1;
+    entries[1].visibility = WGPUShaderStage_Fragment;
+    entries[1].sampler.type = WGPUSamplerBindingType_Filtering;
+
+    WGPUBindGroupLayoutDescriptor bglDesc{};
+    bglDesc.entryCount = entries.size();
+    bglDesc.entries = entries.data();
+    compositeBindGroupLayout_ = wgpuDeviceCreateBindGroupLayout(device_, &bglDesc);
+
+    WGPUPipelineLayoutDescriptor layoutDesc{};
+    layoutDesc.bindGroupLayoutCount = 1;
+    layoutDesc.bindGroupLayouts = &compositeBindGroupLayout_;
+    compositePipelineLayout_ = wgpuDeviceCreatePipelineLayout(device_, &layoutDesc);
+
+    WGPUColorTargetState colorTarget{};
+    colorTarget.format = WGPUTextureFormat_BGRA8Unorm;
+    colorTarget.blend = nullptr;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragmentState{};
+    fragmentState.module = compositeShaderModule_;
+    fragmentState.entryPoint = WGPUStringView{"fragmentMain", WGPU_STRLEN};
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+
+    WGPURenderPipelineDescriptor pipelineDesc{};
+    pipelineDesc.layout = compositePipelineLayout_;
+    pipelineDesc.vertex.module = compositeShaderModule_;
+    pipelineDesc.vertex.entryPoint = WGPUStringView{"vertexMain", WGPU_STRLEN};
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = 0xFFFFFFFF;
+    pipelineDesc.fragment = &fragmentState;
+    compositePipeline_ = wgpuDeviceCreateRenderPipeline(device_, &pipelineDesc);
+}
+
+// (Re)creates accumulationTexture_/View at the current canvasWidth_/
+// canvasHeight_, and the bind group that references it -- see
+// accumulationTexture_'s header comment (WebGPUDevice.hpp) for why a
+// persistent offscreen texture is needed at all. Called once when the
+// device becomes ready, and again from resize() every time the canvas
+// size actually changes, since a WGPUTexture's size is fixed at creation.
+void WebGPUDevice::createAccumulationResources() {
+    if (compositeBindGroup_) {
+        wgpuBindGroupRelease(compositeBindGroup_);
+        compositeBindGroup_ = nullptr;
+    }
+    if (accumulationTextureView_) {
+        wgpuTextureViewRelease(accumulationTextureView_);
+        accumulationTextureView_ = nullptr;
+    }
+    if (accumulationTexture_) {
+        wgpuTextureRelease(accumulationTexture_);
+        accumulationTexture_ = nullptr;
+    }
+
+    WGPUTextureDescriptor desc{};
+    desc.dimension = WGPUTextureDimension_2D;
+    desc.size = WGPUExtent3D{canvasWidth_, canvasHeight_, 1};
+    desc.format = WGPUTextureFormat_RGBA16Float;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    accumulationTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+
+    WGPUTextureViewDescriptor viewDesc{};
+    viewDesc.format = WGPUTextureFormat_RGBA16Float;
+    viewDesc.dimension = WGPUTextureViewDimension_2D;
+    viewDesc.mipLevelCount = 1;
+    viewDesc.arrayLayerCount = 1;
+    viewDesc.aspect = WGPUTextureAspect_All;
+    accumulationTextureView_ = wgpuTextureCreateView(accumulationTexture_, &viewDesc);
+
+    std::array<WGPUBindGroupEntry, 2> entries{};
+    entries[0].binding = 0;
+    entries[0].textureView = accumulationTextureView_;
+    entries[1].binding = 1;
+    entries[1].sampler = linearSampler_;
+
+    WGPUBindGroupDescriptor bgDesc{};
+    bgDesc.layout = compositeBindGroupLayout_;
+    bgDesc.entryCount = entries.size();
+    bgDesc.entries = entries.data();
+    compositeBindGroup_ = wgpuDeviceCreateBindGroup(device_, &bgDesc);
 }
 
 void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_t depth,
@@ -349,6 +686,7 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
     };
     aabbMin_ = -halfExtent;
     aabbMax_ = halfExtent;
+    finestSpacing_ = std::min({spacingX, spacingY, spacingZ});
 
     cameraYaw_ = glm::radians(35.0F);
     cameraPitch_ = glm::radians(25.0F);
@@ -388,7 +726,7 @@ void WebGPUDevice::rebuildBindGroup() {
         bindGroup_ = nullptr;
     }
 
-    std::array<WGPUBindGroupEntry, 5> entries{};
+    std::array<WGPUBindGroupEntry, 6> entries{};
     entries[0].binding = 0;
     entries[0].buffer = uboBuffer_;
     entries[0].offset = 0;
@@ -405,6 +743,9 @@ void WebGPUDevice::rebuildBindGroup() {
 
     entries[4].binding = 4;
     entries[4].textureView = lutTextureView_;
+
+    entries[5].binding = 5;
+    entries[5].textureView = preintegratedLutTextureView_;
 
     WGPUBindGroupDescriptor bgDesc{};
     bgDesc.layout = bindGroupLayout_;
@@ -429,69 +770,161 @@ void WebGPUDevice::renderFrame() {
     WGPUTextureView view = wgpuTextureCreateView(surfaceTexture.texture, nullptr);
     renderGraph_.transition("swapchain", core::ResourceState::RenderTarget);
 
-    WGPURenderPassColorAttachment colorAttachment{};
-    colorAttachment.view = view;
-    colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-    colorAttachment.loadOp = WGPULoadOp_Clear;
-    colorAttachment.storeOp = WGPUStoreOp_Store;
-    colorAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
-
-    WGPURenderPassDescriptor passDesc{};
-    passDesc.colorAttachmentCount = 1;
-    passDesc.colorAttachments = &colorAttachment;
-
     WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device_, nullptr);
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
-    if (hasVolume_ && pipeline_ && bindGroup_) {
+    // Opaque full-overwrite blend constant -- used by the axial-slice pass
+    // below (which doesn't participate in temporal accumulation) and as
+    // the raymarch pass's own weight on its first/dirty frame (§6.5).
+    WGPUColor const kOpaqueBlendConstant{1.0, 1.0, 1.0, 1.0};
+
+    if (hasVolume_ && pipeline_ && bindGroup_ && viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
         renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
         renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
 
-        if (viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
-            // "Contain" letterbox fit (issue #40 follow-up) -- see
-            // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_'s
-            // X/Y already encode the volume's physical (spacing-aware)
-            // extent (frameCameraForVolume()), so no separate spacing
-            // storage is needed here.
-            glm::vec3 const physicalExtent = aabbMax_ - aabbMin_;
-            float const volumeAspect = physicalExtent.x / physicalExtent.y;
-            float const canvasAspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
-            float const fitScaleX = std::max(1.0F, canvasAspect / volumeAspect);
-            float const fitScaleY = std::max(1.0F, volumeAspect / canvasAspect);
+        WGPURenderPassColorAttachment colorAttachment{};
+        colorAttachment.view = view;
+        colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        colorAttachment.loadOp = WGPULoadOp_Clear;
+        colorAttachment.storeOp = WGPUStoreOp_Store;
+        colorAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
 
-            AxialSliceUBO ubo{};
-            ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
-            ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
-            ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
+        WGPURenderPassDescriptor passDesc{};
+        passDesc.colorAttachmentCount = 1;
+        passDesc.colorAttachments = &colorAttachment;
+        WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
-            wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+        // "Contain" letterbox fit (issue #40 follow-up) -- see
+        // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_'s X/Y
+        // already encode the volume's physical (spacing-aware) extent
+        // (frameCameraForVolume()), so no separate spacing storage is
+        // needed here.
+        glm::vec3 const physicalExtent = aabbMax_ - aabbMin_;
+        float const volumeAspect = physicalExtent.x / physicalExtent.y;
+        float const canvasAspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
+        float const fitScaleX = std::max(1.0F, canvasAspect / volumeAspect);
+        float const fitScaleY = std::max(1.0F, volumeAspect / canvasAspect);
 
-            wgpuRenderPassEncoderSetPipeline(pass, axialPipeline_);
-            wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
-            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
-        } else {
-            glm::vec3 const halfExtent = (aabbMax_ - aabbMin_) * 0.5F;
-            float const diagonal = glm::length(halfExtent) * 2.0F;
+        AxialSliceUBO ubo{};
+        ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
+        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+        ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
 
-            RaymarchUBO ubo{};
-            ubo.invView = invView_;
-            ubo.invProj = invProj_;
-            ubo.cameraPos = glm::vec4{cameraPos_, 0.0F};
-            ubo.aabbMin = glm::vec4{aabbMin_, 0.0F};
-            ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
-            ubo.rayParams = glm::vec4{diagonal / 384.0F, 512.0F, 8.0F, 0.0F};
-            ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
-            ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+        wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
 
-            wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+        wgpuRenderPassEncoderSetPipeline(pass, axialPipeline_);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBlendConstant(pass, &kOpaqueBlendConstant);
+        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
 
-            wgpuRenderPassEncoderSetPipeline(pass, pipeline_);
-            wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
-            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+    } else if (hasVolume_ && pipeline_ && bindGroup_ && compositePipeline_ && compositeBindGroup_) {
+        renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
+        renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
+
+        glm::vec3 const halfExtent = (aabbMax_ - aabbMin_) * 0.5F;
+        float const diagonal = glm::length(halfExtent) * 2.0F;
+
+        QualityTier const& tier = kQualityTiers[qualityTier_];
+        float stepSize = diagonal / tier.stepsAcrossDiagonal;
+        float maxSteps = tier.maxSteps;
+        // Anisotropic-spacing guard (see kFinestAxisStepMultiplier's
+        // comment) -- only tightens stepSize, never loosens it, so a
+        // volume with fine-enough spacing for the tier's default is
+        // unaffected.
+        if (finestSpacing_ > 0.0F) {
+            float const clampedStepSize = std::min(stepSize, finestSpacing_ * kFinestAxisStepMultiplier);
+            if (clampedStepSize < stepSize) {
+                // Grow maxSteps to compensate so the shrunk step still
+                // reaches the far face, capped to bound worst-case cost.
+                maxSteps = std::min(diagonal / std::max(clampedStepSize, 1e-6F) * 1.33F, kMaxRayStepsHardCap);
+                stepSize = clampedStepSize;
+            }
         }
-    }
 
-    wgpuRenderPassEncoderEnd(pass);
+        // §6.5: dirty (accumFrameIndex_==0) means this frame fully
+        // overwrites accumulationTexture_ (Clear + weight 1.0); otherwise
+        // it blends in with weight 1/(n+1), a running average across
+        // static frames.
+        bool const dirty = accumFrameIndex_ <= 0.0F;
+        float const blendWeight = 1.0F / (accumFrameIndex_ + 1.0F);
+
+        RaymarchUBO ubo{};
+        ubo.invView = invView_;
+        ubo.invProj = invProj_;
+        ubo.cameraPos = glm::vec4{cameraPos_, 0.0F};
+        ubo.aabbMin = glm::vec4{aabbMin_, 0.0F};
+        ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
+        ubo.rayParams = glm::vec4{stepSize, maxSteps, kExtinction, 0.0F};
+        ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
+        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+        ubo.shadingParams = glm::vec4{kLightDirection, shadingEnabled_ ? 1.0F : 0.0F};
+        ubo.jitterParams = glm::vec4{accumFrameIndex_, 1.0F, 0.0F, 0.0F};
+        accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
+
+        wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+
+        // Pass A: raymarch into accumulationTexture_, blended with the
+        // previous accumulated content (or fully overwriting it if dirty).
+        WGPURenderPassColorAttachment accumAttachment{};
+        accumAttachment.view = accumulationTextureView_;
+        accumAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        accumAttachment.loadOp = dirty ? WGPULoadOp_Clear : WGPULoadOp_Load;
+        accumAttachment.storeOp = WGPUStoreOp_Store;
+        accumAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+
+        WGPURenderPassDescriptor accumPassDesc{};
+        accumPassDesc.colorAttachmentCount = 1;
+        accumPassDesc.colorAttachments = &accumAttachment;
+        WGPURenderPassEncoder accumPass = wgpuCommandEncoderBeginRenderPass(encoder, &accumPassDesc);
+
+        WGPUColor const blendConstant{blendWeight, blendWeight, blendWeight, blendWeight};
+        wgpuRenderPassEncoderSetPipeline(accumPass, pipeline_);
+        wgpuRenderPassEncoderSetBindGroup(accumPass, 0, bindGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBlendConstant(accumPass, dirty ? &kOpaqueBlendConstant : &blendConstant);
+        wgpuRenderPassEncoderDraw(accumPass, 3, 1, 0, 0);
+
+        wgpuRenderPassEncoderEnd(accumPass);
+        wgpuRenderPassEncoderRelease(accumPass);
+
+        // Pass B: blit the (now-updated) accumulation buffer to the
+        // swapchain -- see compositePipeline_'s header comment for why
+        // this can't just be one pass targeting the swapchain directly.
+        WGPURenderPassColorAttachment swapAttachment{};
+        swapAttachment.view = view;
+        swapAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        swapAttachment.loadOp = WGPULoadOp_Clear;
+        swapAttachment.storeOp = WGPUStoreOp_Store;
+        swapAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+
+        WGPURenderPassDescriptor compositePassDesc{};
+        compositePassDesc.colorAttachmentCount = 1;
+        compositePassDesc.colorAttachments = &swapAttachment;
+        WGPURenderPassEncoder compositePass = wgpuCommandEncoderBeginRenderPass(encoder, &compositePassDesc);
+
+        wgpuRenderPassEncoderSetPipeline(compositePass, compositePipeline_);
+        wgpuRenderPassEncoderSetBindGroup(compositePass, 0, compositeBindGroup_, 0, nullptr);
+        wgpuRenderPassEncoderDraw(compositePass, 3, 1, 0, 0);
+
+        wgpuRenderPassEncoderEnd(compositePass);
+        wgpuRenderPassEncoderRelease(compositePass);
+    } else {
+        // No volume loaded yet (or pipelines not ready): a plain clear,
+        // matching the pre-§6.5 no-volume behavior exactly.
+        WGPURenderPassColorAttachment colorAttachment{};
+        colorAttachment.view = view;
+        colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        colorAttachment.loadOp = WGPULoadOp_Clear;
+        colorAttachment.storeOp = WGPUStoreOp_Store;
+        colorAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+
+        WGPURenderPassDescriptor passDesc{};
+        passDesc.colorAttachmentCount = 1;
+        passDesc.colorAttachments = &colorAttachment;
+        WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+    }
 
     WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(encoder, nullptr);
     wgpuQueueSubmit(queue_, 1, &cmdBuffer);
@@ -500,7 +933,6 @@ void WebGPUDevice::renderFrame() {
     // happens automatically via requestAnimationFrame under
     // emscripten_set_main_loop (CLAUDE.md #9).
     wgpuCommandBufferRelease(cmdBuffer);
-    wgpuRenderPassEncoderRelease(pass);
     wgpuCommandEncoderRelease(encoder);
     wgpuTextureViewRelease(view);
     wgpuTextureRelease(surfaceTexture.texture);
@@ -610,6 +1042,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     frameCameraForVolume(width, height, depth, spacingX, spacingY, spacingZ);
     rebuildBindGroup();
+    // A new volume replaces the geometry/orientation the accumulation
+    // buffer's existing content was rendered from -- without this, its
+    // first post-load frames would blend the new volume against
+    // leftover pixels from whatever was loaded (or not) before.
+    markAccumulationDirty();
 
     std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded\n", volumeId, width, height, depth);
 }
@@ -652,6 +1089,12 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
     WGPUExtent3D writeSize{width, height, 1};
     wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
     renderGraph_.transition("mask", core::ResourceState::TransferDst);
+    // A newly-applied mask slice changes what renderFrame() should draw
+    // even if the camera/window/level haven't -- without this, its
+    // contribution only blends in at whatever (possibly tiny, if the
+    // volume has been sitting on screen for a while) weight
+    // accumFrameIndex_ has already decayed to.
+    markAccumulationDirty();
 
     std::printf("WebGPUDevice::applyMaskSlice: volumeId=%u slice=%u applied\n", volumeId, sliceIndex);
 }
@@ -659,6 +1102,7 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
 void WebGPUDevice::setWindowLevel(float center, float width) {
     windowCenter_ = center;
     windowWidth_ = width;
+    markAccumulationDirty();
 }
 
 void WebGPUDevice::setColormapPreset(uint32_t presetId) {
@@ -670,6 +1114,9 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
     ColormapPreset const& preset = kColormapPresets[presetId];
     windowCenter_ = preset.center;
     windowWidth_ = preset.width;
+    writeLutPreset(presetId);
+    writePreintegratedLut(presetId);
+    markAccumulationDirty();
 }
 
 void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
@@ -684,6 +1131,7 @@ void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
     cameraPitch_ = std::clamp(cameraPitch_, glm::radians(-89.0F), glm::radians(89.0F));
 
     updateCameraMatrices();
+    markAccumulationDirty();
 }
 
 void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
@@ -705,6 +1153,7 @@ void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
     cameraDistance_ = std::clamp(cameraDistance_, extent * 0.3F, extent * 10.0F);
 
     updateCameraMatrices();
+    markAccumulationDirty();
 }
 
 void WebGPUDevice::setViewMode(uint32_t mode) {
@@ -713,6 +1162,7 @@ void WebGPUDevice::setViewMode(uint32_t mode) {
         return;
     }
     viewMode_ = mode;
+    markAccumulationDirty();
 }
 
 void WebGPUDevice::setAxialSliceIndex(uint32_t index) {
@@ -721,6 +1171,25 @@ void WebGPUDevice::setAxialSliceIndex(uint32_t index) {
         return;
     }
     axialSliceIndex_ = std::min(index, volumeDepth_ - 1);
+}
+
+void WebGPUDevice::setQualityTier(uint32_t tier) {
+    if (tier >= kQualityTiers.size()) {
+        std::printf("WebGPUDevice::setQualityTier: invalid tier=%u (max %zu), ignoring\n", tier,
+                     kQualityTiers.size() - 1);
+        return;
+    }
+    qualityTier_ = tier;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setShadingEnabled(bool enabled) {
+    shadingEnabled_ = enabled;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::markAccumulationDirty() {
+    accumFrameIndex_ = 0.0F;
 }
 
 void WebGPUDevice::resize(uint32_t width, uint32_t height) {
@@ -742,8 +1211,15 @@ void WebGPUDevice::resize(uint32_t width, uint32_t height) {
     // canvasHeight_ already hold at that point.
     if (device_) {
         configureSurface();
+        // Only once the composite pipeline exists (createCompositePipeline()
+        // may not have run yet if resize() is called very early -- see
+        // Device.hpp's "safe to call before the device is ready" note).
+        if (compositeBindGroupLayout_) {
+            createAccumulationResources();
+        }
     }
     updateCameraMatrices();
+    markAccumulationDirty();
 }
 
 }  // namespace omnimed3d::rhi::webgpu

@@ -31,6 +31,8 @@ public:
     void zoomCamera(float wheelDeltaSign) override;
     void setViewMode(uint32_t mode) override;
     void setAxialSliceIndex(uint32_t index) override;
+    void setQualityTier(uint32_t tier) override;
+    void setShadingEnabled(bool enabled) override;
     void resize(uint32_t width, uint32_t height) override;
 
 private:
@@ -61,21 +63,47 @@ private:
     // createRenderPipelineFor()'s own comment for why that's valid).
     void createPipeline();
     void createSamplerAndLut();
+    // One-time creation of the accumulation-blit pipeline/layout/shader
+    // (§6.5) -- called once from createPipeline(), analogous to the
+    // raymarch/axial pipelines it builds alongside.
+    void createCompositePipeline();
+    // (Re)creates accumulationTexture_/View sized to canvasWidth_/
+    // canvasHeight_, and the compositeBindGroup_ that references it --
+    // called once when the device becomes ready and again from resize()
+    // whenever the canvas size actually changes (a fixed-size texture
+    // can't just be reused at a new size). Releases the previous
+    // texture/view/bind group first if this isn't the first call.
+    void createAccumulationResources();
+    // Writes one colormap preset's color ramp into lutTexture_ -- see the
+    // .cpp definition's header comment.
+    void writeLutPreset(uint32_t presetId);
+    // Bakes one colormap preset's pre-integrated (front,back) table into
+    // preintegratedLutTexture_ -- see the .cpp definition's header comment.
+    void writePreintegratedLut(uint32_t presetId);
     void rebuildBindGroup();
 
     // Factors out the blend-state/color-target/pipeline-descriptor
     // boilerplate shared by both render pipelines (issue #37) -- the only
     // difference between the raymarch and axial-slice pipelines is which
-    // shader module they run; bindGroupLayout_/pipelineLayout_ are built
-    // once by createPipeline() and passed in unchanged. Both shaders
-    // declare the exact same 5-entry bind group layout (uniform buffer,
-    // volume tex, sampler, mask tex, LUT tex), so one WGPUBindGroup
-    // (bindGroup_, referencing uboBuffer_ sized for the larger
-    // RaymarchUBO) is valid for whichever pipeline is bound -- WebGPU
-    // validates the bound buffer range against each shader's own
-    // reflected minimum size, and RaymarchUBO's 224 bytes comfortably
-    // covers AxialSliceUBO's 32.
-    WGPURenderPipeline createRenderPipelineFor(WGPUShaderModule module);
+    // shader module they run and which color target format they're built
+    // against; bindGroupLayout_/pipelineLayout_ are built once by
+    // createPipeline() and passed in unchanged. Both shaders declare the
+    // exact same 6-entry bind group layout (uniform buffer, volume tex,
+    // sampler, mask tex, LUT tex, pre-integrated LUT tex), so one
+    // WGPUBindGroup (bindGroup_, referencing uboBuffer_ sized for the
+    // larger RaymarchUBO) is valid for whichever pipeline is bound --
+    // WebGPU validates the bound buffer range against each shader's own
+    // reflected minimum size, and RaymarchUBO's 256 bytes comfortably
+    // covers AxialSliceUBO's 48. colorTargetFormat must match whatever
+    // render pass attachment the resulting pipeline is later used with --
+    // WebGPU bakes a pipeline's color target format at creation time and
+    // validates it against the actual attachment at draw time (§6.5: the
+    // raymarch pipeline now targets accumulationTexture_'s RGBA16Float,
+    // not the swapchain's BGRA8Unorm the axial-slice pipeline still uses;
+    // passing the wrong format here produces an invalid pipeline that
+    // silently no-ops every draw using it -- confirmed by hitting exactly
+    // this while first wiring the accumulation buffer up).
+    WGPURenderPipeline createRenderPipelineFor(WGPUShaderModule module, WGPUTextureFormat colorTargetFormat);
 
     // Frames a default camera and world-space AABB from the loaded
     // volume's voxel dimensions + physical spacing, resetting
@@ -91,6 +119,14 @@ private:
     // called after frameCameraForVolume() resets those, and again after
     // orbitCamera()/zoomCamera() update them interactively (REQ-R06).
     void updateCameraMatrices();
+
+    // Resets accumFrameIndex_ to 0 -- called from every setter that
+    // changes what renderFrame() draws (window/level, colormap preset,
+    // quality tier, shading toggle, camera orbit/zoom, resize). Without
+    // this, the temporal-accumulation blend in renderFrame() would mix
+    // stale pre-change pixels with new ones (visible ghosting). Any
+    // future image-affecting setter must call this too.
+    void markAccumulationDirty();
 
     WGPUInstance instance_ = nullptr;
     WGPUAdapter adapter_ = nullptr;
@@ -132,6 +168,11 @@ private:
     WGPUSampler linearSampler_ = nullptr;
     WGPUTexture lutTexture_ = nullptr;
     WGPUTextureView lutTextureView_ = nullptr;
+    // Pre-integrated (front,back) transfer-function table (§6.1) -- only
+    // the raymarch pipeline samples this; see preintegratedLutTex's
+    // comment in volume_raymarch.slang.
+    WGPUTexture preintegratedLutTexture_ = nullptr;
+    WGPUTextureView preintegratedLutTextureView_ = nullptr;
     // Rebuilt in rebuildBindGroup() -- depends on volumeTextureView_/
     // maskTextureView_, which change every loadVolume() call.
     WGPUBindGroup bindGroup_ = nullptr;
@@ -142,6 +183,37 @@ private:
     // differ. See createRenderPipelineFor()'s header comment.
     WGPUShaderModule axialShaderModule_ = nullptr;
     WGPURenderPipeline axialPipeline_ = nullptr;
+
+    // Jitter + temporal accumulation (§6.5) -- the raymarch pass renders
+    // into this persistent offscreen buffer instead of the swapchain
+    // directly, blending each new (jittered) frame in with weight
+    // 1/(accumFrameIndex_+1) while the camera/params are static
+    // (markAccumulationDirty() resets the blend to a full overwrite). A
+    // separate composite pass then blits it to the swapchain. This
+    // indirection exists because wgpuSurfaceGetCurrentTexture() returns a
+    // *different physical texture* every frame (the swapchain is
+    // double/triple-buffered) -- blending directly against "whatever's in
+    // this frame's swapchain buffer" would accumulate against stale,
+    // 2-3-frames-old content instead of the true previous frame, causing
+    // visible flicker rather than convergence. RGBA16Float (not 8Unorm)
+    // so repeated low-weight blends don't visibly quantize/band before
+    // convergence. Sized to canvasWidth_/canvasHeight_, (re)created by
+    // createAccumulationResources().
+    WGPUTexture accumulationTexture_ = nullptr;
+    WGPUTextureView accumulationTextureView_ = nullptr;
+
+    // Composite/blit pipeline (§6.5) -- reads accumulationTexture_ and
+    // writes it to the swapchain, unchanged. A distinct 2-entry bind
+    // group layout (texture + sampler only) from bindGroupLayout_ above,
+    // since it's a genuinely different shader with different resources,
+    // not another consumer of the raymarch/axial-slice layout.
+    WGPUShaderModule compositeShaderModule_ = nullptr;
+    WGPUBindGroupLayout compositeBindGroupLayout_ = nullptr;
+    WGPUPipelineLayout compositePipelineLayout_ = nullptr;
+    WGPURenderPipeline compositePipeline_ = nullptr;
+    // Rebuilt in createAccumulationResources() -- depends on
+    // accumulationTextureView_, which is recreated on every resize().
+    WGPUBindGroup compositeBindGroup_ = nullptr;
 
     // 0 = Orbit3D (default), 1 = AxialSlice2D -- see setViewMode().
     uint32_t viewMode_ = 0;
@@ -163,6 +235,11 @@ private:
     float cameraYaw_ = 0.0F;
     float cameraPitch_ = 0.0F;
     float cameraDistance_ = 0.0F;
+    // Smallest of spacingX/Y/Z from the most recent loadVolume() call, in
+    // world mm -- used to keep the raymarch step size from undersampling
+    // the volume's finest axis on anisotropic data (thick-slice CT/MR).
+    // 0 until a volume has been loaded.
+    float finestSpacing_ = 0.0F;
 
     // Window/level + mask overlay parameters -- defaults applied in
     // createPipeline(); overridden via setWindowLevel()/setColormapPreset()
@@ -170,6 +247,17 @@ private:
     float windowCenter_ = 0.0F;
     float windowWidth_ = 400.0F;
     bool maskOverlayEnabled_ = true;
+
+    // REQ-R04 quality/step-count tier -- see kQualityTiers in
+    // WebGPUDevice.cpp. Default matches the previous hardcoded behavior
+    // (Medium == the old fixed 512-step/diagonal-384 formula).
+    uint32_t qualityTier_ = 1;
+    // Gradient-based Lambert shading toggle -- see setShadingEnabled().
+    bool shadingEnabled_ = true;
+    // Temporal-accumulation frame counter (jitter + accumulate while the
+    // camera/params are static) -- reset to 0 by markAccumulationDirty(),
+    // incremented once per renderFrame() call otherwise.
+    float accumFrameIndex_ = 0.0F;
 };
 
 }  // namespace omnimed3d::rhi::webgpu

@@ -100,4 +100,18 @@ void engine_resize(uint32_t width, uint32_t height) {
     g_device.resize(width, height);
 }
 
+// REQ-R04: raymarch quality/step-count tier. tier: 0=Low, 1=Medium
+// (default), 2=High -- see rhi::Device::setQualityTier's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_quality_tier(uint32_t tier) {
+    g_device.setQualityTier(tier);
+}
+
+// Gradient-based Lambert shading toggle -- see
+// rhi::Device::setShadingEnabled's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_shading_enabled(uint32_t enabled) {
+    g_device.setShadingEnabled(enabled != 0);
+}
+
 }  // extern "C"
