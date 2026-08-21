@@ -215,4 +215,27 @@ const char* engine_get_gpu_description() {
     return s.c_str();
 }
 
+// GPU-side per-pass timing (WebGPU timestamp-query, optional feature). See
+// rhi::Device::getGpuTiming's header comment -- check
+// engine_get_gpu_timing_supported() before trusting the *_ms getters.
+EMSCRIPTEN_KEEPALIVE
+uint32_t engine_get_gpu_timing_supported() {
+    return g_device.getGpuTiming().supported ? 1U : 0U;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float engine_get_gpu_raymarch_ms() {
+    return g_device.getGpuTiming().raymarchMs;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float engine_get_gpu_composite_ms() {
+    return g_device.getGpuTiming().compositeMs;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float engine_get_gpu_axial_ms() {
+    return g_device.getGpuTiming().axialMs;
+}
+
 }  // extern "C"

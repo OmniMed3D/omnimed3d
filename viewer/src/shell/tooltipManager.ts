@@ -64,6 +64,7 @@ const TOOLTIP_TEXT: Record<string, string> = {
   "background-preset-white": "Pure white background.",
   "stats-overlay-enabled": "Shows FPS, frame time, and GPU vendor/device info.",
   "stat-perf": "Frames per second and per-frame render time, averaged over the last 60 frames.",
+  "stat-gpu-pass": "Actual GPU time spent rendering (WebGPU timestamp-query), not wall-clock frame time -- unlike Perf above, this isn't capped by the display's refresh rate, so it stays meaningful even when Perf is vsync-limited. Shows \"unsupported\" if this browser/GPU doesn't support GPU timestamp queries.",
   "stat-canvas": "Canvas backing-store resolution, in device pixels (post-devicePixelRatio scaling).",
   "stat-gpu-vendor": "GPU vendor, as reported by the browser's WebGPU adapter.",
   "stat-gpu-device": "GPU device name, as reported by the browser's WebGPU adapter -- often unavailable (n/a) since browsers restrict this for fingerprinting reasons.",

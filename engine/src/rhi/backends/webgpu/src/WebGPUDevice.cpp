@@ -219,11 +219,30 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     }
     self->adapter_ = adapter;
 
+    // `timestamp-query` is optional (rhi::Device::getGpuTiming's header
+    // comment) -- only request it if the adapter actually supports it, and
+    // remember the result so the rest of this class knows whether to create
+    // the query set / write timestamps at all. Feature detection here, not
+    // just at device-creation time, matches CLAUDE.md #8's "feature
+    // detection and activation are different facts" principle -- checking
+    // now is what makes the later "activation" (creating the query set)
+    // correct instead of a guess.
+    self->timestampQuerySupported_ = wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery) != 0U;
+
     WGPURequestDeviceCallbackInfo deviceCallbackInfo{};
     deviceCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
     deviceCallbackInfo.callback = &WebGPUDevice::onDeviceRequested;
     deviceCallbackInfo.userdata1 = self;
-    wgpuAdapterRequestDevice(adapter, nullptr, deviceCallbackInfo);
+
+    if (self->timestampQuerySupported_) {
+        WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
+        WGPUDeviceDescriptor deviceDesc{};
+        deviceDesc.requiredFeatureCount = 1;
+        deviceDesc.requiredFeatures = requiredFeatures;
+        wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
+    } else {
+        wgpuAdapterRequestDevice(adapter, nullptr, deviceCallbackInfo);
+    }
 }
 
 void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
@@ -265,7 +284,27 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     self->createPipeline();
     self->createCompositePipeline();
     self->createAccumulationResources();
+    if (self->timestampQuerySupported_) {
+        self->createTimestampQuery();
+    }
     self->ready_ = true;
+}
+
+void WebGPUDevice::createTimestampQuery() {
+    WGPUQuerySetDescriptor querySetDesc{};
+    querySetDesc.type = WGPUQueryType_Timestamp;
+    querySetDesc.count = kTimestampQueryCount;
+    timestampQuerySet_ = wgpuDeviceCreateQuerySet(device_, &querySetDesc);
+
+    WGPUBufferDescriptor resolveDesc{};
+    resolveDesc.size = kTimestampQueryCount * sizeof(uint64_t);
+    resolveDesc.usage = WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc;
+    timestampResolveBuffer_ = wgpuDeviceCreateBuffer(device_, &resolveDesc);
+
+    WGPUBufferDescriptor readbackDesc{};
+    readbackDesc.size = kTimestampQueryCount * sizeof(uint64_t);
+    readbackDesc.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
+    timestampReadbackBuffer_ = wgpuDeviceCreateBuffer(device_, &readbackDesc);
 }
 
 void WebGPUDevice::configureSurface() {
@@ -822,6 +861,41 @@ void WebGPUDevice::renderFrame() {
     // the raymarch pass's own weight on its first/dirty frame (§6.5).
     WGPUColor const kOpaqueBlendConstant{1.0, 1.0, 1.0, 1.0};
 
+    // How many of timestampQuerySet_'s 4 slots this frame's branch below
+    // actually writes -- 0 (no-volume branch, unsupported, or a readback
+    // already in flight), 2 (AxialSlice2D), or 4 (Orbit3D: raymarch +
+    // composite). Read after the if/else chain to decide whether/how much
+    // to resolve and read back.
+    //
+    // Gated on !timestampReadbackPending_, not just timestampQuerySupported_
+    // -- confirmed via a real Dawn validation warning ("[Buffer (unlabeled)]
+    // used in submit while mapped"/"while pending map"), not assumed: this
+    // frame's resolveQuerySet()+copyBufferToBuffer() write into
+    // timestampReadbackBuffer_, the exact same buffer a previous frame's
+    // still-in-flight wgpuBufferMapAsync() has pending/mapped. WebGPU
+    // forbids using a buffer in a submitted command while its map request is
+    // pending or fulfilled. GPU readback latency is typically several
+    // frames at this frame rate, so without this guard nearly every
+    // submission hit the warning -- Dawn's response to it (dropping or
+    // otherwise mishandling that submission) was the actual cause of the
+    // rapid rendering flicker this fixes.
+    bool const wantTimestamps = timestampQuerySupported_ && !timestampReadbackPending_;
+    uint32_t timestampQueryCountThisFrame = 0;
+    WGPUPassTimestampWrites axialTimestampWrites{};
+    WGPUPassTimestampWrites raymarchTimestampWrites{};
+    WGPUPassTimestampWrites compositeTimestampWrites{};
+    if (wantTimestamps) {
+        axialTimestampWrites.querySet = timestampQuerySet_;
+        axialTimestampWrites.beginningOfPassWriteIndex = 0;
+        axialTimestampWrites.endOfPassWriteIndex = 1;
+        raymarchTimestampWrites.querySet = timestampQuerySet_;
+        raymarchTimestampWrites.beginningOfPassWriteIndex = 0;
+        raymarchTimestampWrites.endOfPassWriteIndex = 1;
+        compositeTimestampWrites.querySet = timestampQuerySet_;
+        compositeTimestampWrites.beginningOfPassWriteIndex = 2;
+        compositeTimestampWrites.endOfPassWriteIndex = 3;
+    }
+
     if (hasVolume_ && pipeline_ && bindGroup_ && viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
         renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
         renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
@@ -837,6 +911,10 @@ void WebGPUDevice::renderFrame() {
         WGPURenderPassDescriptor passDesc{};
         passDesc.colorAttachmentCount = 1;
         passDesc.colorAttachments = &colorAttachment;
+        if (wantTimestamps) {
+            passDesc.timestampWrites = &axialTimestampWrites;
+            timestampQueryCountThisFrame = 2;
+        }
         WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
         // "Contain" letterbox fit (issue #40 follow-up) -- see
@@ -928,6 +1006,9 @@ void WebGPUDevice::renderFrame() {
         WGPURenderPassDescriptor accumPassDesc{};
         accumPassDesc.colorAttachmentCount = 1;
         accumPassDesc.colorAttachments = &accumAttachment;
+        if (wantTimestamps) {
+            accumPassDesc.timestampWrites = &raymarchTimestampWrites;
+        }
         WGPURenderPassEncoder accumPass = wgpuCommandEncoderBeginRenderPass(encoder, &accumPassDesc);
 
         WGPUColor const blendConstant{blendWeight, blendWeight, blendWeight, blendWeight};
@@ -953,6 +1034,10 @@ void WebGPUDevice::renderFrame() {
         WGPURenderPassDescriptor compositePassDesc{};
         compositePassDesc.colorAttachmentCount = 1;
         compositePassDesc.colorAttachments = &swapAttachment;
+        if (wantTimestamps) {
+            compositePassDesc.timestampWrites = &compositeTimestampWrites;
+            timestampQueryCountThisFrame = 4;
+        }
         WGPURenderPassEncoder compositePass = wgpuCommandEncoderBeginRenderPass(encoder, &compositePassDesc);
 
         wgpuRenderPassEncoderSetPipeline(compositePass, compositePipeline_);
@@ -980,8 +1065,24 @@ void WebGPUDevice::renderFrame() {
         wgpuRenderPassEncoderRelease(pass);
     }
 
+    // Resolve+copy must be recorded on this same encoder, after the pass(es)
+    // that wrote the timestamps and before wgpuCommandEncoderFinish -- a
+    // resolveQuerySet call can only see queries written earlier in the same
+    // command buffer. timestampQueryCountThisFrame is only ever nonzero when
+    // wantTimestamps was true above, so no separate check needed here.
+    if (timestampQueryCountThisFrame > 0) {
+        wgpuCommandEncoderResolveQuerySet(encoder, timestampQuerySet_, 0, timestampQueryCountThisFrame,
+                                           timestampResolveBuffer_, 0);
+        wgpuCommandEncoderCopyBufferToBuffer(encoder, timestampResolveBuffer_, 0, timestampReadbackBuffer_, 0,
+                                              timestampQueryCountThisFrame * sizeof(uint64_t));
+    }
+
     WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(encoder, nullptr);
     wgpuQueueSubmit(queue_, 1, &cmdBuffer);
+
+    if (timestampQueryCountThisFrame > 0) {
+        beginTimestampReadback(timestampQueryCountThisFrame);
+    }
 
     // No wgpuSurfacePresent call -- unsupported in Emscripten, present
     // happens automatically via requestAnimationFrame under
@@ -1351,6 +1452,75 @@ FrameStatsSnapshot WebGPUDevice::getFrameStats() const {
 
 HardwareInfo WebGPUDevice::getHardwareInfo() const {
     return hardwareInfo_;
+}
+
+GpuTimingSnapshot WebGPUDevice::getGpuTiming() const {
+    return GpuTimingSnapshot{timestampQuerySupported_, gpuRaymarchMs_, gpuCompositeMs_, gpuAxialMs_};
+}
+
+void WebGPUDevice::beginTimestampReadback(uint32_t queryCount) {
+    if (timestampReadbackPending_) {
+        // Previous readback hasn't resolved yet -- skip this frame's rather
+        // than queuing up (WebGPU disallows mapping a buffer that's already
+        // being mapped). Last frame's numbers stay displayed.
+        return;
+    }
+    timestampReadbackPending_ = true;
+    pendingTimestampQueryCount_ = queryCount;
+
+    WGPUBufferMapCallbackInfo mapCallbackInfo{};
+    mapCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
+    mapCallbackInfo.callback = &WebGPUDevice::onTimestampBufferMapped;
+    mapCallbackInfo.userdata1 = this;
+    wgpuBufferMapAsync(timestampReadbackBuffer_, WGPUMapMode_Read, 0, queryCount * sizeof(uint64_t), mapCallbackInfo);
+}
+
+void WebGPUDevice::onTimestampBufferMapped(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1,
+                                            void* /*userdata2*/) {
+    auto* self = static_cast<WebGPUDevice*>(userdata1);
+    self->timestampReadbackPending_ = false;
+    if (status != WGPUMapAsyncStatus_Success) {
+        logStringView("WebGPUDevice: timestamp buffer map failed", message);
+        return;
+    }
+
+    // wgpuBufferGetMappedRange() (mutable) is write-mode only -- Dawn's own
+    // emdawnwebgpu shim (webgpu.cpp, WGPUBufferImpl::GetMappedRange) asserts
+    // `mPendingMapRequest.mode == WGPUMapMode_Write` and returns nullptr
+    // otherwise; confirmed by reading that source directly after hitting the
+    // assertion, not assumed. This buffer is mapped WGPUMapMode_Read, so the
+    // const-returning accessor is the correct one for a read-only mapping.
+    size_t const byteSize = self->pendingTimestampQueryCount_ * sizeof(uint64_t);
+    auto const* timestamps =
+        static_cast<uint64_t const*>(wgpuBufferGetConstMappedRange(self->timestampReadbackBuffer_, 0, byteSize));
+
+    // WebGPU timestamp values are already in nanoseconds (unlike Vulkan,
+    // which needs VkPhysicalDeviceLimits::timestampPeriod to convert ticks
+    // -- no such conversion needed here).
+    if (self->pendingTimestampQueryCount_ >= 2) {
+        float const firstPassMs = static_cast<float>(timestamps[1] - timestamps[0]) / 1.0e6F;
+        if (self->pendingTimestampQueryCount_ == 2) {
+            // Only the axial-slice pass ran this frame (slots 0/1 are its
+            // begin/end -- see createTimestampQuery()'s header comment).
+            // Clear the raymarch/composite side rather than leaving a stale
+            // nonzero value sitting there -- overlays (statsOverlay.ts, the
+            // wasm_smoke shell) pick which pass to display by whichever
+            // value is nonzero, so a lingering old raymarch number from
+            // before a view-mode switch would keep showing instead of this
+            // frame's real axial measurement.
+            self->gpuAxialMs_ = firstPassMs;
+            self->gpuRaymarchMs_ = 0.0F;
+            self->gpuCompositeMs_ = 0.0F;
+        } else {
+            self->gpuRaymarchMs_ = firstPassMs;
+            self->gpuAxialMs_ = 0.0F;
+        }
+    }
+    if (self->pendingTimestampQueryCount_ >= 4) {
+        self->gpuCompositeMs_ = static_cast<float>(timestamps[3] - timestamps[2]) / 1.0e6F;
+    }
+
+    wgpuBufferUnmap(self->timestampReadbackBuffer_);
 }
 
 }  // namespace omnimed3d::rhi::webgpu

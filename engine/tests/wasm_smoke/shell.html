@@ -137,12 +137,34 @@
                     var architecture = Module.UTF8ToString(Module._engine_get_gpu_architecture());
                     var device = Module.UTF8ToString(Module._engine_get_gpu_device());
                     var description = Module.UTF8ToString(Module._engine_get_gpu_description());
+
+                    // GPU-side pass timing (WebGPU timestamp-query, optional
+                    // feature -- "unsupported" is a real, expected state, not an
+                    // error). Only one of raymarch+composite (3D Orbit) or axial
+                    // (2D Slice) is ever nonzero in a given frame.
+                    var gpuPassText;
+                    if (Module._engine_get_gpu_timing_supported() !== 1) {
+                        gpuPassText = 'unsupported';
+                    } else {
+                        var raymarchMs = Module._engine_get_gpu_raymarch_ms();
+                        var compositeMs = Module._engine_get_gpu_composite_ms();
+                        var axialMs = Module._engine_get_gpu_axial_ms();
+                        if (raymarchMs > 0 || compositeMs > 0) {
+                            gpuPassText = 'Raymarch ' + raymarchMs.toFixed(3) + ' + Composite ' + compositeMs.toFixed(3) + ' ms';
+                        } else if (axialMs > 0) {
+                            gpuPassText = 'Axial ' + axialMs.toFixed(3) + ' ms';
+                        } else {
+                            gpuPassText = 'n/a';
+                        }
+                    }
+
                     // FPS/Frame line matches Mini-Engine-reference's own Statistics
                     // panel format exactly (ImGuiManager.cpp: "FPS: %.1f  |  Frame:
                     // %.3f ms") -- one line, pipe-separated, 3 decimal places on
                     // frame time.
                     panel.textContent =
                         'FPS: ' + fps.toFixed(1) + '  |  Frame: ' + avgFrameMs.toFixed(3) + ' ms\n' +
+                        'GPU pass: ' + gpuPassText + '\n' +
                         'Canvas: ' + Module.canvas.width + 'x' + Module.canvas.height + '\n' +
                         'GPU vendor: ' + (vendor || 'n/a') + '\n' +
                         'GPU device: ' + (device || 'n/a') + '\n' +
