@@ -51,6 +51,14 @@ viewer/.dev-server.pid
 !viewer/tests/fixtures/dummy-lungmask.onnx
 !viewer/src/shell/public/models/dummy-lungmask.onnx
 
+# Exception: the real quantized lungmask model (REQ-A02 INT8 output),
+# checked in so the Shell's "Load Segmentation Model" button has something
+# real to fetch in a browser -- REQ-A06's integration criterion (§5.3.1)
+# specifically requires the real 2.5D lung model, not the dummy above.
+# Copied from ai-pipeline/quantization/ rather than symlinked, same
+# portability reasoning as the dummy model's own copy.
+!viewer/src/shell/public/models/lungmask_r231_int8.onnx
+
 # Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
 ai-pipeline/quantization/calibration_data/
 
