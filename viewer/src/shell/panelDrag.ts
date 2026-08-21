@@ -1,7 +1,8 @@
 /**
- * Draggable + collapsible control panel (visual polish follow-up) --
- * both runtime-only, deliberately not persisted: reset to the default
- * top-right expanded state on reload. #panel-drag-grip (the dot grip)
+ * Draggable panel positioning (visual polish follow-up; generalized for
+ * the stats overlay's own drag handle -- see statsOverlay.ts). Runtime-only,
+ * deliberately not persisted: reset to each panel's default CSS position on
+ * reload. For #control-panel specifically, #panel-drag-grip (the dot grip)
  * and #panel-collapse-toggle are siblings inside #panel-drag-handle, not
  * nested, so neither needs stopPropagation to avoid triggering the
  * other. The rest of the panel (buttons/sliders/inputs) stays
@@ -13,11 +14,11 @@
  * Touch events mirrored for mobile (REQ-R07 Mobile Chrome is P0).
  */
 
-export function setupPanelDrag(): void {
-  const panel = document.getElementById("control-panel");
-  const handle = document.getElementById("panel-drag-grip");
+export function setupPanelDrag(panelId: string, handleId: string): void {
+  const panel = document.getElementById(panelId);
+  const handle = document.getElementById(handleId);
   if (!panel || !handle) {
-    console.error("panelDrag: #control-panel or #panel-drag-grip not found in the DOM");
+    console.error(`panelDrag: #${panelId} or #${handleId} not found in the DOM`);
     return;
   }
 
@@ -38,12 +39,16 @@ export function setupPanelDrag(): void {
     const rect = panel!.getBoundingClientRect();
     panelStartLeft = rect.left;
     panelStartTop = rect.top;
-    // First drag switches from the CSS default (top/right) to explicit
-    // top/left in pixels, so the panel can move freely instead of
-    // staying pinned to the right edge. getBoundingClientRect() above
-    // already reflects whichever positioning drove it here, so this is
-    // safe to repeat across multiple drags in the same session.
+    // First drag switches from whichever CSS default corner (#control-panel:
+    // top/right, #stats-overlay: top/left) to explicit top/left in pixels,
+    // so the panel can move freely instead of staying pinned to that corner.
+    // getBoundingClientRect() above already reflects whichever positioning
+    // drove it here, so this is safe to repeat across multiple drags in the
+    // same session. right/bottom are cleared unconditionally since a caller
+    // whose CSS default anchors via either (not just #control-panel's right)
+    // would otherwise keep fighting the newly-set left/top.
     panel!.style.right = "auto";
+    panel!.style.bottom = "auto";
     panel!.style.left = `${panelStartLeft}px`;
     panel!.style.top = `${panelStartTop}px`;
   }

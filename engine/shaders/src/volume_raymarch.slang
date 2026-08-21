@@ -28,6 +28,7 @@ struct RaymarchUBO
     float4 clipMax;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
     float4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
     float4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
+    float4 backgroundColor;  // xyz=RGB, w unused -- see kBackgroundColor's former header comment below
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<RaymarchUBO> ubo;
@@ -50,14 +51,16 @@ struct RaymarchUBO
 // lung model, one class set; not a per-class palette).
 static const float3 kMaskHighlightColor = float3(1.0, 0.15, 0.15);
 
-// Matches WebGPUDevice::renderFrame()'s swapchain clear color exactly --
-// with jitter+temporal accumulation (§6.5), this shader's own output must
-// already be a fully-resolved, opaque (alpha=1) frame (see fragmentMain's
-// final composite below): the render pass this draws into now blends
-// across FRAMES with a temporal weight (WGPUBlendFactor_Constant, set per
-// frame in renderFrame()), not against this pass's own clear color the
-// way a plain "render once, blend with alpha" pass would.
-static const float3 kBackgroundColor = float3(0.05, 0.05, 0.12);
+// Background color is ubo.backgroundColor (rhi::Device::setBackgroundColor,
+// PRD baseline-perf-overlay follow-up) -- with jitter+temporal accumulation
+// (§6.5), this shader's own output must already be a fully-resolved, opaque
+// (alpha=1) frame (see fragmentMain's final composite below): the render
+// pass this draws into now blends across FRAMES with a temporal weight
+// (WGPUBlendFactor_Constant, set per frame in renderFrame()), not against
+// this pass's own clear color the way a plain "render once, blend with
+// alpha" pass would. WebGPUDevice::renderFrame()'s own render-pass clear
+// colors are kept in sync with the same value (backgroundColor_) for the
+// letterbox/no-volume cases that never reach this shader at all.
 
 // Gradient-shading constants (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
 // §4.3) -- fixed rather than UBO fields for this branch; kept close
@@ -356,10 +359,10 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         t += stepSize;
     }
 
-    // Resolves against a fixed background and forces alpha=1 -- see
-    // kBackgroundColor's header comment for why this shader now owns that
-    // compositing step itself instead of leaning on the render pass's own
-    // alpha blend.
-    float3 finalColor = accum.rgb + (1.0 - accum.a) * kBackgroundColor;
+    // Resolves against the configurable background and forces alpha=1 --
+    // see ubo.backgroundColor's declaration above for why this shader now
+    // owns that compositing step itself instead of leaning on the render
+    // pass's own alpha blend.
+    float3 finalColor = accum.rgb + (1.0 - accum.a) * ubo.backgroundColor.rgb;
     return float4(finalColor, 1.0);
 }

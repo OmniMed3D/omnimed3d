@@ -58,6 +58,18 @@ const TOOLTIP_TEXT: Record<string, string> = {
   "clip-z-min": "Clip box: minimum Z bound (world mm).",
   "clip-z-max": "Clip box: maximum Z bound (world mm).",
   "clip-reset": "Resets the clip box to the full volume (no clipping).",
+  "background-preset-dark": "Dark teal-black background (default).",
+  "background-preset-black": "Pure black background.",
+  "background-preset-gray": "Mid-gray background -- reduces eye strain for extended reading, a common radiology-viewer convention.",
+  "background-preset-white": "Pure white background.",
+  "stats-overlay-enabled": "Shows FPS, frame time, and GPU vendor/device info.",
+  "stat-perf": "Frames per second and per-frame render time, averaged over the last 60 frames.",
+  "stat-canvas": "Canvas backing-store resolution, in device pixels (post-devicePixelRatio scaling).",
+  "stat-gpu-vendor": "GPU vendor, as reported by the browser's WebGPU adapter.",
+  "stat-gpu-device": "GPU device name, as reported by the browser's WebGPU adapter -- often unavailable (n/a) since browsers restrict this for fingerprinting reasons.",
+  "stat-gpu-arch": "GPU architecture family, as reported by the browser's WebGPU adapter.",
+  "stat-gpu-desc": "Full GPU description string, as reported by the browser's WebGPU adapter.",
+  "stats-overlay-copy": "Copies all stats above to the clipboard as plain text.",
 };
 
 const VIEWPORT_MARGIN = 8;

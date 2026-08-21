@@ -159,6 +159,12 @@ void engine_set_custom_lut_colors(float lowR, float lowG, float lowB, float high
     g_device.setCustomColormap(lowR, lowG, lowB, highR, highG, highB);
 }
 
+// See rhi::Device::setBackgroundColor's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_background_color(float r, float g, float b) {
+    g_device.setBackgroundColor(r, g, b);
+}
+
 // Debug/perf overlay (baseline browser-performance measurement --
 // engine/tests/wasm_smoke/shell.html's stats panel). See
 // rhi::Device::getFrameStats/getHardwareInfo's header comments.

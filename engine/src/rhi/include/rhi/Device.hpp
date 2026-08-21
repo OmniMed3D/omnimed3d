@@ -191,6 +191,17 @@ public:
     virtual void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG,
                                     float highB) = 0;
 
+    // Raymarch background color (RGB in [0,1], clamped) -- composited by
+    // the raymarch shader against whatever the ray didn't hit, and used as
+    // the render-pass clear color for the no-volume-loaded and 2D-slice-
+    // letterbox cases too, so there's no visible seam between them. Purely
+    // cosmetic (unlike setColormapPreset, no clinical window/level meaning
+    // attached), so presets live caller-side rather than as an engine-owned
+    // enum -- matching setCustomColormap's direct-RGB shape, not
+    // setColormapPreset's index shape. Default (0.05, 0.05, 0.12) matches
+    // pre-existing behavior for anyone who never touches this control.
+    virtual void setBackgroundColor(float r, float g, float b) = 0;
+
     // Resizes the render surface and recomputes the Orbit3D camera's
     // aspect ratio to match (issue #40 -- the canvas was previously a
     // fixed 640x480 box with no way to reconfigure it). width/height are

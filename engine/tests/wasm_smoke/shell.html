@@ -16,14 +16,22 @@
             position: fixed;
             top: 8px;
             right: 8px;
-            min-width: 220px;
+            width: 260px;
+            /* max-width + wrapping, not a fixed/unbounded width with
+               white-space: pre -- a long GPU description string (real
+               examples run 60+ chars) previously forced this panel wider
+               than the viewport with no wrap, pushing it past the left
+               edge and forcing the whole page to scroll horizontally to
+               read even the FPS line above it. */
+            max-width: calc(100vw - 16px);
             padding: 8px 10px;
             background: rgba(0, 0, 0, 0.65);
             border: 1px solid #444;
             border-radius: 4px;
             font-size: 12px;
             line-height: 1.5;
-            white-space: pre;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             pointer-events: none;
         }
         #stats-toggle {
@@ -129,9 +137,12 @@
                     var architecture = Module.UTF8ToString(Module._engine_get_gpu_architecture());
                     var device = Module.UTF8ToString(Module._engine_get_gpu_device());
                     var description = Module.UTF8ToString(Module._engine_get_gpu_description());
+                    // FPS/Frame line matches Mini-Engine-reference's own Statistics
+                    // panel format exactly (ImGuiManager.cpp: "FPS: %.1f  |  Frame:
+                    // %.3f ms") -- one line, pipe-separated, 3 decimal places on
+                    // frame time.
                     panel.textContent =
-                        'FPS: ' + fps.toFixed(1) + '\n' +
-                        'Frame time: ' + avgFrameMs.toFixed(2) + ' ms\n' +
+                        'FPS: ' + fps.toFixed(1) + '  |  Frame: ' + avgFrameMs.toFixed(3) + ' ms\n' +
                         'Canvas: ' + Module.canvas.width + 'x' + Module.canvas.height + '\n' +
                         'GPU vendor: ' + (vendor || 'n/a') + '\n' +
                         'GPU device: ' + (device || 'n/a') + '\n' +

@@ -31,12 +31,14 @@ import { setupQualityControls } from "./qualityControls.js";
 import { setupTfDetailControls } from "./tfDetailControls.js";
 import { setupClipControls, notifyVolumeAabbLoaded } from "./clipControls.js";
 import { setupCustomColormapControls } from "./customColormapControls.js";
+import { setupBackgroundControls } from "./backgroundControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
 import { setupInferenceControls } from "./inferenceControls.js";
 import { setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
+import { setupStatsOverlay } from "./statsOverlay.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -85,6 +87,18 @@ interface EngineModule {
     highG: number,
     highB: number,
   ): void;
+  _engine_set_background_color(r: number, g: number, b: number): void;
+  // Perf/hardware debug overlay (statsOverlay.ts) -- see
+  // engine/src/rhi/include/rhi/Device.hpp's getFrameStats()/
+  // getHardwareInfo() header comments.
+  _engine_get_frame_time_ms(): number;
+  _engine_get_avg_frame_time_ms(): number;
+  _engine_get_fps(): number;
+  _engine_get_gpu_vendor(): number;
+  _engine_get_gpu_architecture(): number;
+  _engine_get_gpu_device(): number;
+  _engine_get_gpu_description(): number;
+  UTF8ToString(ptr: number): string;
 }
 
 declare global {
@@ -416,11 +430,14 @@ async function main() {
   setupTfDetailControls();
   setupClipControls();
   setupCustomColormapControls();
-  setupPanelDrag();
+  setupBackgroundControls();
+  setupPanelDrag("control-panel", "panel-drag-grip");
   setupPanelCollapse();
+  setupPanelDrag("stats-overlay", "stats-overlay-drag-handle");
   setupInferenceControls(inferenceWorker);
   setupDemoCtControls(loadVolumeFromBuffers, showLoadError);
   setupTooltips();
+  setupStatsOverlay();
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
   // Visual polish pass: shown only once there's actually something to
