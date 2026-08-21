@@ -35,8 +35,16 @@ from preprocessing import load_hu_slice  # noqa: E402
 from lungmask.mask import get_model  # noqa: E402
 from lungmask.utils import preprocess as lungmask_preprocess  # noqa: E402
 
-CALIBRATION_DIR = REPO_ROOT / "ai-pipeline" / "quantization" / "calibration_data" / "selected"
-OUT_DIR = REPO_ROOT / "ai-pipeline" / "quantization" / "calibration_data" / "ground_truth_fixtures"
+CALIBRATION_DIR = (
+    REPO_ROOT / "ai-pipeline" / "quantization" / "calibration_data" / "selected"
+)
+OUT_DIR = (
+    REPO_ROOT
+    / "ai-pipeline"
+    / "quantization"
+    / "calibration_data"
+    / "ground_truth_fixtures"
+)
 RESOLUTION = [256, 256]
 
 
@@ -56,24 +64,46 @@ def main() -> None:
 
         # lungmask_preprocess expects a volume-shaped [N, H, W] array (it
         # iterates per slice internally) -- wrap this single slice as N=1.
-        preprocessed, _ = lungmask_preprocess(np.clip(hu, -1024, 600)[np.newaxis, :, :], resolution=RESOLUTION)
+        # Its second return value is the per-slice body-mask crop bounding
+        # box ((min_row, min_col, max_row, max_col), skimage regionprops
+        # convention) -- previously discarded here, which is exactly why
+        # the mask this script wrote out shared postprocess.ts's crop-
+        # restore bug rather than catching it: both naively zoomed straight
+        # to full resolution instead of restoring this bbox first.
+        preprocessed, bboxes = lungmask_preprocess(
+            np.clip(hu, -1024, 600)[np.newaxis, :, :], resolution=RESOLUTION
+        )
+        bbox = bboxes[0]
         preprocessed = np.clip(preprocessed, None, 600)
-        normalized = ((preprocessed + 1024) / 1624).astype(np.float32)  # shape [1, 256, 256]
+        normalized = ((preprocessed + 1024) / 1624).astype(
+            np.float32
+        )  # shape [1, 256, 256]
 
         with torch.inference_mode():
             input_tensor = torch.from_numpy(normalized[np.newaxis, :, :, :]).float()
             logits = model(input_tensor)
             argmax_native = torch.argmax(logits, dim=1)[0].numpy().astype(np.uint8)
 
-        mask_upscaled = ndimage.zoom(
-            argmax_native, [height / argmax_native.shape[0], width / argmax_native.shape[1]], order=0
+        # Upscale to the crop bbox's own size (not the full slice), then
+        # paste into a zero-initialized (background) full-resolution
+        # canvas at the bbox's offset -- mirrors postprocess.ts's fix.
+        min_row, min_col, max_row, max_col = bbox
+        crop_h, crop_w = max_row - min_row, max_col - min_col
+        upscaled_crop = ndimage.zoom(
+            argmax_native,
+            [crop_h / argmax_native.shape[0], crop_w / argmax_native.shape[1]],
+            order=0,
         ).astype(np.uint8)
+        mask_upscaled = np.zeros((height, width), dtype=np.uint8)
+        mask_upscaled[min_row:max_row, min_col:max_col] = upscaled_crop
 
         stem = dcm_path.stem
         hu.astype(np.float32).tofile(OUT_DIR / f"{stem}_hu.bin")
         (OUT_DIR / f"{stem}_groundtruth.bin").write_bytes(mask_upscaled.tobytes())
 
-        manifest.append({"stem": stem, "originalHeight": height, "originalWidth": width})
+        manifest.append(
+            {"stem": stem, "originalHeight": height, "originalWidth": width}
+        )
         print(f"[{i + 1}/{len(dcm_files)}] {stem}")
 
     (OUT_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))

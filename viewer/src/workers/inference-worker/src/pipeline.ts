@@ -23,14 +23,14 @@ export interface SliceRequest {
  * so it's testable without a real Worker/postMessage — see worker.ts for the
  * thin `self.onmessage` wrapper.
  */
-export async function runSlice(
-  adapter: SegmentationAdapter,
+export async function runSlice<TMeta>(
+  adapter: SegmentationAdapter<TMeta>,
   session: ort.InferenceSession,
   request: SliceRequest,
 ): Promise<MaskSliceMessage> {
-  const input = adapter.preprocess(request.slice);
-  const logits = await adapter.infer(session, input);
-  const data = adapter.postprocess(logits, {
+  const { tensor, meta } = adapter.preprocess(request.slice);
+  const logits = await adapter.infer(session, tensor);
+  const data = adapter.postprocess(logits, meta, {
     width: request.slice.width,
     height: request.slice.height,
   });

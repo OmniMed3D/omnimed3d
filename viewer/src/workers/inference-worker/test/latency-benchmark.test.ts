@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import * as ort from "onnxruntime-web";
 import { beforeAll, describe, expect, it } from "vitest";
 import { LungmaskAdapter } from "../src/adapters/lungmask/index.js";
-import { ONNX_MODEL_PATH, ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8, loadFloat32Bin, loadManifest } from "./fixtures.js";
+import {
+  ONNX_MODEL_PATH,
+  ONNX_MODEL_PATH_FP16,
+  ONNX_MODEL_PATH_INT8,
+  loadFloat32Bin,
+  loadManifest,
+} from "./fixtures.js";
 
 /**
  * Per-slice latency (issue DoD item; PRD Section 4 target: <500ms/slice).
@@ -40,22 +46,26 @@ function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-async function measure(adapter: LungmaskAdapter, session: ort.InferenceSession, slice: { data: Float32Array; width: number; height: number }) {
+async function measure(
+  adapter: LungmaskAdapter,
+  session: ort.InferenceSession,
+  slice: { data: Float32Array; width: number; height: number },
+) {
   const preprocessMs: number[] = [];
   const inferMs: number[] = [];
   const postprocessMs: number[] = [];
 
   for (let i = 0; i < ITERATIONS; i++) {
     let t0 = performance.now();
-    const input = adapter.preprocess(slice);
+    const { tensor, meta } = adapter.preprocess(slice);
     preprocessMs.push(performance.now() - t0);
 
     t0 = performance.now();
-    const logits = await adapter.infer(session, input);
+    const logits = await adapter.infer(session, tensor);
     inferMs.push(performance.now() - t0);
 
     t0 = performance.now();
-    adapter.postprocess(logits, { width: slice.width, height: slice.height });
+    adapter.postprocess(logits, meta, { width: slice.width, height: slice.height });
     postprocessMs.push(performance.now() - t0);
   }
 

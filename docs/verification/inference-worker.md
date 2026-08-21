@@ -73,12 +73,17 @@ resolution):
 
 | Slice | INT8 mismatch | FP16 mismatch |
 | --- | --- | --- |
-| LIDC-IDRI-0001_inst0034 | 0.029% | 0.000% |
-| LIDC-IDRI-0001_inst0056 | 0.072% | 0.000% |
-| LIDC-IDRI-0001_inst0078 | 0.095% | 0.000% |
-| LIDC-IDRI-0002_inst0066 | 0.047% | 0.000% |
-| LIDC-IDRI-0002_inst0109 | 0.069% | 0.002% |
-| **Mean** | **0.062%** | **0.0004%** |
+| LIDC-IDRI-0001_inst0034 | 0.019% | 0.000% |
+| LIDC-IDRI-0001_inst0056 | 0.044% | 0.000% |
+| LIDC-IDRI-0001_inst0078 | 0.053% | 0.000% |
+| LIDC-IDRI-0002_inst0066 | 0.024% | 0.000% |
+| LIDC-IDRI-0002_inst0109 | 0.050% | 0.001% |
+| **Mean** | **0.038%** | **0.0002%** |
+
+(Updated 2026-08-21 — see §7: numbers here shifted slightly after the
+crop-restore fix, since mismatch is now computed over correctly-placed
+masks rather than stretched ones. Original 2026-08-14 figures: INT8 mean
+0.062%, FP16 mean 0.0004%.)
 
 Matches earlier Python-only quantization measurements (INT8 99.95% / FP16
 100% agreement with the FP32 model) at the same level — fidelity holds up
@@ -248,6 +253,16 @@ porting and quantization work introduces no meaningful fidelity loss.
 Whether the original model's decisions are themselves clinically accurate
 is a separate, still-open question.
 
+**Post-fix note (2026-08-21, see §7):** the numbers in this section are
+unchanged by the crop-restore fix — expected, since the identical fix was
+applied to both this pipeline and the ground-truth generation script it's
+compared against, so their agreement stays just as high, now because both
+sides are correctly geometrically aligned rather than because both shared
+the same placement bug. Read as a self-consistency measure, these figures
+were never false; what changed is that "the mask lands in the right
+place" is now something this comparison would actually have caught, where
+before it couldn't have.
+
 ## 5. Native ONNX Runtime Latency Baseline (2026-08-21)
 
 PRD Section 4 defines an "On-Device Overhead Multiplier" — browser
@@ -411,3 +426,71 @@ is unresolved, this multiplier may currently be measuring "browser +
 possibly-degraded threading" rather than "browser" cleanly. Worth
 re-computing once that's investigated rather than treating today's ratio
 as final.
+
+## 7. Postprocess Crop-Restore Bug: Found and Fixed (2026-08-21)
+
+**Found via real visual inspection, not automated testing:** after wiring
+the real model into the Shell UI, the mask overlay appeared oversized and
+displaced relative to actual lung/rib anatomy — extending past where the
+body outline actually is.
+
+**Root cause:** `preprocess.ts`'s `cropAndResize()` crops each slice to
+the body-mask's bounding box *before* resizing to the model's native
+256x256 (matching the real `lungmask.utils.preprocess`, see
+`ai-pipeline/conversion/adapters/lungmask/MODEL_SPEC.md`) — the model's
+256x256 output therefore only ever describes that cropped sub-region of
+the slice, never the full frame. `postprocess.ts`'s
+`lungmaskPostprocess()` didn't know about that crop at all: it upscaled
+the 256x256 argmax mask directly to the *full* original slice resolution,
+stretching a smaller-than-full-frame region to fill the entire frame —
+both over-magnifying and mis-positioning the mask (no offset applied
+either). This is a REQ-C01/REQ-A17 compliance bug, not a cosmetic one —
+the mask contract requires 1:1 alignment with the original volume.
+
+**Why nothing in Sections 1/2/4 above caught this:** both Python
+fixture-generation scripts (`scripts/export_reference_fixtures.py`, used
+by §1/§2, and `scripts/export_ground_truth_masks.py`, used by §4) had the
+*identical* bug — a naive `ndimage.zoom` straight to full resolution,
+either discarding or never computing the crop bounding box. The browser
+pipeline was being validated against Python references that shared its
+exact mistake, so they agreed with each other while both were wrong
+relative to true anatomical placement — a textbook case of a reference
+implementation and the thing being tested sharing one bug.
+
+**Fix:** `SegmentationAdapter`'s `preprocess()`/`postprocess()` now
+explicitly thread the crop bounding box between them as an ordinary
+return value/parameter, rather than storing it as mutable state on the
+adapter instance. Instance state was considered and rejected: REQ-A11
+(multi-slice batched inference) is an actual planned P1 item, and a
+single mutable bbox field would get silently clobbered across slices the
+moment batching preprocesses several slices before postprocessing any of
+them. `postprocess()` now upscales the native 256x256 argmax to the
+*crop's own size* first, then pastes that into a zero-initialized
+(background) full-resolution canvas at the crop's original offset. Both
+Python fixture-generation scripts got the identical fix —
+`export_ground_truth_masks.py`'s fix was one line once found: it was
+discarding a bounding box `lungmask.utils.preprocess` already computed and
+returned (`preprocessed, _ = lungmask_preprocess(...)`).
+
+**Re-verification after the fix:**
+- A new regression test (`postprocess.test.ts`, "restores a non-full-frame
+  crop at its original offset/size, background elsewhere") directly
+  asserts pixels outside the crop bbox are background and pixels inside
+  are placed at the exact expected offset — this specific class of bug
+  can't pass silently again.
+- Section 2's per-slice mismatch numbers shifted slightly (mismatch is
+  now computed over correctly-placed masks rather than stretched ones):
+  INT8 mean 0.062% → 0.038%, FP16 mean 0.0004% → 0.0002%.
+- Section 4's Dice/IoU numbers are **unchanged** (FP32 1.0000/1.0000,
+  INT8 ~0.9985-0.9991, FP16 ~0.9998-1.0000) — expected, not a bug in this
+  re-verification: the identical fix was applied to both the pipeline and
+  the ground-truth reference it's compared against, so their agreement
+  stays just as high, now because both sides are correctly geometrically
+  aligned rather than because both shared the same placement bug. The old
+  1.0000 figures were never false as *self-consistency* claims — what
+  changed is that this comparison would now actually catch a placement
+  regression, where before it structurally couldn't have.
+- Full test suite (36/36) passing with regenerated fixtures.
+- Visually re-confirmed in a real browser (Shell + real INT8 model + real
+  LIDC-IDRI patient CT): the mask overlay now sits correctly within the
+  body outline instead of spilling past it.
