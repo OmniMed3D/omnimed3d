@@ -1179,8 +1179,12 @@ void WebGPUDevice::orbitCamera(float deltaYawPixels, float deltaPitchPixels) {
         return;
     }
 
+    // Vertical drag uses trackball convention (drag down -> orbit up and over
+    // the top, matching Blender/Google Earth/most 3D-viewer orbit controls) --
+    // += here, unlike yaw's -=, since screen-space dy grows downward but the
+    // expected orbit response is the opposite sign of horizontal drag.
     cameraYaw_ -= deltaYawPixels * kOrbitSensitivity;
-    cameraPitch_ -= deltaPitchPixels * kOrbitSensitivity;
+    cameraPitch_ += deltaPitchPixels * kOrbitSensitivity;
     // Gimbal-flip guard -- yaw is intentionally left unclamped (free spin).
     cameraPitch_ = std::clamp(cameraPitch_, glm::radians(-89.0F), glm::radians(89.0F));
 
