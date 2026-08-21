@@ -163,6 +163,38 @@ depends on browser security headers that don't apply under Node). Don't
 over-generalize this into "multithreading doesn't help" — that's not
 what was actually shown.
 
+**Resolved (2026-08-21, re-run in a real browser after §8.1's COOP/COEP
+fix):** this experiment's "no difference" result was itself an artifact
+of exactly the threading gap §8.1 later found and fixed -- it ran under
+Node, which has no concept of COOP/COEP, so real multi-threading was
+never actually active for *any* of the three settings tested, making a
+null result between them unsurprising in hindsight. Re-run in a real
+browser (headers active, INT8 model, same methodology otherwise):
+
+| Threads | Mean inference (ms) |
+| --- | --- |
+| 1 | 2616.1 |
+| 4 | 919.4 |
+| **8** | **916.8** |
+| **(unset -- current worker.ts default)** | **921.1, resolves to 4 internally** |
+
+**1 -> 4 threads is a real 2.85x speedup** once threading actually works
+-- confirming the original "no difference" finding was measuring broken
+threading, not a genuine ceiling. **No code change results from this**,
+though: `worker.ts` never explicitly sets `ort.env.wasm.numThreads`, and
+checking what `onnxruntime-web` picks with nothing set shows it already
+resolves to 4 on its own -- matching the explicit-4 number almost
+exactly, and 8 threads gives no further improvement over 4 either way.
+Production was already getting the optimal setting for free; this
+re-run's value is explaining *why* §8.1's COOP/COEP fix produced as large
+a speedup as it did, not surfacing a new lever to pull.
+
+Also checked `graphOptimizationLevel` (`disabled`/`basic`/`extended`/`all`,
+real browser, INT8): 904.9-983.8ms across all four settings, no
+difference beyond ordinary run-to-run noise (~5-10%, consistent with this
+project's other repeated noise findings) -- no further gain available
+here either.
+
 **Remaining CPU-side speed-up options, not yet tried:** confirming which
 underlying WASM binary variant (with/without SIMD vector instructions)
 actually gets loaded, and checking the ONNX Runtime's graph-optimization
