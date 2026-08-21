@@ -868,3 +868,23 @@ FP16/webgpu) -- confirms the `BATCH_WINDOW_MS`/`MAX_BATCH_SIZE`
 accumulate-and-flush logic in `worker.ts` itself groups concurrent
 arrivals correctly, not only that the underlying batching math is
 capable of it in isolation.
+
+**Regression found and fixed: not every model has a dynamic batch
+axis.** §10's dynamic-batch-axis confirmation covered the three
+production model variants (FP32/INT8/FP16) directly, but not
+`viewer/tests/fixtures/dummy-lungmask.onnx`
+(`generate-dummy-onnx.py`, used only by the Engine's
+`shell-mask-integration.spec.ts`) -- checking that generator script
+directly shows it has no `dynamic_axes` at all, a statically-fixed
+batch=1 shape. `runBatch()` throws immediately for it once more than one
+slice needs batching, and the batch-processing `.catch()` silently
+swallowed the entire failed batch -- reproduced first as a real failure
+in that Engine-owned test (`Expected: 3, Received: 0`, the same
+signature Issue #35's original concurrency-hang bug had), then narrowed
+to this specific cause. Fixed by catching a failed `runBatch()` call and
+falling back to sequential (not `Promise.all` -- that would reintroduce
+Issue #35's concurrency hang) per-slice `runSlice()` calls for that
+batch. Verified the fix is load-bearing, not just plausible, by reverting
+it and confirming the new regression test
+(`e2e/worker-batch-static-shape-fallback.spec.ts`) actually fails without
+it, then restoring the fix and confirming it passes.
