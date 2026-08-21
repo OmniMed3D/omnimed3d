@@ -201,15 +201,29 @@ let parseWorkerInstance: Worker | undefined;
 
 // True once the Inference Worker has ack'd an "init" (model load). Issue
 // #34 adds a real file-picker that can load a volume without any model
-// ever being loaded (no "load model" UI exists yet -- out of scope, see
-// the plan this issue implements: the repo's only model fixture is a
-// dummy, plumbing-only ONNX graph, see
-// tests/fixtures/generate-dummy-onnx.py). Before this flag existed,
-// hu-slice was unconditionally forwarded to the Inference Worker, which
-// threw ("received a slice before 'init'") the first time a real
-// file-picker load happened with no model loaded -- reachable only via
-// the e2e test before, which always initialized a (dummy) model first.
+// ever being loaded. Before this flag existed, hu-slice was
+// unconditionally forwarded to the Inference Worker, which threw
+// ("received a slice before 'init'") the first time a real file-picker
+// load happened with no model loaded -- reachable only via the e2e test
+// before, which always initialized a (dummy) model first.
 let inferenceWorkerReady = false;
+
+// hu-slice messages that arrive before inferenceWorkerReady -- flushed in
+// receipt order once "init-complete" fires (see inferenceWorker.onmessage
+// below), instead of being dropped. Before this queue existed,
+// "Load Demo CT" clicked before "Load Segmentation Model" finished loading
+// silently lost every slice for that volume permanently (only a
+// console.log as a trace, and nothing ever revisited a dropped slice) --
+// a completely reasonable click order (view the volume first, decide to
+// segment it after) to lose data over. Not volumeId-filtered going in: if
+// the user starts loading a *different* volume before a model becomes
+// ready, engineApplyMaskSlice() below already discards the resulting
+// stale-volumeId mask-slice results on the way back (the same safety net
+// the rest of this pipeline already relies on for out-of-order delivery),
+// so flushing this queue unconditionally is still correct -- just
+// possibly wasted inference work in that specific edge case, not a
+// correctness bug.
+const pendingHuSlices: HuSliceMessage[] = [];
 
 function mintVolumeId(): string {
   const id = crypto.randomUUID();
@@ -402,7 +416,7 @@ async function main() {
       if (inferenceWorkerReady) {
         inferenceWorker.postMessage(msg, [msg.data]);
       } else {
-        console.log("Shell: dropping hu-slice -- no model loaded in the Inference Worker yet");
+        pendingHuSlices.push(msg);
       }
     } else if (msg.type === "volume-ready") {
       engineLoadVolume(msg);
@@ -416,6 +430,12 @@ async function main() {
     const msg = event.data;
     if (msg.type === "init-complete") {
       inferenceWorkerReady = true;
+      // Flush anything that arrived before the model finished loading --
+      // see pendingHuSlices's own comment for why this exists.
+      for (const pending of pendingHuSlices) {
+        inferenceWorker.postMessage(pending, [pending.data]);
+      }
+      pendingHuSlices.length = 0;
     } else if (msg.type === "mask-slice") {
       engineApplyMaskSlice(msg as MaskSliceMessage);
     }
