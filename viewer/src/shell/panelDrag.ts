@@ -117,7 +117,11 @@ export function setupPanelDrag(panelId: string, handleId: string): void {
  * itself stays visible and draggable either way, so a collapsed panel
  * can still be moved out from over content it would otherwise cover.
  */
-export function setupPanelCollapse(): void {
+// Issue #69: `?debug=1` starts the panel already collapsed, out of the
+// way of the stats overlay it's meant to pair with on a mobile screen
+// too small for both at once. Defaults to false (pre-existing
+// expanded-by-default behavior) so normal/product usage is unaffected.
+export function setupPanelCollapse(startCollapsed = false): void {
   const panel = document.getElementById("control-panel");
   const toggle = document.getElementById("panel-collapse-toggle");
   if (!panel || !toggle) {
@@ -130,4 +134,10 @@ export function setupPanelCollapse(): void {
     toggle.setAttribute("aria-expanded", String(!collapsed));
     toggle.setAttribute("aria-label", collapsed ? "Expand panel" : "Collapse panel");
   });
+
+  if (startCollapsed) {
+    panel.classList.add("collapsed");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", "Expand panel");
+  }
 }
