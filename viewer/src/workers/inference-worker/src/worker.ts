@@ -54,6 +54,20 @@ type IncomingMessage = InitMessage | HuSliceMessage;
 let adapter: SegmentationAdapter | undefined;
 let session: ort.InferenceSession | undefined;
 
+// Serializes hu-slice processing so at most one session.run() is ever in
+// flight at a time (Issue #35 fallout, found via real browser e2e testing,
+// viewer/tests/e2e/shell-mask-integration.spec.ts): the WASM-only EP
+// apparently tolerated the previous code's implicit concurrency (each
+// incoming hu-slice kicking off its own un-awaited async handler), but the
+// WebGPU EP does not -- sending 3 hu-slice messages back-to-back (as the
+// real Parse Worker -> Shell -> Inference Worker pipeline does) produced
+// zero mask-slice responses at all within 15s, reproduced in isolation
+// with a minimal 3-message repro. Chaining onto this promise instead of
+// firing runSlice() calls independently forces one-at-a-time execution;
+// .catch() keeps one failed slice from poisoning every later one queued
+// behind it.
+let inferenceQueue: Promise<void> = Promise.resolve();
+
 self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
 
@@ -85,14 +99,21 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   }
 
   if (msg.type === "hu-slice") {
-    if (!adapter || !session) {
-      throw new Error("Inference Worker received a slice before 'init'");
-    }
-    const result: MaskSliceMessage = await runSlice(adapter, session, {
-      volumeId: msg.volumeId,
-      sliceIndex: msg.sliceIndex,
-      slice: { data: new Float32Array(msg.data), width: msg.width, height: msg.height },
-    });
-    (self as unknown as Worker).postMessage(result, [result.data.buffer]);
+    const { volumeId, sliceIndex, width, height, data } = msg;
+    inferenceQueue = inferenceQueue
+      .then(async () => {
+        if (!adapter || !session) {
+          throw new Error("Inference Worker received a slice before 'init'");
+        }
+        const result: MaskSliceMessage = await runSlice(adapter, session, {
+          volumeId,
+          sliceIndex,
+          slice: { data: new Float32Array(data), width, height },
+        });
+        (self as unknown as Worker).postMessage(result, [result.data.buffer]);
+      })
+      .catch((err: unknown) => {
+        console.error("Inference Worker: failed to process hu-slice", volumeId, sliceIndex, err);
+      });
   }
 };
