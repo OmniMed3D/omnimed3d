@@ -6,6 +6,16 @@ export default defineConfig({
     outDir: "../../dist",
     emptyOutDir: true,
   },
+  preview: {
+    // Real-device testing via a Cloudflare Quick Tunnel (`cloudflared tunnel
+    // --url`) fronts the preview server with a random *.trycloudflare.com
+    // subdomain each run -- Vite's Host-header check rejects that by
+    // default (each subdomain would need its own allowlist entry, which a
+    // fresh tunnel invalidates immediately). A dot-prefixed entry matches
+    // the whole subdomain, covering every future tunnel run without
+    // needing to update this file again.
+    allowedHosts: [".trycloudflare.com"],
+  },
   optimizeDeps: {
     // onnxruntime-web locates its own .wasm assets relative to its
     // package files at runtime; Vite's dev-time dependency pre-bundling

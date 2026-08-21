@@ -13,7 +13,36 @@
  * exist until the WASM runtime has initialized.
  */
 
+// Issue #69: raymarch cost scales close to linearly with backing pixel
+// count (measured directly via GPU timestamp-query across a resolution
+// sweep), and mobile devicePixelRatio commonly runs 2-4x. Passing DPR
+// through uncapped means a high-DPR phone renders several times the
+// pixels its own screen can even resolve, for no visible sharpness gain
+// past this point -- capping trades away resolution beyond a
+// diminishing-returns threshold, not real quality.
+//
+// Capped at 1 (not 2) based on a real-device A/B on the same phone: 2
+// measured 26.8fps, 1 measured 48.9fps -- nearly double, for a
+// resolution difference this engine's volumetric raymarch (not text or
+// sharp vector UI, where supersampling matters far more) makes much less
+// perceptually visible on a small mobile screen. See
+// docs/current/PERF_BASELINE_2026-08-21.md for the full measurement.
+const MAX_DEVICE_PIXEL_RATIO = 1;
+
+// Diagnostic-only override (?dpr=<n> on the URL), not a product-facing
+// setting -- lets a real-device retest at a different effective DPR
+// cap without a rebuild/redeploy cycle, which is how the fixed-vs-
+// resolution-scaled frame-cost split (docs/current/PERF_BASELINE
+// entry, issue #69) was investigated. Falls back to
+// MAX_DEVICE_PIXEL_RATIO whenever the param is absent or not a finite
+// positive number.
+function resolveMaxDevicePixelRatio(): number {
+  const override = Number(new URLSearchParams(location.search).get("dpr"));
+  return Number.isFinite(override) && override > 0 ? override : MAX_DEVICE_PIXEL_RATIO;
+}
+
 export function setupCanvasResize(): void {
+  const maxDpr = resolveMaxDevicePixelRatio();
   const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
   if (!canvas) {
     console.error("canvasResize: #canvas not found in the DOM");
@@ -24,7 +53,7 @@ export function setupCanvasResize(): void {
     for (const entry of entries) {
       const cssWidth = entry.contentRect.width;
       const cssHeight = entry.contentRect.height;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
       const backingWidth = Math.max(1, Math.round(cssWidth * dpr));
       const backingHeight = Math.max(1, Math.round(cssHeight * dpr));
       if (canvas.width === backingWidth && canvas.height === backingHeight) {

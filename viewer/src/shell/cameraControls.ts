@@ -14,7 +14,13 @@
  * mousemove/mouseup are listened for on `window` (not just the canvas)
  * so a drag already in progress isn't dropped if the pointer leaves the
  * canvas bounds or the button is released outside it.
+ *
+ * Issue #69: this same start/end lifecycle also drives
+ * qualityControls.ts's interaction-adaptive quality tier -- notified
+ * here rather than duplicating drag-state tracking in that module.
  */
+
+import { notifyInteractionEnd, notifyInteractionStart } from "./qualityControls";
 
 export function setupCameraControls(): void {
   const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
@@ -31,6 +37,7 @@ export function setupCameraControls(): void {
     dragging = true;
     lastX = event.clientX;
     lastY = event.clientY;
+    notifyInteractionStart();
     event.preventDefault();
   });
 
@@ -46,7 +53,11 @@ export function setupCameraControls(): void {
   });
 
   window.addEventListener("mouseup", () => {
+    if (!dragging) {
+      return;
+    }
     dragging = false;
+    notifyInteractionEnd();
   });
 
   canvas.addEventListener(

@@ -2,6 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Issue #69: without this, mobile browsers fall back to the classic
+         ~980px desktop-compat layout viewport and scale the page down to
+         fit the physical screen -- but canvas's 100vw/100vh (style.css)
+         resolves against that inflated layout viewport, not the real
+         screen, so canvasResize.ts's devicePixelRatio-scaled backing store
+         ends up rendering several times more pixels than the device
+         actually displays. Confirmed on a real device (iPhone 14 Pro,
+         portrait): reported canvas backing size matched 980 CSS px * 3x
+         DPR almost exactly, not the device's actual ~393 CSS px width. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OmniMed3D Shell</title>
     <!-- Visual polish pass: JetBrains Mono for measurement
          readouts only (window/level HU values, slice index) -- a
@@ -353,13 +363,9 @@
         <span class="section-label">Background</span>
         <div class="row preset-buttons">
           <button type="button" data-background-preset="dark" data-tooltip-key="background-preset-dark">Dark</button>
-          <button type="button" data-background-preset="black" data-tooltip-key="background-preset-black">
-            Black
-          </button>
+          <button type="button" data-background-preset="black" data-tooltip-key="background-preset-black">Black</button>
           <button type="button" data-background-preset="gray" data-tooltip-key="background-preset-gray">Gray</button>
-          <button type="button" data-background-preset="white" data-tooltip-key="background-preset-white">
-            White
-          </button>
+          <button type="button" data-background-preset="white" data-tooltip-key="background-preset-white">White</button>
         </div>
       </div>
       <!-- Perf/hardware debug overlay (baseline browser-performance
@@ -389,9 +395,7 @@
          statsOverlay.ts then only ever updates each *-value span's
          textContent, never the row structure itself. -->
     <div id="stats-overlay" hidden>
-      <div id="stats-overlay-drag-handle" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
+      <div id="stats-overlay-drag-handle" aria-hidden="true"><span></span><span></span><span></span></div>
       <div id="stats-overlay-content">
         <div class="stat-row" data-tooltip-key="stat-perf">
           <span class="stat-label">Perf</span><span id="stat-perf-value" class="stat-value">--</span>

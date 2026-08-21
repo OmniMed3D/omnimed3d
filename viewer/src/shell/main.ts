@@ -27,7 +27,7 @@ import { setupFilePicker } from "./filePicker.js";
 import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
-import { setupQualityControls } from "./qualityControls.js";
+import { applyStartupAutoTier, setupQualityControls } from "./qualityControls.js";
 import { setupTfDetailControls } from "./tfDetailControls.js";
 import { setupClipControls, notifyVolumeAabbLoaded } from "./clipControls.js";
 import { setupCustomColormapControls } from "./customColormapControls.js";
@@ -225,6 +225,34 @@ let inferenceWorkerReady = false;
 // correctness bug.
 const pendingHuSlices: HuSliceMessage[] = [];
 
+// Issue #69: runs once, after the first volume actually renders --
+// checked here rather than at engine-ready time because an empty canvas
+// renders trivially fast on any device and says nothing about real
+// raymarch cost. 2000ms gives FrameStats's 60-sample rolling average
+// (engine/src/utils/FrameStats.cpp) enough new post-load frames to
+// converge even on a device rendering as slowly as ~5fps (real number
+// from a mobile test that motivated this feature), not just fast ones.
+const AUTO_TIER_CHECK_DELAY_MS = 2000;
+// ~15fps -- PRD's own stated low-spec-device frame-rate floor (as
+// opposed to the 30fps desktop target), reused here as the threshold
+// below which the *default* (Medium) tier is considered too expensive
+// for this device to start at.
+const LOW_SPEC_FRAME_TIME_THRESHOLD_MS = 1000 / 15;
+let autoTierChecked = false;
+
+function scheduleAutoTierCheck(): void {
+  if (autoTierChecked) {
+    return;
+  }
+  autoTierChecked = true;
+  setTimeout(() => {
+    const avgFrameTimeMs = window.Module._engine_get_avg_frame_time_ms();
+    if (avgFrameTimeMs > LOW_SPEC_FRAME_TIME_THRESHOLD_MS) {
+      applyStartupAutoTier(0); // Low
+    }
+  }, AUTO_TIER_CHECK_DELAY_MS);
+}
+
 function mintVolumeId(): string {
   const id = crypto.randomUUID();
   volumeIdMap.set(id, nextNumericVolumeId++);
@@ -330,6 +358,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   });
   notifyVolumeLoaded(msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
+  scheduleAutoTierCheck();
   setLoading(false);
   // Visual polish pass: the empty-canvas hint has served its purpose
   // once a volume has actually rendered.
@@ -448,6 +477,12 @@ async function main() {
     currentVolumeId: () => currentVolumeId,
   };
 
+  // Issue #69: ?debug=1 starts the stats overlay visible and the control
+  // panel collapsed, so a real-device test doesn't need to reach a
+  // checkbox that can end up under the mobile browser's own bottom
+  // toolbar -- see setupStatsOverlay/setupPanelCollapse's own comments.
+  const debugMode = new URLSearchParams(location.search).get("debug") === "1";
+
   setupFilePicker(loadVolumeFromFiles);
   setupCameraControls();
   setupWindowLevelControls();
@@ -458,12 +493,12 @@ async function main() {
   setupCustomColormapControls();
   setupBackgroundControls();
   setupPanelDrag("control-panel", "panel-drag-grip");
-  setupPanelCollapse();
+  setupPanelCollapse(debugMode);
   setupPanelDrag("stats-overlay", "stats-overlay-drag-handle");
   setupInferenceControls(inferenceWorker);
   setupDemoCtControls(loadVolumeFromBuffers, showLoadError);
   setupTooltips();
-  setupStatsOverlay();
+  setupStatsOverlay(debugMode);
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
   // Visual polish pass: shown only once there's actually something to

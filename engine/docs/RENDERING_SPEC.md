@@ -303,4 +303,65 @@ axial number, not stale raymarch data). After the third fix: zero
 same 3-second capture window (down from ~130+), and the reported
 flicker no longer reproduces.
 
-<!-- Next entry: whatever comes out of ENGINE_ROADMAP_2026-08-21.md §2.3's optimization work, now that real GPU numbers exist to judge it against -->
+### 2026-08-21 — `feat/viewer-mobile-render-perf`
+
+Not a rendering-technique change, but the first fix driven by a real
+mobile-device measurement instead of desktop-only simulation
+(`docs/current/PERF_BASELINE_2026-08-21.md` §7-10, issue #69): an iPhone
+14 Pro (Chrome, portrait) rendered the demo CT at 5.6fps/178.6ms —
+unusable. Root cause was mostly a missing `<meta name="viewport">` tag
+(`viewer/src/shell/index.html`) — without it, mobile browsers fall back
+to the ~980px desktop-compat layout viewport and scale the page down for
+display, but the canvas's `100vw`/`100vh` sizing resolves against that
+inflated virtual viewport, not the real screen — compounded by an
+uncapped `devicePixelRatio` multiplier on top.
+
+**Added (all viewer-side JS/HTML — no new engine API; reuses the
+existing `engine_set_quality_tier`/`engine_resize` exports):**
+
+- The missing `<meta name="viewport">` tag.
+- Canvas backing resolution capped at `devicePixelRatio<=1`
+  (`canvasResize.ts`) — chosen over a higher cap after a real-device A/B
+  on the same phone (2: 26.8fps vs 1: 48.9fps, nearly double) found
+  volumetric raymarch content shows far less perceptible benefit from
+  DPR supersampling on a small screen than text/vector UI would. A
+  diagnostic-only `?dpr=<n>` URL override (not product-facing) exists
+  for gathering exactly this kind of data without a rebuild.
+- Interaction-adaptive quality: the engine's active tier drops to Low
+  for the duration of a camera drag and restores the user's selected
+  tier on release (`qualityControls.ts`/`cameraControls.ts`) — the
+  user's own tier selection and its button UI are unaffected throughout.
+- Startup auto-tier: if the first few seconds' measured average frame
+  time is worse than PRD's own 15fps low-spec floor, the starting tier
+  automatically drops to Low once (never overriding a tier the user
+  explicitly picks afterward).
+- `?debug=1` URL param starts the stats overlay visible and the control
+  panel collapsed, so a real-device test doesn't need to reach a
+  checkbox that can end up under the mobile browser's own bottom
+  toolbar.
+
+**Real-device verification (iPhone 14 Pro, Chrome, portrait) — full
+methodology, all three measurements, and the regression separating
+fixed per-frame cost from resolution-scaled cost in
+`docs/current/PERF_BASELINE_2026-08-21.md` §7-10:** 5.6fps/178.6ms
+(before) → 48.9fps/20.4ms (after, DPR capped at 1) — roughly **8.7x**. A
+render-scale mechanism (decoupling the raymarch's internal render target
+size from the canvas's displayed size, a heavier engine-side change) was
+considered but dropped from this branch's scope: a 3-point linear
+regression across all three real-device measurements found ~21.7ms of
+the remaining frame cost is resolution-independent fixed overhead (not
+pixel-count-driven), leaving little headroom for a resolution-only
+lever — even the DPR=1 measurement above already sits close to that
+estimated floor.
+
+**Deliberately out of scope:** identifying the source of the ~21.7ms
+fixed per-frame cost (WebGPU per-call driver overhead crossing from WASM
+into the browser's own WebGPU implementation is the leading hypothesis,
+unconfirmed — needs real profiling tooling, e.g. Safari Web Inspector,
+not available this session); the render-scale mechanism above.
+
+**Verified:** no engine (C++) changes in this branch — viewer-only, so
+native/WASM engine builds are unaffected. Full `viewer/tests/e2e/` suite
+(23 tests, 2 new — `mobile-render-perf.spec.ts`) passes.
+
+<!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation above, once real profiling access exists -->

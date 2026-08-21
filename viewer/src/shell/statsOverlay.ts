@@ -20,7 +20,14 @@
 const UPDATE_INTERVAL_MS = 250; // readable refresh rate, independent of actual frame rate
 const COPY_FEEDBACK_MS = 1200;
 
-export function setupStatsOverlay(): void {
+// Issue #69: `?debug=1` starts this panel already visible -- on a phone,
+// reaching the Debug section's checkbox at all requires scrolling past
+// the rest of #control-panel, which the mobile browser's own bottom
+// toolbar can make awkward mid-test. Defaults to false (the pre-existing
+// off-by-default behavior this file's own header comment already
+// documents) so normal/product usage is unaffected -- this only changes
+// anything when the URL param is explicitly present.
+export function setupStatsOverlay(startVisible = false): void {
   const checkbox = document.getElementById("stats-overlay-enabled") as HTMLInputElement | null;
   const panel = document.getElementById("stats-overlay");
   const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
@@ -129,6 +136,11 @@ export function setupStatsOverlay(): void {
       rafHandle = undefined;
     }
   });
+
+  if (startVisible) {
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+  }
 
   let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
   copyButton.addEventListener("click", () => {
