@@ -17,7 +17,7 @@ import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
 import { resolveModelPath } from "./modelSelection.js";
-import { runSlice, type MaskSliceMessage } from "./pipeline.js";
+import { runBatch, type SliceRequest } from "./pipeline.js";
 
 interface InitMessage {
   type: "init";
@@ -104,6 +104,72 @@ async function validateSession(candidate: SegmentationAdapter, candidateSession:
 // .catch() keeps one failed slice from poisoning every later one queued
 // behind it.
 let inferenceQueue: Promise<void> = Promise.resolve();
+
+// Batch accumulation strategy (Issue #24): incoming hu-slice messages are
+// buffered for a short window instead of triggering inference immediately,
+// so a burst of slices arriving close together (e.g. the Parse Worker
+// forwarding many slices from one DICOM series) gets combined into fewer,
+// larger session.run() calls -- see pipeline.ts's runBatch() for why that
+// reduces total processing time.
+//
+// "Wait for exactly MAX_BATCH_SIZE slices" was rejected: a volume's slice
+// count isn't guaranteed to be a multiple of any fixed batch size, so a
+// trailing remainder would either stall forever waiting for slices that
+// will never come, or need separate end-of-volume signaling this worker
+// doesn't currently have. A pure microtask-level flush (queueMicrotask)
+// was also rejected: that fires before the event loop delivers additional
+// already-queued postMessage events, so it would never actually see more
+// than one slice per flush -- defeating the point. A short macrotask-level
+// window (setTimeout) lets several already-in-flight messages arrive
+// before flushing, and a lone slice (no burst) still only waits one short
+// window, not indefinitely.
+//
+// MAX_BATCH_SIZE=8 chosen from measurement (test/batch-latency-benchmark.test.ts,
+// e2e/batch-latency-browser.spec.ts; see docs/verification/inference-worker.md
+// §10), not guessed -- most model/EP combinations plateau by batch size
+// 4-8 (modest ~10-20% gain), but INT8-on-WebGPU keeps improving through 8
+// (1.60x at 8, still climbing) and is the one combination where this
+// matters most: batching amortizes the fixed per-call cost of its 117
+// CPU-fallback QuantizeLinear nodes (§8.3) across the whole batch instead
+// of paying it per slice, which is enough to bring INT8-on-WebGPU under
+// the 500ms/slice target for the first time (was the one model/EP gap
+// Issue #35 left open).
+const MAX_BATCH_SIZE = 8;
+const BATCH_WINDOW_MS = 20;
+
+let pendingBatch: SliceRequest[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleBatchFlush(): void {
+  if (flushTimer !== undefined) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = undefined;
+    const batch = pendingBatch.splice(0, MAX_BATCH_SIZE);
+    if (batch.length > 0) {
+      inferenceQueue = inferenceQueue
+        .then(async () => {
+          if (!adapter || !session) {
+            throw new Error("Inference Worker received a slice before 'init'");
+          }
+          const results = await runBatch(adapter, session, batch);
+          for (const result of results) {
+            (self as unknown as Worker).postMessage(result, [result.data.buffer]);
+          }
+        })
+        .catch((err: unknown) => {
+          console.error(
+            "Inference Worker: failed to process batch",
+            batch.map((r) => r.sliceIndex),
+            err,
+          );
+        });
+    }
+    // More accumulated during this window than MAX_BATCH_SIZE (or arrived
+    // while the batch above was still being scheduled) -- flush again
+    // rather than waiting for a fresh hu-slice message to trigger it.
+    if (pendingBatch.length > 0) scheduleBatchFlush();
+  }, BATCH_WINDOW_MS);
+}
 
 self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
@@ -194,20 +260,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
 
   if (msg.type === "hu-slice") {
     const { volumeId, sliceIndex, width, height, data } = msg;
-    inferenceQueue = inferenceQueue
-      .then(async () => {
-        if (!adapter || !session) {
-          throw new Error("Inference Worker received a slice before 'init'");
-        }
-        const result: MaskSliceMessage = await runSlice(adapter, session, {
-          volumeId,
-          sliceIndex,
-          slice: { data: new Float32Array(data), width, height },
-        });
-        (self as unknown as Worker).postMessage(result, [result.data.buffer]);
-      })
-      .catch((err: unknown) => {
-        console.error("Inference Worker: failed to process hu-slice", volumeId, sliceIndex, err);
-      });
+    pendingBatch.push({ volumeId, sliceIndex, slice: { data: new Float32Array(data), width, height } });
+    scheduleBatchFlush();
   }
 };
