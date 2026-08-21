@@ -13,3 +13,4 @@
 # precedent as dicom-parser/ (see .github/CODEOWNERS). See
 # test-data/lidc_idri/README.md for citation/attribution.
 test-data/lidc_idri/**/*.dcm filter=lfs diff=lfs merge=lfs -text
+viewer/src/shell/public/models/lungmask_r231_fp16.onnx filter=lfs diff=lfs merge=lfs -text

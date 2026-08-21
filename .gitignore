@@ -59,6 +59,14 @@ viewer/.dev-server.pid
 # portability reasoning as the dummy model's own copy.
 !viewer/src/shell/public/models/lungmask_r231_int8.onnx
 
+# Exception: the FP16 variant of the same model (Issue #35) -- the
+# Inference Worker now picks INT8 or FP16 at runtime based on whether a
+# WebGPU adapter is available (see worker.ts's modelBasePath handling and
+# docs/verification/inference-worker.md §8.4: FP16 is fastest on WebGPU,
+# INT8 is fastest on WASM but the slowest of the three on WebGPU), so both
+# variants need to be fetchable, not just INT8.
+!viewer/src/shell/public/models/lungmask_r231_fp16.onnx
+
 # Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
 ai-pipeline/quantization/calibration_data/
 

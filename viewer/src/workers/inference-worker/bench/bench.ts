@@ -1,4 +1,6 @@
-import * as ort from "onnxruntime-web";
+// See worker.ts's own import comment -- the webgpu backend is a separate
+// subpath, not enabled by the default "onnxruntime-web" import.
+import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "../src/adapters/lungmask/index.js";
 
 /**
@@ -11,7 +13,9 @@ import { LungmaskAdapter } from "../src/adapters/lungmask/index.js";
  *
  * Driven by e2e/latency-browser.spec.ts via page.route (model + slice
  * fixture) and query params (?model=...&slice=...&width=...&height=...&
- * externalData=... for the FP32 model's external-data companion file).
+ * externalData=...&ep=wasm|webgpu, the last selecting which execution
+ * provider list to benchmark -- see worker.ts's own `executionProviders`
+ * comment for why the list always includes "wasm" as a fallback).
  * Results are exposed on `window.__benchResult` for the spec to read via
  * page.evaluate -- not printed, since this page has no visible UI.
  *
@@ -43,6 +47,11 @@ async function run(): Promise<void> {
   const externalDataUrl = params.get("externalData");
   const width = Number(params.get("width"));
   const height = Number(params.get("height"));
+  // "wasm" isolates the WASM EP alone (this benchmark's long-standing
+  // baseline, Sections 3/6); "webgpu" adds the WebGPU EP ahead of it, same
+  // ["webgpu", "wasm"] fallback list as worker.ts uses in production, so
+  // this measures what the Inference Worker itself will actually do.
+  const ep = params.get("ep") === "webgpu" ? (["webgpu", "wasm"] as const) : (["wasm"] as const);
   if (!modelUrl || !sliceUrl || !width || !height) {
     throw new Error("bench.ts requires ?model=&slice=&width=&height= query params");
   }
@@ -50,8 +59,21 @@ async function run(): Promise<void> {
   const sliceBuffer = await (await fetch(sliceUrl)).arrayBuffer();
   const slice = { data: new Float32Array(sliceBuffer), width, height };
 
+  // Verbose ORT logging surfaces per-node EP placement/fallback decisions
+  // in the console (Issue #35 DoD: confirm no silent CPU fallback on
+  // WebGPU-unsupported ops, e.g. INT8's QDQ nodes) -- read by
+  // e2e/latency-browser.spec.ts via page.on("console"), not by this file.
+  if (params.get("verbose") === "1") {
+    ort.env.debug = true;
+    ort.env.logLevel = "verbose";
+  }
+
   const adapter = new LungmaskAdapter(modelUrl);
-  const options: ort.InferenceSession.SessionOptions = {};
+  const options: ort.InferenceSession.SessionOptions = { executionProviders: [...ep] };
+  if (params.get("verbose") === "1") {
+    options.logSeverityLevel = 0;
+    options.logVerbosityLevel = 0;
+  }
   if (externalDataUrl) {
     const bytes = new Uint8Array(await (await fetch(externalDataUrl)).arrayBuffer());
     const externalDataName = externalDataUrl.split("/").pop()!;

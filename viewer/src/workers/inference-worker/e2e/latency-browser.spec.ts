@@ -22,6 +22,16 @@ import { expect, test } from "@playwright/test";
  * capacity and crashes the browser outright on a file this size --
  * confirmed by a real crash the first time this test tried it, not a
  * theoretical concern).
+ *
+ * Runs each model on both EPs (Issue #35): "wasm" reproduces this file's
+ * long-standing baseline unchanged; "webgpu" adds bench.ts's `verbose=1`
+ * flag and captures ORT's verbose console log to check per-node EP
+ * placement -- an op WebGPU's JSEP backend can't run falls back to WASM
+ * per-node (logged as "webgpu kernel not found in registries for Op type:
+ * X"), which is exactly the silent-CPU-fallback risk the issue calls out
+ * for INT8's QuantizeLinear/DequantizeLinear nodes. Reported per model
+ * rather than asserted on, since some fallback (e.g. the graph's final
+ * LogSoftmax on every model) is expected and harmless.
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
@@ -49,52 +59,86 @@ const MODELS = [
   { label: "FP16", modelFile: "lungmask_r231_fp16.onnx", dir: QUANT_DIR, hasExternalData: false },
 ];
 
-const results: { label: string; meanPreprocessMs: number; meanInferMs: number; meanPostprocessMs: number }[] = [];
+const EPS = ["wasm", "webgpu"] as const;
+
+const results: {
+  label: string;
+  ep: string;
+  meanPreprocessMs: number;
+  meanInferMs: number;
+  meanPostprocessMs: number;
+  meanInferMsWarm: number; // excludes iteration 1 -- see module doc comment on WebGPU's shader-compile warmup cost
+  cpuFallbackOps: string; // e.g. "QuantizeLinear x117, LogSoftmax x2" -- always "" for ep=wasm
+}[] = [];
 
 for (const { label, modelFile, dir, hasExternalData } of MODELS) {
-  test(`${label} per-slice latency (real browser)`, async ({ page }) => {
-    await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: `${dir}${modelFile}` }));
-    await page.route("**/slice.bin", (route) => route.fulfill({ path: `${FIXTURES_DIR}${SLICE_STEM}_hu.bin` }));
+  for (const ep of EPS) {
+    test(`${label} per-slice latency, ${ep} EP (real browser)`, async ({ page }) => {
+      const fallbackLogs: string[] = [];
+      if (ep === "webgpu") {
+        page.on("console", (msg) => {
+          const text = msg.text();
+          if (text.includes("kernel not found in registries")) fallbackLogs.push(text);
+        });
+      }
 
-    // See the module doc comment -- deliberately not page.route(), that's
-    // what crashed the browser on this specific (116MB) file.
-    const externalDataParam = hasExternalData ? `&externalData=/@fs${dir}${modelFile}.data` : "";
-    await page.goto(
-      `/?model=/${modelFile}&slice=/slice.bin&width=${SLICE_WIDTH}&height=${SLICE_HEIGHT}${externalDataParam}`,
-    );
-    await page.waitForFunction(() => window.__benchReady === true, undefined, { timeout: 60_000 });
-    const result = (await page.evaluate(() => window.__benchResult)) as BenchResult | { error: string };
+      await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: `${dir}${modelFile}` }));
+      await page.route("**/slice.bin", (route) => route.fulfill({ path: `${FIXTURES_DIR}${SLICE_STEM}_hu.bin` }));
 
-    if (!result || "error" in result) {
-      throw new Error(`${label} bench failed in-browser: ${result?.error ?? "no result"}`);
-    }
+      // See the module doc comment -- deliberately not page.route(), that's
+      // what crashed the browser on this specific (116MB) file.
+      const externalDataParam = hasExternalData ? `&externalData=/@fs${dir}${modelFile}.data` : "";
+      const verboseParam = ep === "webgpu" ? "&verbose=1" : "";
+      await page.goto(
+        `/?model=/${modelFile}&slice=/slice.bin&width=${SLICE_WIDTH}&height=${SLICE_HEIGHT}&ep=${ep}${externalDataParam}${verboseParam}`,
+      );
+      await page.waitForFunction(() => window.__benchReady === true, undefined, { timeout: 60_000 });
+      const result = (await page.evaluate(() => window.__benchResult)) as BenchResult | { error: string };
 
-    const meanInferMs = mean(result.inferMs);
-    const meanPostprocessMs = mean(result.postprocessMs);
-    results.push({
-      label,
-      meanPreprocessMs: mean(result.preprocessMs),
-      meanInferMs,
-      meanPostprocessMs,
+      if (!result || "error" in result) {
+        throw new Error(`${label}/${ep} bench failed in-browser: ${result?.error ?? "no result"}`);
+      }
+
+      const meanInferMs = mean(result.inferMs);
+      const meanPostprocessMs = mean(result.postprocessMs);
+
+      const fallbackCounts = new Map<string, number>();
+      for (const line of fallbackLogs) {
+        const m = /Op type: (\S+)/.exec(line);
+        if (m?.[1]) fallbackCounts.set(m[1], (fallbackCounts.get(m[1]) ?? 0) + 1);
+      }
+
+      results.push({
+        label,
+        ep,
+        meanPreprocessMs: mean(result.preprocessMs),
+        meanInferMs,
+        meanPostprocessMs,
+        meanInferMsWarm: mean(result.inferMs.slice(1)),
+        cpuFallbackOps: [...fallbackCounts.entries()].map(([op, n]) => `${op} x${n}`).join(", "),
+      });
+
+      expect(meanInferMs).toBeGreaterThan(0);
     });
-
-    expect(meanInferMs).toBeGreaterThan(0);
-  });
+  }
 }
 
 test("reports the summary table", () => {
-  // Depends on the loop above having run first -- Playwright runs tests
+  // Depends on the loops above having run first -- Playwright runs tests
   // within one file in declaration order when workers=1/fullyParallel=false
   // (see playwright.config.ts), same assumption the Node benchmark makes.
   if (results.length === 0) return;
   console.table(
     results.map((r) => ({
       model: r.label,
+      EP: r.ep,
       "preprocess (ms)": r.meanPreprocessMs.toFixed(1),
-      "infer (ms)": r.meanInferMs.toFixed(1),
+      "infer, all 5 iters (ms)": r.meanInferMs.toFixed(1),
+      "infer, iters 2-5 only (ms)": r.meanInferMsWarm.toFixed(1),
       "postprocess (ms)": r.meanPostprocessMs.toFixed(1),
       "PRD budget: infer+postprocess (ms)": (r.meanInferMs + r.meanPostprocessMs).toFixed(1),
       "under 500ms target?": r.meanInferMs + r.meanPostprocessMs < 500 ? "yes" : "NO",
+      "CPU-fallback ops (webgpu only)": r.cpuFallbackOps,
     })),
   );
 });
