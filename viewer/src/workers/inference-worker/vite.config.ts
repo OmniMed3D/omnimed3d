@@ -33,6 +33,16 @@ export default defineConfig({
     // explicitly setting `fs.allow` replaces Vite's default entirely
     // rather than extending it, so this has to be re-added by hand.
     fs: { allow: [searchForWorkspaceRoot(HERE), AI_PIPELINE_DIR] },
+    // Required for SharedArrayBuffer, which onnxruntime-web's threaded WASM
+    // backend needs to use real multi-threading (Issue #35) -- without
+    // these, the threaded WASM binary can silently fall back to a
+    // single-threaded path instead of erroring, which would make any
+    // WASM-vs-WebGPU comparison measure "browser + a threading bug" rather
+    // than a fair baseline.
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
   },
   optimizeDeps: {
     // Same onnxruntime-web wasm-asset-resolution issue documented in
