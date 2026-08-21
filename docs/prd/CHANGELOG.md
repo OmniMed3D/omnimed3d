@@ -6,6 +6,14 @@ records what changed between one committed snapshot and the next, in
 addition to whatever "Last Updated" date `PRD.md`'s own header table
 carries.
 
+## 2026-08-21 (later same day) — Accuracy degradation threshold team-confirmed
+
+The proposal from the entry directly below ("Acceptable Accuracy
+Degradation Threshold") was confirmed by the team (Engine track) the same
+day it was proposed. §10.2's row now reads **Resolved** instead of
+pending — no change to the numbers themselves (mean Dice degradation
+≤ 1.0pp, no slice below 0.98 Dice), just the status.
+
 ## 2026-08-21 — Two §10.2 open questions closed out (one resolved, one proposed)
 
 Both prompted by the AI track revisiting its own open items after wrapping
