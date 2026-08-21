@@ -12,10 +12,7 @@
          voice here. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -41,8 +38,8 @@
          waitForEngineReady()'s timeout (e.g. no WebGPU adapter on this
          browser/device) -- see main.ts. Hidden by default. -->
     <div id="engine-error" hidden>
-      This browser or device doesn't support the graphics features this
-      viewer needs. Try a recent version of Google Chrome.
+      This browser or device doesn't support the graphics features this viewer needs. Try a recent version of Google
+      Chrome.
     </div>
 
     <!-- #status is Emscripten's own runtime status (Module.setStatus) --
@@ -112,15 +109,14 @@
              all (heuristic #9, Error Recovery). -->
         <p id="load-error" hidden></p>
       </div>
-      <!-- Visual polish pass follow-up: the only model in this repo is a
-           tiny plumbing-only dummy graph (see generate-dummy-onnx.py) --
-           a real trained model is AI-track scope, not shipped here.
-           Explicitly labeled "Demo Model" so this never reads as real
-           segmentation. inferenceControls.ts owns the button/status. -->
+      <!-- Loads the real quantized lungmask R231 model (REQ-A06/§5.3.1) --
+           see inferenceControls.ts, which owns the button/status. Element
+           ids kept as-is (predate this model swap) to avoid an unrelated
+           rename churning both files. -->
       <div class="panel-section">
         <span class="section-label">Segmentation</span>
         <div class="row">
-          <button type="button" id="load-demo-model" class="upload-btn secondary">Load Demo Model</button>
+          <button type="button" id="load-demo-model" class="upload-btn secondary">Load Segmentation Model</button>
         </div>
         <p id="demo-model-status" class="hint-text"></p>
       </div>
@@ -227,17 +223,41 @@
         <div class="row">
           <label for="extinction">Extinction</label>
           <input id="extinction" type="range" min="0.1" max="30" step="0.1" data-tooltip-key="extinction" />
-          <input id="extinction-value" class="value" type="number" min="0.1" max="30" step="0.1" aria-label="Extinction value" />
+          <input
+            id="extinction-value"
+            class="value"
+            type="number"
+            min="0.1"
+            max="30"
+            step="0.1"
+            aria-label="Extinction value"
+          />
         </div>
         <div class="row">
           <label for="density-scale">Density Scale</label>
           <input id="density-scale" type="range" min="0" max="5" step="0.05" data-tooltip-key="density-scale" />
-          <input id="density-scale-value" class="value" type="number" min="0" max="5" step="0.05" aria-label="Density Scale value" />
+          <input
+            id="density-scale-value"
+            class="value"
+            type="number"
+            min="0"
+            max="5"
+            step="0.05"
+            aria-label="Density Scale value"
+          />
         </div>
         <div class="row">
           <label for="threshold">Threshold</label>
           <input id="threshold" type="range" min="0" max="0.5" step="0.01" data-tooltip-key="threshold" />
-          <input id="threshold-value" class="value" type="number" min="0" max="0.5" step="0.01" aria-label="Threshold value" />
+          <input
+            id="threshold-value"
+            class="value"
+            type="number"
+            min="0"
+            max="0.5"
+            step="0.01"
+            aria-label="Threshold value"
+          />
         </div>
         <div class="row">
           <label for="gradient-opacity">Edge Emphasis</label>

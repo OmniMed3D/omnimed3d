@@ -1,14 +1,19 @@
 /**
- * "Load Demo Model" button (visual polish follow-up) -- the only model
- * in this repo is a tiny, plumbing-only dummy ONNX graph
- * (tests/fixtures/generate-dummy-onnx.py) that always outputs
- * background; a real trained model is AI-track scope, not shipped here.
- * This wires the previously test-hooks-only Inference Worker init path
- * (window.omnimed3dTestHooks.inferenceWorker) into the real UI so the
- * pipeline (Worker init -> hu-slice -> mask-slice -> compositor) is
- * exercisable and visible without pretending the output means anything
- * clinically -- both the button and the status text stay explicit about
- * "Demo Model".
+ * "Load Segmentation Model" button. Loads the real quantized lungmask
+ * R231 model (INT8, ai-pipeline/quantization output -- REQ-A02), not the
+ * plumbing-only dummy ONNX graph (tests/fixtures/generate-dummy-onnx.py,
+ * still used directly by viewer/tests/e2e/shell-mask-integration.spec.ts
+ * via omnimed3dTestHooks, bypassing this button entirely -- that test
+ * isolates engine-side compositor wiring from model quality on purpose,
+ * so it keeps using the dummy model rather than switching to this one).
+ * This is what satisfies REQ-A06/§5.3.1's integration criterion, which
+ * specifically requires the real 2.5D lung model adapter, not a plumbing
+ * stub.
+ *
+ * INT8 chosen over FP32/FP16: no external-data companion file to wire up
+ * (see inference-worker/src/worker.ts's InitMessage.externalDataPath),
+ * and it's the fastest of the three in every latency measurement so far
+ * (see docs/verification/inference-worker.md).
  *
  * inferenceWorker is passed in rather than imported from main.ts's
  * module scope, matching filePicker.ts's setupFilePicker(loadVolumeFromFiles)
@@ -16,7 +21,7 @@
  * hoisting more shared state.
  */
 
-const DEMO_MODEL_PATH = "/models/dummy-lungmask.onnx";
+const MODEL_PATH = "/models/lungmask_r231_int8.onnx";
 
 export function setupInferenceControls(inferenceWorker: Worker): void {
   const button = document.getElementById("load-demo-model") as HTMLButtonElement | null;
@@ -32,14 +37,14 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
   inferenceWorker.addEventListener("message", (event: MessageEvent<{ type: string }>) => {
     if (event.data.type === "init-complete") {
       button.disabled = true;
-      button.textContent = "Demo model loaded";
-      status.textContent = "Demo model active -- always outputs background, not real segmentation.";
+      button.textContent = "Segmentation model loaded";
+      status.textContent = "lungmask R231 (INT8) active -- real lung segmentation, not a placeholder.";
     }
   });
 
   button.addEventListener("click", () => {
     button.disabled = true;
     button.textContent = "Loading…";
-    inferenceWorker.postMessage({ type: "init", modelPath: DEMO_MODEL_PATH });
+    inferenceWorker.postMessage({ type: "init", modelPath: MODEL_PATH });
   });
 }
