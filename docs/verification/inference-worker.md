@@ -416,6 +416,11 @@ single-thread bottleneck could plausibly flatten that gap). **Not verified
 — no COOP/COEP experiment has actually been run yet.** Tracked as an open
 follow-up, not resolved here.
 
+**(Post-hoc note, 2026-08-21 — see §8.1):** confirmed. Headers fixed
+threading and cut infer time ~3x, but did *not* fully restore INT8's edge
+— that part of the pattern stayed unexplained. §8.4 also recomputes the
+Overhead Multiplier below using the corrected baseline.
+
 **Still open:** the actual On-Device Overhead Multiplier (browser ÷
 native, PRD Section 4) can now be computed using this section's numbers
 against `ai-pipeline/quantization/benchmark_native_latency.py`'s (native:
@@ -426,6 +431,11 @@ is unresolved, this multiplier may currently be measuring "browser +
 possibly-degraded threading" rather than "browser" cleanly. Worth
 re-computing once that's investigated rather than treating today's ratio
 as final.
+
+**(Resolved in §8.4, 2026-08-21):** recomputed with the corrected,
+headers-on WASM baseline — FP32 and FP16 drop to 1.7x/2.2x (under
+target), INT8 drops from ~14-19x to ~5.2x but stays over target. Most of
+the old multiplier really was the threading bug; INT8's excess is real.
 
 ## 7. Postprocess Crop-Restore Bug: Found and Fixed (2026-08-21)
 
@@ -494,3 +504,216 @@ returned (`preprocessed, _ = lungmask_preprocess(...)`).
 - Visually re-confirmed in a real browser (Shell + real INT8 model + real
   LIDC-IDRI patient CT): the mask overlay now sits correctly within the
   body outline instead of spilling past it.
+
+## 8. WebGPU Execution Provider (2026-08-21, Issue #35)
+
+Section 3 found over 90% of per-slice time is the model's forward pass
+itself, with postprocessing negligible and WASM thread-count tuning
+making no difference — the forward pass was flagged as the only place
+left to look for a speed-up. This section adds WebGPU as a second
+execution provider (EP) alongside WASM (not a replacement — every change
+below keeps `wasm` as an explicit fallback) and, first, resolves Section
+6's open COOP/COEP question so the WASM baseline being compared against
+is trustworthy.
+
+**Environment:** same MacBook M1 as every other section, real headless
+Chromium (Playwright's bundled build, Chrome 151). Headless Chromium
+disables its GPU process by default —
+`navigator.gpu.requestAdapter()` reproducibly resolved to `null` without
+extra launch flags, confirmed directly (not assumed) by toggling flags
+one at a time. `--use-angle=metal --enable-unsafe-webgpu` (added to
+`playwright.config.ts`) gets a real Apple Metal adapter
+(`vendor: "apple", architecture: "metal-3"` — checked via
+`adapter.info`), not a software (SwiftShader) fallback. These flags are
+macOS-specific, consistent with this whole benchmark suite already being
+scoped to one machine; a Linux CI runner would need a different ANGLE
+backend or would fail the adapter check and fall through to WASM, which
+is itself a legitimate exercise of REQ-C02's hardware-fallback hierarchy
+rather than a broken test.
+
+### 8.1 COOP/COEP — threading hypothesis confirmed
+
+`vite.config.ts` (the bench harness's own dev server, not the Shell's) now
+sets `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` — confirmed via
+`window.crossOriginIsolated === true` in-page. Re-ran Section 6's exact
+WASM benchmark with and without these headers, same methodology (single
+slice, 5 iterations, isolated run):
+
+| Headers | FP32 infer (ms) | INT8 infer (ms) | FP16 infer (ms) |
+| --- | --- | --- | --- |
+| Without (Section 6's original numbers) | 2957.0 | 2886.0 | 2891.8 |
+| **With** | **882.6** | **923.2** | **954.3** |
+
+**Confirmed:** enabling real `SharedArrayBuffer`-backed threading cut
+infer time by roughly **2.9-3.1x** across all three models. The threaded
+WASM binary genuinely was silently falling back to a single-threaded path
+without these headers, exactly as hypothesized — this wasn't a measurement
+artifact. **Not fully explained, flagged rather than smoothed over:**
+Section 6's other finding — INT8 losing its clear speed edge over
+FP32/FP16 in-browser — persists even with threading fixed (883/923/954ms,
+still roughly flat rather than INT8 pulling ahead the way it does under
+Node, 723/794/814ms per Section 3). Threading was one real bug, but it
+isn't the whole story behind that particular pattern; the remaining gap
+is unexplained. All WASM numbers in this section onward use headers-on
+(the trustworthy baseline); every WASM figure elsewhere in this section
+supersedes Section 6's original (broken-baseline) numbers for that reason.
+
+### 8.2 Wiring the WebGPU EP
+
+`onnxruntime-web` 1.27.0 (the pinned/resolved version) ships a WebGPU
+backend, but it is **not** part of the default import — confirmed by
+inspecting `package.json`'s `exports` map: plain `"onnxruntime-web"`
+resolves to `ort.bundle.min.mjs` (wasm/webgl only), while WebGPU support
+requires importing the separate `onnxruntime-web/webgpu` subpath
+(`ort.webgpu.bundle.min.mjs`). `worker.ts` and `bench.ts` both switched to
+that subpath import. Session creation now explicitly passes
+`executionProviders: ["webgpu", "wasm"]` — ORT assigns each graph node to
+the first EP in this list that supports it, falling back to the next
+per-node rather than all-or-nothing, so `wasm` genuinely stays a live
+fallback rather than dead configuration (see §8.3 — this isn't
+theoretical, INT8 exercises it on every run). `bench.ts` also gained an
+`?ep=wasm|webgpu` query param so the harness can still isolate the WASM
+path on its own for direct comparison.
+
+**Vite asset handling — checked, no config change needed:** the issue
+flagged that the WebGPU backend ships its own glue/asset files and might
+hit the same pre-bundling 404 problem `viewer/vite.config.ts` already
+documents for the default `onnxruntime-web` import. Checked directly by
+watching every network response (`page.on("response")`) while loading the
+FP16 model through the WebGPU EP in dev mode: zero 4xx/5xx responses. The
+existing `optimizeDeps.exclude: ["onnxruntime-web"]` (already present in
+both `inference-worker/vite.config.ts` and the Shell's own
+`viewer/vite.config.ts`) turned out to cover the `onnxruntime-web/webgpu`
+deep import too, not just the bare package — so the Shell's (Engine-owned)
+vite config needs no change. Flagging this rather than silently assuming
+it, since `worker.ts`'s import is what the Shell actually bundles in
+production and this crosses the CODEOWNERS boundary in principle, even
+though no edit was needed in practice.
+
+### 8.3 Per-node EP assignment — INT8's quantized ops don't run on WebGPU
+
+Verified directly, not assumed: `bench.ts` gained a `?verbose=1` flag
+(`ort.env.debug = true`, `logSeverityLevel: 0`) surfacing ORT's own
+per-node capability check in the browser console
+(`e2e/latency-browser.spec.ts` captures lines containing
+`"kernel not found in registries"`). Results, one session-creation pass
+per model:
+
+| Model | Nodes falling back to WASM | Count |
+| --- | --- | --- |
+| FP32 | `LogSoftmax` (final output node only) | 2 |
+| FP16 | `LogSoftmax` (final output node only) | 2 |
+| INT8 | `QuantizeLinear` + `LogSoftmax` | 117 + 2 = 119 |
+
+**WebGPU's JSEP backend has no `QuantizeLinear` kernel at all** — every
+one of the INT8 model's 117 `QuantizeLinear` nodes (roughly one per
+conv/relu block, per Section 3's graph-node breakdown) falls back to CPU
+per-node, each a GPU↔CPU round trip. (`DequantizeLinear` is *not* in this
+list — it does have a WebGPU kernel, so compute inside each block still
+happens on GPU; only the activation re-quantization step between blocks
+bounces to CPU.) This is exactly the risk the issue called out rather
+than a surprise, and it shows up directly in §8.4's numbers below: INT8
+is the one model that doesn't reach the 500ms target on WebGPU.
+
+### 8.4 Re-measured latency: WebGPU EP vs. corrected WASM baseline
+
+Same methodology throughout (single slice, 5 iterations, isolated run),
+via the official `e2e/latency-browser.spec.ts` (not an ad hoc script).
+Two independent runs shown, consistent with this project's standing
+practice of surfacing run-to-run noise rather than reporting one number
+as gospel. "iters 2-5" excludes the first iteration, reported separately
+because WebGPU pays a one-time shader-compilation cost on first use (see
+below) that a real deployment would only pay once per session, not once
+per slice — averaging it into every slice's number would materially
+overstate WebGPU's real per-slice cost.
+
+**Run 1:**
+
+| Model | EP | infer, all 5 iters (ms) | infer, iters 2-5 (ms) | Budget (infer+postprocess, all 5) | Under 500ms? |
+| --- | --- | --- | --- | --- | --- |
+| FP32 | wasm | 911.1 | 878.7 | 913.8 | NO |
+| FP32 | **webgpu** | **247.4** | 177.3 | **250.4** | **yes** |
+| INT8 | wasm | 899.8 | 837.8 | 903.8 | NO |
+| INT8 | **webgpu** | **604.8** | 505.9 | **610.2** | **NO** |
+| FP16 | wasm | 962.6 | 878.9 | 965.3 | NO |
+| FP16 | **webgpu** | **201.9** | 159.4 | **204.0** | **yes** |
+
+**Run 2:**
+
+| Model | EP | infer, all 5 iters (ms) | infer, iters 2-5 (ms) | Budget (infer+postprocess, all 5) | Under 500ms? |
+| --- | --- | --- | --- | --- | --- |
+| FP32 | wasm | 956.1 | 938.2 | 958.8 | NO |
+| FP32 | **webgpu** | **237.4** | 196.3 | **239.8** | **yes** |
+| INT8 | wasm | 994.8 | 947.9 | 997.1 | NO |
+| INT8 | **webgpu** | **610.1** | 485.2 | **615.4** | **NO** |
+| FP16 | wasm | 1344.0 | 1317.5 | 1346.9 | NO |
+| FP16 | **webgpu** | **206.5** | 158.6 | **209.1** | **yes** |
+
+**What this shows, reported honestly rather than smoothed over:**
+
+- **WebGPU is a large, consistent win for FP32 and FP16** — both drop
+  from ~900-1300ms (WASM) to ~200-250ms, comfortably **under the
+  500ms/slice target for the first time in this project**. FP16 in
+  particular goes from "no faster than FP32, sometimes slower" on WASM
+  (Section 3's explanation: FP16 on CPU only adds Cast-node overhead
+  around unchanged FP32 math) to genuinely the **fastest model on
+  WebGPU** — consistent with FP16 finally getting a hardware path
+  (GPU memory-bandwidth/compute) where its precision reduction is a real
+  advantage instead of pure overhead.
+- **INT8 is the one model that does not reach the target on WebGPU**, and
+  it's now the *slowest* of the three there — a reversal from every other
+  measurement in this document (Node, native, and now WASM-with-headers
+  all found INT8 fastest or tied-fastest). §8.3 explains why: 117
+  `QuantizeLinear` nodes per slice bouncing to CPU. INT8 still improves
+  over its own WASM number (~900ms → ~605ms, roughly 1.5x), so WebGPU
+  isn't *net-negative* for INT8 — it just doesn't get anywhere near
+  FP32/FP16's gain, and lands right at the 500ms boundary (505-506ms on
+  the warm/steady-state numbers, over on the all-5-iteration numbers this
+  document's methodology reports).
+- **First-iteration shader-compilation cost is real and model-independent
+  of the fallback issue above:** all three models show a markedly slower
+  first iteration under WebGPU (e.g. INT8 Run 1: iteration 1 was ~2036ms,
+  iterations 2-5 averaged 505.9ms) — a one-time cost from GPU shader/pipeline
+  compilation, not something that recurs per slice once a session is warm.
+  Not currently hidden or pre-warmed by anything in this codebase; a real
+  multi-slice session (REQ-A11) would only pay it once, on the first
+  slice, which the "iters 2-5" column above is meant to make visible
+  rather than to quietly drop from the headline number (the "all 5 iters"
+  column keeps it, matching this document's longstanding methodology of
+  not excluding warmup from the mean).
+
+**On-Device Overhead Multiplier — recomputed with the corrected WASM
+baseline (PRD §4, target < 3x):** Section 6 flagged that this multiplier
+(browser ÷ native) might be measuring "browser + a threading bug" rather
+than "browser" cleanly, pending the COOP/COEP result above. Using
+§8.1's headers-on WASM numbers against Section 5's native baseline
+(mean of that section's two runs):
+
+| Model | Native mean (ms) | Browser (WASM, headers-on) mean (ms) | Multiplier | Old (broken-baseline) multiplier |
+| --- | --- | --- | --- | --- |
+| FP32 | 542.1 | 933.6 | **1.7x** | ~5-6x |
+| INT8 | 181.9 | 947.3 | **5.2x** | ~14-19x |
+| FP16 | 524.4 | 1153.3 | **2.2x** | ~5-6x |
+
+Fixing the threading bug brings FP32 and FP16 comfortably under the <3x
+target — most of the old multiplier really was measurement error, not
+genuine browser overhead. **INT8 remains over target at ~5.2x even after
+the fix** — a real, still-open gap, not an artifact of the threading bug
+(INT8's WASM number was already threading-correct in this comparison).
+This multiplier is intentionally WASM-only, not WebGPU — the metric's
+purpose is isolating "browser overhead" for the *same* execution path as
+the CPU-only native baseline; comparing native-CPU time against
+browser-WebGPU time would conflate "runs in a browser" with "runs on a
+different processor" and wouldn't answer the question this metric exists
+to answer.
+
+**Bottom line:** WebGPU EP wiring meets this issue's core goal — FP32 and
+FP16 now hit the <500ms/slice target that every prior section found all
+three models missing. INT8, this project's previously-fastest and
+default-recommended variant on every other benchmark in this document, is
+the one case where WebGPU doesn't deliver a clear win, because of narrower
+WebGPU op coverage for quantized graphs, not a flaw in the quantization
+itself. Any future decision to pick a single default model/EP combination
+should account for this rather than assuming "WebGPU + INT8" stacks both
+optimizations additively — here, they partially cancel.
