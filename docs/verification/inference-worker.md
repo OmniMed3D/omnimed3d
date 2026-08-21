@@ -788,3 +788,103 @@ Consistently ~1.1-1.2x, not the ~4x (INT8: 2036ms vs 506ms) or ~4-13x
 gap §8.4 found across models before this fix existed. The residual
 ~10-20% is ordinary run-to-run noise, not a warmup signature -- no
 further work needed here.
+
+## 10. Batched Inference (Issue #24)
+
+`pipeline.ts` gained `runBatch()`: runs several slices through one
+`session.run()` call instead of one call per slice, to amortize each
+call's fixed overhead (backend dispatch, JS<->GPU marshalling, etc.)
+across more slices. Deliberately adapter-agnostic -- no new
+`SegmentationAdapter` methods -- `preprocess()`/`postprocess()` still run
+per-slice exactly as `runSlice()` already called them; only the single
+`infer()` call in the middle operates on a stacked `[N, ...]` tensor.
+Confirmed directly (not just from the export script) that all three
+`.onnx` files -- FP32, INT8, FP16 -- kept the dynamic batch axis through
+PTQ quantization and FP16 conversion, so no Python re-export was needed.
+
+**Correctness (`test/batch-pipeline.test.ts`):** batching must be
+numerically transparent, since it exists purely to reduce overhead, not
+to change results. Confirmed bit-exact (not just close) between
+`runBatch()` and per-slice `runSlice()` calls across all 5 manifest
+slices, plus a batch-of-one and an empty-batch edge case.
+
+**`worker.ts` integration:** incoming `hu-slice` messages are buffered for
+a short window (`BATCH_WINDOW_MS = 20`) rather than triggering inference
+immediately, so a burst of slices arriving close together (e.g. the Parse
+Worker forwarding a whole DICOM series) gets grouped into fewer, larger
+`session.run()` calls. Two alternatives considered and rejected:
+"wait for exactly N slices" (a volume's slice count isn't guaranteed to
+be a multiple of any fixed batch size, so a trailing remainder would
+stall indefinitely) and a microtask-level flush via `queueMicrotask`
+(fires before the event loop delivers additional already-queued
+`postMessage` events, so it would never see more than one slice per
+flush). Still emits one `mask-slice` message per input slice -- §5.3.2's
+progressive delivery is unaffected; batching is purely an internal
+performance detail.
+
+**Batch size chosen from measurement**, not guessed
+(`test/batch-latency-benchmark.test.ts`, Node/WASM-only, trimmed to batch
+sizes [1,2,4,8] after batch=16/32 pushed WASM's compute-bound scaling past
+reasonable test runtimes; `e2e/batch-latency-browser.spec.ts`, real
+browser, both EPs):
+
+| Model | EP | batch=1 (ms/slice) | batch=8 (ms/slice) | Gain |
+| --- | --- | --- | --- | --- |
+| INT8 | wasm | 1254.7 | 1130.0 | 1.11x |
+| **INT8** | **webgpu** | **765.5** | **479.5** | **1.60x** |
+| FP16 | wasm | 1127.3 | 1004.2 | 1.12x |
+| FP16 | webgpu | 242.1 | 204.9 | 1.18x |
+
+**Most combinations show a modest ~10-20% gain that plateaus by batch
+size 4-8** -- this model's per-slice compute is substantial enough
+relative to fixed per-call overhead that amortizing the latter only
+recovers a small fraction of total time, unlike ML-serving scenarios
+where a tiny model's framework overhead dominates. **INT8-on-WebGPU is
+the one clear exception, and the one that matters most**: batching
+amortizes the fixed per-call cost of its 117 CPU-fallback
+`QuantizeLinear` nodes (§8.3) across the whole batch instead of paying it
+per slice -- still climbing at batch=8 (1.60x, not yet plateaued),
+unlike every other combination. **This brings INT8-on-WebGPU's
+infer+postprocess time under the 500ms/slice target for the first time**
+(479.5ms total wall-clock at batch=8, and that figure still includes
+per-slice, unbatched preprocess time -- the infer+postprocess portion
+this project's target is actually scoped to is lower still) -- closing
+the one model/EP gap Issue #35 left open, via a different mechanism than
+anything that issue considered.
+
+`MAX_BATCH_SIZE = 8` was chosen as a reasonable point covering most of
+the measured gain across all combinations, even though INT8-on-WebGPU
+alone might benefit from pushing higher -- not pursued further here
+given batch=16/32 already proved impractical to measure reliably under
+this project's observed system load; worth revisiting with more
+measurement headroom if INT8-on-WebGPU's ceiling matters enough later.
+
+**End-to-end confirmation through the real worker.ts wiring**
+(`e2e/worker-batch-throughput.spec.ts`), not just the isolated
+`runBatch()` function: a burst of 8 `hu-slice` messages sent without
+waiting for each response completed faster in total than sending the
+same 8 sequentially (262.2ms/slice burst vs. 276.6ms/slice sequential,
+FP16/webgpu) -- confirms the `BATCH_WINDOW_MS`/`MAX_BATCH_SIZE`
+accumulate-and-flush logic in `worker.ts` itself groups concurrent
+arrivals correctly, not only that the underlying batching math is
+capable of it in isolation.
+
+**Regression found and fixed: not every model has a dynamic batch
+axis.** §10's dynamic-batch-axis confirmation covered the three
+production model variants (FP32/INT8/FP16) directly, but not
+`viewer/tests/fixtures/dummy-lungmask.onnx`
+(`generate-dummy-onnx.py`, used only by the Engine's
+`shell-mask-integration.spec.ts`) -- checking that generator script
+directly shows it has no `dynamic_axes` at all, a statically-fixed
+batch=1 shape. `runBatch()` throws immediately for it once more than one
+slice needs batching, and the batch-processing `.catch()` silently
+swallowed the entire failed batch -- reproduced first as a real failure
+in that Engine-owned test (`Expected: 3, Received: 0`, the same
+signature Issue #35's original concurrency-hang bug had), then narrowed
+to this specific cause. Fixed by catching a failed `runBatch()` call and
+falling back to sequential (not `Promise.all` -- that would reintroduce
+Issue #35's concurrency hang) per-slice `runSlice()` calls for that
+batch. Verified the fix is load-bearing, not just plausible, by reverting
+it and confirming the new regression test
+(`e2e/worker-batch-static-shape-fallback.spec.ts`) actually fails without
+it, then restoring the fix and confirming it passes.
