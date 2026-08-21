@@ -762,3 +762,29 @@ without the separate warmup-hiding work (moving that cost into session
 init) landing first, there's no reliable threshold that distinguishes
 "broken" from "just cold," so this was left out rather than picking an
 arbitrary number.
+
+**Update (2026-08-21, PR #68's own follow-up):** that separate
+warmup-hiding work turned out to already be solved, as a side effect of
+`validateSession()` above -- it runs a real inference through the
+session before `init-complete` fires, which is exactly what a dedicated
+warmup fix would have done, just built for a different reason (failure
+detection). §8.4's warmup measurement (via `bench.ts`, which calls the
+adapter/session directly and never goes through `worker.ts`'s own message
+protocol) couldn't have shown this either way. Verified with a new test
+(`e2e/worker-warmup.spec.ts`) driving the real protocol via
+`bench/workerHarness.ts`: after a real `init` → `init-complete` round
+trip, 5 real `hu-slice` messages were sent sequentially on the same
+session and each `mask-slice` response's round-trip time measured
+end-to-end (not just the isolated `infer()` call §8.4 measured). Three
+repeated runs, first-slice vs. mean of the remaining four:
+
+| Run | First slice (ms) | Mean of iterations 2-5 (ms) | Ratio |
+| --- | --- | --- | --- |
+| 1 | 254.8 | 219.7 | 1.16x |
+| 2 | 267.2 | 220.3 | 1.21x |
+| 3 | 247.1 | 220.0 | 1.12x |
+
+Consistently ~1.1-1.2x, not the ~4x (INT8: 2036ms vs 506ms) or ~4-13x
+gap §8.4 found across models before this fix existed. The residual
+~10-20% is ordinary run-to-run noise, not a warmup signature -- no
+further work needed here.
