@@ -27,6 +27,22 @@ struct HardwareInfo {
     std::string description;
 };
 
+// GPU-side per-pass timing, via WebGPU's optional `timestamp-query` feature
+// -- unlike FrameStatsSnapshot (CPU wall-clock, always available), this can
+// be unsupported on a given browser/GPU, so `supported` must be checked
+// before trusting the *Ms fields (0 either way otherwise). raymarchMs/
+// compositeMs are populated in Orbit3D view mode (two passes: raymarch-to-
+// accumulation-buffer, then composite-to-swapchain); axialMs in
+// AxialSlice2D mode (one pass). Whichever mode isn't active keeps its last
+// measured value rather than resetting to 0 -- there's no new measurement
+// to overwrite it with on a frame that didn't run that pass.
+struct GpuTimingSnapshot {
+    bool supported = false;
+    float raymarchMs = 0.0F;
+    float compositeMs = 0.0F;
+    float axialMs = 0.0F;
+};
+
 // Minimal backend-agnostic seam -- intentionally not a full RHI yet (no
 // general Buffer/Pipeline/BindGroup, and loadVolume/applyMaskSlice below
 // are named for exactly what they do rather than routed through a generic
@@ -221,6 +237,7 @@ public:
     // getters; neither affects rendering.
     virtual FrameStatsSnapshot getFrameStats() const = 0;
     virtual HardwareInfo getHardwareInfo() const = 0;
+    virtual GpuTimingSnapshot getGpuTiming() const = 0;
 };
 
 }  // namespace omnimed3d::rhi

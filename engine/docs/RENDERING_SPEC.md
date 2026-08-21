@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Living document (git-tracked) — every time a rendering-related branch merges, update "1. Current Spec" to reflect the new state and append an entry to "2. Change History" |
 | Written | 2026-08-20 |
-| Purpose | (1) Give one place to see exactly what the engine renders and what's currently tunable, and (2) keep a record of why/when each change landed. Where `docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md` (local-only, gitignored) was the analysis that proposed a direction, this document is the spec that reflects only what was actually implemented and merged from those proposals. |
+| Purpose | (1) Give one place to see exactly what the engine renders and what's currently tunable, and (2) keep a record of why/when each change landed. Originated from `docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md`'s proposals (that analysis doc has since been deleted, 2026-08-21 — superseded now that its proposals are either implemented here or carried into `docs/current/ENGINE_ROADMAP_2026-08-21.md`'s backlog); this document reflects only what was actually implemented and merged. |
 
 ---
 
@@ -26,7 +26,7 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
 8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest); a nonzero class additively composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at alpha 0.6. (Mask on/off and alpha themselves have no UI/export yet — still hardcoded.)
-9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a fixed background color (`(0.05,0.05,0.12)`) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingEnabled`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
+9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingEnabled`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
 
@@ -52,7 +52,7 @@ Clip box (`engine_set_clip_box(minX, minY, minZ, maxX, maxY, maxZ)`) — restric
 
 ### 1.5 UBO layout
 
-`RaymarchUBO` (320 bytes, kept byte-synchronized between C++ and Slang via `static_assert(offsetof(...))` on both sides):
+`RaymarchUBO` (336 bytes, kept byte-synchronized between C++ and Slang via `static_assert(offsetof(...))` on both sides):
 
 ```
 invView, invProj             mat4 x2
@@ -65,6 +65,7 @@ jitterParams                 x=accumFrameIndex, y=accumulation enabled (reserved
 clipMin, clipMax             vec4 x2, world mm -- raymarch traversal bound (clip box)
 occlusionParams              x=DOS enabled (0/1), y=strength (fixed 1.0, no slider yet), zw=unused
 tfParams                     x=threshold, y=gradient-opacity strength, zw=unused
+backgroundColor               xyz=RGB, w=unused -- engine_set_background_color
 ```
 
 `AxialSliceUBO` (48 bytes) — `sliceParams`/`maskParams`/`fitParams`. Both structs share one `uboBuffer_` (sized for the larger of the two) and one 6-entry bind group layout. Clipping, extinction/density-scale/threshold, gradient-opacity, and DOS only affect the raymarch pipeline — the axial-slice view (§1.3) doesn't read any of `RaymarchUBO`'s new fields.
@@ -118,6 +119,7 @@ A 5th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, h
 | Edge Emphasis (gradient-opacity strength) | TF Detail | `engine_set_gradient_opacity_strength` |
 | Occlusion Shading on/off | TF Detail | `engine_set_occlusion_enabled` |
 | Clip X/Y/Z min+max sliders, Reset button | Clip | `engine_set_clip_box` |
+| Background color (Dark/Black/Gray/White presets) | Background | `engine_set_background_color` |
 | Camera orbit/zoom (mouse drag/wheel, not in the panel) | — | `engine_orbit_camera`, `engine_zoom_camera` |
 
 ### 1.10 Parameters not yet exposed via UI/export
@@ -152,4 +154,153 @@ Implements the prioritized proposals §4.1/§4.2/§4.3/§6.1/§6.5/§6.6 from `d
 
 **Verified:** native (`windows-default`) and WASM (`wasm-windows`) builds both pass. All 10 `viewer/tests/e2e/` tests pass (7 pre-existing + 3 new).
 
-<!-- Next entry: feat/engine-clinical-shading-controls (§6.4 clipping, §6.2 DOS, §6.3 gradient-magnitude opacity, §5.3 TF detail controls) -->
+### 2026-08-20 — `feat/engine-clinical-shading-controls`
+
+Branched directly off `feat/engine-raymarch-quality`'s tip (not off
+`main`) to reuse its gradient computation, UBO layout, and pre-integrated-
+LUT infrastructure. Implements the gap-analysis document's remaining
+short-cost proposals: §6.4 (clip box), §6.2 (Directional Occlusion
+Shading), §6.3's gradient-magnitude opacity modulation (a scoped-down
+stand-in for a full 2D TF, not the real thing — see §1.4a), and §5.3 (TF
+detail: extinction/density-scale/threshold sliders).
+
+**Added:**
+
+- Clip box (§6.4): restricts raymarch traversal to an axis-aligned
+  sub-box of the AABB, reset to the full AABB on every volume load
+- Directional Occlusion Shading (§6.2): cheap approximate self-shadow
+  cue, 3 short secondary samples toward the light per step, only active
+  alongside shading
+- Gradient-magnitude opacity modulation (§6.3): reuses the shading
+  gradient to suppress homogeneous-region noise and emphasize
+  boundaries — a scoped-down stand-in for a full 2D TF (the
+  pre-integrated LUT already occupies the second axis)
+- TF detail (§5.3): extinction and density-scale switched from fixed
+  constants to real setters; threshold cutoff added new
+- Custom colormap (§5.3): a 5th, user-defined low/high color preset,
+  independent of window/level
+- New UI: TF Detail panel section (extinction/density-scale/threshold/
+  edge-emphasis sliders + occlusion checkbox), Clip panel section
+  (3-axis min/max sliders + reset), Custom preset button + 2 color
+  pickers in Window & Level
+- New e2e: `viewer/tests/e2e/clinical-shading-controls.spec.ts` (5 tests
+  covering all of the above)
+
+**Refactor along the way:** split `writeLutPreset`/`writePreintegratedLut`
+(from the previous branch) into thin wrappers over new
+`writeLutColors`/`writePreintegratedLutColors` helpers, shared with
+`setCustomColormap` — avoids duplicating LUT-baking logic for the
+index-less 5th preset. Moved `ColorRGB` from `WebGPUDevice.cpp`'s
+anonymous namespace to `WebGPUDevice.hpp` so both the fixed-preset table
+and the new helpers' signatures can reference it.
+
+**UI bug found along the way:** the control panel got long enough
+(Rendering, Window & Level, TF Detail, Clip) to exceed the viewport
+height on shorter screens, with no way to reach the lower controls —
+fixed by adding `max-height`/`overflow-y: auto` to `#control-panel`
+instead of letting it overflow past the bottom edge uncontactably. Found
+by the new e2e test failing with "element outside of the viewport", not
+by visual review.
+
+**Deliberately out of scope:** path tracing, full self-shadow ray-march
+(Directional Occlusion Shading meets the same need far more cheaply, per
+the gap-analysis document's own §5.1 note), a full 2D transfer function
+using gradient magnitude as a genuine second classification axis — see
+§1.4a/§1.10 above for why.
+
+**Verified:** native (`windows-default`) + WASM (`wasm-windows`) builds
+pass. All 15 `viewer/tests/e2e/` tests pass (10 pre-existing + 5 new).
+
+### 2026-08-21 — `feat/engine-debug-overlay`
+
+Not a rendering-technique change, but touches this spec in one place:
+raymarch background color (§1.2 step 9) moved from a compile-time shader
+constant (`kBackgroundColor` in `volume_raymarch.slang`) to a `RaymarchUBO`
+field, set via `engine_set_background_color` and mirrored into every
+render-pass clear color that previously hardcoded the same value (the
+no-volume-loaded fallback, the 2D axial-slice letterbox bars) so there's
+no visible seam. Default unchanged. Also adds the perf/hardware stats
+overlay (`viewer/src/shell/statsOverlay.ts`,
+`engine/tests/wasm_smoke/shell.html`) that `ENGINE_ROADMAP_2026-08-21.md`
+§2's baseline measurements are built on — not itself a rendering feature.
+
+**Verified:** native + WASM builds pass; manual verification in real
+Chrome (live FPS/frame-time/GPU-info values, all four background presets
+confirmed to actually change the rendered canvas via screenshot pixel
+sampling, not just DOM state).
+
+### 2026-08-21 — `feat/engine-gpu-timestamp-query`
+
+`ENGINE_ROADMAP_2026-08-21.md` §2's first performance-work item. Also
+not a rendering-technique change, but adds real instrumentation the spec
+didn't have: `docs/current/PERF_BASELINE_2026-08-21.md`'s first sweep
+found the render loop vsync-capped at typical desktop resolutions,
+making wall-clock FPS/frame-time useless for comparing quality-tier GPU
+cost until canvas resolution was pushed artificially high. This adds a
+direct measurement that isn't vsync-limited.
+
+**Added:**
+
+- Feature-detected WebGPU `timestamp-query` (checked on the adapter
+  before requesting the device; the device request only includes it in
+  `requiredFeatures` if supported) — falls back to an explicit
+  "unsupported" state rather than failing device creation.
+- A single reused `WGPUQuerySet` (4 slots), wired via each render pass's
+  `timestampWrites` descriptor field: raymarch + composite passes in
+  Orbit3D mode, the single axial-slice pass in AxialSlice2D mode.
+  Resolved + copied to a map-readable buffer within the same frame's
+  command encoder, read back via the same async callback pattern this
+  file already uses for adapter/device requests (no ASYNCIFY). A
+  pending-flag skips starting a new readback while one is still in
+  flight, rather than queuing.
+- New `rhi::Device::getGpuTiming()` + matching WASM exports, surfaced as
+  a new "GPU Pass" row in both debug overlays (`viewer/`'s and the
+  engine's own test shell).
+
+**Real bug found and fixed along the way:** the first working build hard-
+crashed (`Aborted(Assertion failed...)`) the instant a volume was loaded
+and the raymarch branch first tried to read the mapped buffer, via
+`wgpuBufferGetMappedRange()` — that accessor is write-mode-only in this
+emdawnwebgpu build (`WGPUBufferImpl::GetMappedRange` in Dawn's own
+`webgpu.cpp` asserts `mode == WGPUMapMode_Write`, confirmed by reading
+that source after hitting the assertion, not assumed); a buffer mapped
+`WGPUMapMode_Read` needs the const-returning
+`wgpuBufferGetConstMappedRange()` instead. A second, non-crashing bug
+found via manual verification: after switching from Orbit3D to
+AxialSlice2D, the overlay kept showing the last (stale) raymarch/
+composite numbers instead of the new axial one, since
+`onTimestampBufferMapped()` only ever wrote whichever pass-pair's slots
+its own frame touched and never cleared the other pair. Fixed by
+clearing the complementary pair's values whenever a fresh measurement
+for one arrives. A third bug, reported by the user as rapid continuous
+rendering flicker (not caught by the automated e2e suite, which doesn't
+watch for this): `timestampReadbackBuffer_` was resolved into and
+copied into again every single frame regardless of whether the
+*previous* frame's async `wgpuBufferMapAsync()` readback of that same
+buffer had actually completed yet — GPU readback latency is several
+frames at this frame rate, so nearly every submission referenced a
+buffer still mapped or pending-map, which WebGPU forbids. Confirmed via
+the browser console, not assumed: Dawn logged `"[Buffer (unlabeled)]
+used in submit while mapped"` on ~130 of ~140 console messages during a
+3-second capture. Fixed by gating the pass(es)' `timestampWrites`,
+the resolve/copy, and the readback kickoff all on a single
+`!timestampReadbackPending_` check computed once per frame — skipping
+the whole timestamp dance entirely on frames where a previous readback
+hasn't resolved yet, rather than trying to resolve into a buffer that's
+still in use.
+
+**Verified:** native + WASM builds pass; all 20
+`viewer/tests/e2e/` tests still pass (no regressions). Manual
+verification in real Chrome: at 1280×900 (where the first baseline
+sweep saw nothing but the vsync cap), raymarch now reads ~2.2ms/
+composite ~0.01ms directly; at 4K, ~12.2ms raymarch — consistent with
+the first baseline sweep's indirect wall-clock-derived estimate (~13ms)
+at that resolution, cross-validating both measurement methods against
+each other. Confirmed all four states behave correctly: no volume
+loaded ("n/a"), Orbit3D, 4K Orbit3D, and AxialSlice2D (showing its own
+axial number, not stale raymarch data). After the third fix: zero
+`"used in submit while mapped"`/`"while pending map"` warnings over the
+same 3-second capture window (down from ~130+), and the reported
+flicker no longer reproduces.
+
+<!-- Next entry: whatever comes out of ENGINE_ROADMAP_2026-08-21.md §2.3's optimization work, now that real GPU numbers exist to judge it against -->

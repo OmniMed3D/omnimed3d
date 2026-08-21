@@ -98,6 +98,12 @@ interface EngineModule {
   _engine_get_gpu_architecture(): number;
   _engine_get_gpu_device(): number;
   _engine_get_gpu_description(): number;
+  // GPU-side per-pass timing (WebGPU timestamp-query, optional feature) --
+  // see rhi::Device::getGpuTiming's header comment.
+  _engine_get_gpu_timing_supported(): number;
+  _engine_get_gpu_raymarch_ms(): number;
+  _engine_get_gpu_composite_ms(): number;
+  _engine_get_gpu_axial_ms(): number;
   UTF8ToString(ptr: number): string;
 }
 

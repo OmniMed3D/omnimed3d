@@ -27,6 +27,7 @@ export function setupStatsOverlay(): void {
   const copyButton = document.getElementById("stats-overlay-copy") as HTMLButtonElement | null;
   const valueEls = {
     perf: document.getElementById("stat-perf-value"),
+    gpuPass: document.getElementById("stat-gpu-pass-value"),
     canvas: document.getElementById("stat-canvas-value"),
     gpuVendor: document.getElementById("stat-gpu-vendor-value"),
     gpuDevice: document.getElementById("stat-gpu-device-value"),
@@ -39,6 +40,7 @@ export function setupStatsOverlay(): void {
     !canvas ||
     !copyButton ||
     !valueEls.perf ||
+    !valueEls.gpuPass ||
     !valueEls.canvas ||
     !valueEls.gpuVendor ||
     !valueEls.gpuDevice ||
@@ -74,7 +76,31 @@ export function setupStatsOverlay(): void {
       // device name to stdout, never in-UI) -- they're this overlay's own
       // addition for the hardware-baseline half of the original ask.
       const perfText = `${fps.toFixed(1)}  |  Frame: ${avgFrameMs.toFixed(3)} ms`;
+
+      // GPU-side pass timing (WebGPU timestamp-query, optional feature --
+      // "unsupported" is a real, expected state on some browsers/GPUs, not
+      // an error). Only one of raymarch+composite (3D Orbit) or axial (2D
+      // Slice) is ever nonzero in a given frame, since only one of those
+      // branches runs -- see rhi::Device::getGpuTiming's header comment.
+      const gpuTimingSupported = module._engine_get_gpu_timing_supported() === 1;
+      let gpuPassText: string;
+      if (!gpuTimingSupported) {
+        gpuPassText = "unsupported";
+      } else {
+        const raymarchMs = module._engine_get_gpu_raymarch_ms();
+        const compositeMs = module._engine_get_gpu_composite_ms();
+        const axialMs = module._engine_get_gpu_axial_ms();
+        if (raymarchMs > 0 || compositeMs > 0) {
+          gpuPassText = `Raymarch ${raymarchMs.toFixed(3)} + Composite ${compositeMs.toFixed(3)} ms`;
+        } else if (axialMs > 0) {
+          gpuPassText = `Axial ${axialMs.toFixed(3)} ms`;
+        } else {
+          gpuPassText = "n/a"; // no volume loaded yet -- no pass has run to time
+        }
+      }
+
       valueEls.perf!.textContent = perfText;
+      valueEls.gpuPass!.textContent = gpuPassText;
       valueEls.canvas!.textContent = canvasRes;
       valueEls.gpuVendor!.textContent = vendor;
       valueEls.gpuDevice!.textContent = device;
@@ -83,6 +109,7 @@ export function setupStatsOverlay(): void {
 
       lastStatsText =
         `FPS: ${perfText}\n` +
+        `GPU pass: ${gpuPassText}\n` +
         `Canvas: ${canvasRes}\n` +
         `GPU vendor: ${vendor}\n` +
         `GPU device: ${device}\n` +

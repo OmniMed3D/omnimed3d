@@ -57,6 +57,7 @@ public:
 
     FrameStatsSnapshot getFrameStats() const override;
     HardwareInfo getHardwareInfo() const override;
+    GpuTimingSnapshot getGpuTiming() const override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -69,6 +70,28 @@ private:
                                     WGPUStringView message, void* userdata1, void* userdata2);
     static void onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
                                    WGPUStringView message, void* userdata1, void* userdata2);
+
+    // GPU-side per-pass timing (WebGPU `timestamp-query`, optional feature
+    // -- see rhi::Device::getGpuTiming's header comment). Query set has 4
+    // slots: [0,1] = begin/end of whichever single-pass-per-frame branch
+    // ran (raymarch accumulation pass in Orbit3D mode, or the axial-slice
+    // pass in AxialSlice2D mode -- only one of the two ever runs in a given
+    // frame), [2,3] = begin/end of the composite pass (Orbit3D only, runs
+    // right after the raymarch pass). Reused every frame rather than
+    // multiplexed across frames-in-flight -- this engine has no other
+    // frames-in-flight concept to hook into, and a single pending-readback
+    // guard (timestampReadbackPending_) is enough to avoid mapping a buffer
+    // that's already being mapped.
+    void createTimestampQuery();
+    // Maps timestampReadbackBuffer_ async and reads it back in
+    // onTimestampBufferMapped() -- no-ops if a previous readback is still
+    // pending (keeps last frame's numbers displayed rather than queuing up
+    // maps). Called from renderFrame() after submitting a frame that wrote
+    // timestamps; queryCount is how many of the 4 slots that frame actually
+    // wrote (2 for AxialSlice2D, 4 for Orbit3D).
+    void beginTimestampReadback(uint32_t queryCount);
+    static void onTimestampBufferMapped(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1,
+                                         void* userdata2);
 
     // Uses canvasWidth_/canvasHeight_ (issue #40) -- called once from
     // onDeviceRequested() with whatever those hold at that point (a
@@ -328,6 +351,31 @@ private:
     // valid, and never changes after that.
     utils::FrameStats frameStats_;
     HardwareInfo hardwareInfo_;
+
+    // GPU pass timing (see getGpuTiming(), createTimestampQuery()'s header
+    // comment). timestampQuerySupported_ is set in onAdapterRequested()
+    // (before the device is even requested, since it gates whether
+    // `timestamp-query` is included in requiredFeatures) and never changes
+    // after. The query set/buffers are only created (createTimestampQuery())
+    // when supported -- stay null otherwise, and renderFrame() skips writing
+    // timestamps entirely in that case.
+    bool timestampQuerySupported_ = false;
+    static constexpr uint32_t kTimestampQueryCount = 4;
+    WGPUQuerySet timestampQuerySet_ = nullptr;
+    WGPUBuffer timestampResolveBuffer_ = nullptr;
+    WGPUBuffer timestampReadbackBuffer_ = nullptr;
+    // True from beginTimestampReadback() until onTimestampBufferMapped()
+    // fires -- guards against mapping a buffer that's already being mapped
+    // (WebGPU disallows overlapping maps of the same buffer).
+    bool timestampReadbackPending_ = false;
+    // How many of the 4 query slots the in-flight readback's frame actually
+    // wrote (2 for AxialSlice2D, 4 for Orbit3D) -- captured at
+    // beginTimestampReadback() time, since renderFrame() may have moved on
+    // to a different view mode by the time onTimestampBufferMapped() fires.
+    uint32_t pendingTimestampQueryCount_ = 0;
+    float gpuRaymarchMs_ = 0.0F;
+    float gpuCompositeMs_ = 0.0F;
+    float gpuAxialMs_ = 0.0F;
 };
 
 }  // namespace omnimed3d::rhi::webgpu
