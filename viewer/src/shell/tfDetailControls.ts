@@ -10,9 +10,15 @@
  * readback export, so both sides just agree on the same defaults
  * independently, the same way windowLevelControls.ts's DEFAULT_PRESET_ID
  * already does.
+ *
+ * The occlusion checkbox is the one exception to "calls its engine_set_*
+ * export directly": see its own comment below for why it's routed
+ * through qualityControls.ts instead (issue #69, interaction-adaptive
+ * quality).
  */
 
 import { bindRangeInput } from "./windowLevelControls.js";
+import { notifyOcclusionSelection } from "./qualityControls.js";
 
 const DEFAULT_EXTINCTION = 8;
 const DEFAULT_DENSITY_SCALE = 1;
@@ -74,6 +80,12 @@ export function setupTfDetailControls(): void {
     return;
   }
   occlusionCheckbox.addEventListener("change", () => {
-    window.Module._engine_set_occlusion_enabled(occlusionCheckbox.checked ? 1 : 0);
+    // Routed through qualityControls.ts (issue #69) rather than calling
+    // engine_set_occlusion_enabled directly -- occlusion does its own
+    // extra per-step sampling (one of the pricier toggles to leave on
+    // during a camera drag), so its selection needs to go through the
+    // same interaction-adaptive gate the quality tier and shading
+    // toggle already use.
+    notifyOcclusionSelection(occlusionCheckbox.checked);
   });
 }

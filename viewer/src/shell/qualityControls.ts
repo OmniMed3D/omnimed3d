@@ -8,16 +8,24 @@
  * setActiveMode pattern for the tier buttons' active-state feedback.
  *
  * Issue #69: also owns two automatic quality adjustments on top of the
- * user's own tier choice, both applied at the engine level without
- * touching the button UI (which always reflects userSelectedTier, what
- * the user actually picked, not what's momentarily rendering):
+ * user's own choices, both applied at the engine level without touching
+ * any control's UI (which always reflects the user's actual selection,
+ * not what's momentarily rendering):
  *
  * - Interaction-adaptive: cameraControls.ts calls
  *   notifyInteractionStart()/notifyInteractionEnd() around its drag
- *   lifecycle so the active tier drops to Low only while the camera is
- *   actually being dragged. Dropped frames are most noticeable during
- *   interaction and least noticeable there too (a moving image masks
- *   the coarser sampling) -- the cheapest quality/perf trade available.
+ *   lifecycle so the active tier drops to Low, and shading/occlusion
+ *   shading both force off, only while the camera is actually being
+ *   dragged -- restored to the user's own selections on release.
+ *   Dropped frames are most noticeable during interaction and least
+ *   noticeable there too (a moving image masks the coarser sampling) --
+ *   the cheapest quality/perf trade available. Shading and occlusion
+ *   were added to this same mechanism after Mini-Engine-reference's own
+ *   "adaptive SPP during camera motion" pattern showed the same
+ *   interaction-gated idea generalizes to any per-sample cost, not just
+ *   step count -- occlusion in particular does its own extra sampling
+ *   per step (see tfDetailControls.ts), so it's one of the more
+ *   expensive toggles to leave on during a drag.
  * - Startup auto-downgrade: main.ts calls applyStartupAutoTier() once,
  *   after sampling wall-clock frame time for a few frames post-load. A
  *   phone whose *static* frame is already too slow gets no benefit from
@@ -34,7 +42,13 @@
 const DEFAULT_QUALITY_TIER = 1; // Medium -- matches WebGPUDevice's kDefaultQualityTier.
 const INTERACTION_QUALITY_TIER = 0; // Low -- floor while actively dragging/orbiting.
 
+// Must match WebGPUDevice's own member defaults (shadingEnabled_=true,
+// occlusionEnabled_=false) -- see tfDetailControls.ts's header comment
+// for why there's no readback export and both sides just agree
+// independently.
 let userSelectedTier = DEFAULT_QUALITY_TIER;
+let userSelectedShadingEnabled = true;
+let userSelectedOcclusionEnabled = false;
 let interacting = false;
 let tierButtons: NodeListOf<HTMLButtonElement> | null = null;
 
@@ -44,12 +58,27 @@ function setActiveTierButton(tier: number): void {
   });
 }
 
+// Applies the current effective state to the engine -- the user's own
+// selections while idle, or the interaction floor (Low tier, shading
+// and occlusion both off) while a drag is in progress. Called on every
+// state change (tier/shading/occlusion selection, or entering/leaving
+// interaction) rather than diffing what actually changed -- these are
+// infrequent UI-driven calls, not per-frame, so the redundant WASM calls
+// this occasionally causes (e.g. re-asserting occlusion=off on drag
+// start when it was already off) cost nothing worth avoiding the extra
+// bookkeeping for.
+function applyEngineState(): void {
+  window.Module._engine_set_quality_tier(interacting ? INTERACTION_QUALITY_TIER : userSelectedTier);
+  window.Module._engine_set_shading_enabled(interacting ? 0 : userSelectedShadingEnabled ? 1 : 0);
+  window.Module._engine_set_occlusion_enabled(interacting ? 0 : userSelectedOcclusionEnabled ? 1 : 0);
+}
+
 export function notifyInteractionStart(): void {
-  if (interacting || userSelectedTier <= INTERACTION_QUALITY_TIER) {
+  if (interacting) {
     return;
   }
   interacting = true;
-  window.Module._engine_set_quality_tier(INTERACTION_QUALITY_TIER);
+  applyEngineState();
 }
 
 export function notifyInteractionEnd(): void {
@@ -57,7 +86,20 @@ export function notifyInteractionEnd(): void {
     return;
   }
   interacting = false;
-  window.Module._engine_set_quality_tier(userSelectedTier);
+  applyEngineState();
+}
+
+// Called from tfDetailControls.ts's occlusion checkbox handler instead
+// of that file calling engine_set_occlusion_enabled directly -- routes
+// the selection through the same interaction-aware gate the tier
+// buttons and shading checkbox already use below, so a checkbox toggle
+// mid-drag updates the *stored* selection immediately but doesn't
+// re-enable occlusion on the engine until the drag ends.
+export function notifyOcclusionSelection(enabled: boolean): void {
+  userSelectedOcclusionEnabled = enabled;
+  if (!interacting) {
+    applyEngineState();
+  }
 }
 
 // Called once, shortly after load -- see main.ts's post-load frame-time
@@ -71,7 +113,7 @@ export function applyStartupAutoTier(tier: number): void {
   userSelectedTier = tier;
   setActiveTierButton(tier);
   if (!interacting) {
-    window.Module._engine_set_quality_tier(tier);
+    applyEngineState();
   }
 }
 
@@ -91,7 +133,7 @@ export function setupQualityControls(): void {
         // pinned at INTERACTION_QUALITY_TIER -- notifyInteractionEnd()
         // applies userSelectedTier once the drag ends instead.
         if (!interacting) {
-          window.Module._engine_set_quality_tier(tier);
+          applyEngineState();
         }
       });
     });
@@ -102,7 +144,10 @@ export function setupQualityControls(): void {
     console.error("qualityControls: #shading-enabled not found in the DOM");
   } else {
     shadingCheckbox.addEventListener("change", () => {
-      window.Module._engine_set_shading_enabled(shadingCheckbox.checked ? 1 : 0);
+      userSelectedShadingEnabled = shadingCheckbox.checked;
+      if (!interacting) {
+        applyEngineState();
+      }
     });
   }
 }
