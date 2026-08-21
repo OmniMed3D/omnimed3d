@@ -2,8 +2,30 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace omnimed3d::rhi {
+
+// Snapshot of the CPU-side frame timer (omnimed3d::utils::FrameStats) at
+// the moment getFrameStats() was called. Plain data, not a live handle --
+// callers poll this once per stats-panel update rather than holding a
+// reference into the backend's own timer state.
+struct FrameStatsSnapshot {
+    float frameTimeMs = 0.0F;
+    float avgFrameTimeMs = 0.0F;
+    float fps = 0.0F;
+};
+
+// Adapter/device identity strings for a debug/perf overlay (not used for
+// any behavioral branching). Backend-agnostic on purpose: WebGPUDevice
+// fills this from WGPUAdapterInfo; a future native Vulkan Device would
+// fill the same fields from VkPhysicalDeviceProperties instead.
+struct HardwareInfo {
+    std::string vendor;
+    std::string architecture;
+    std::string device;
+    std::string description;
+};
 
 // Minimal backend-agnostic seam -- intentionally not a full RHI yet (no
 // general Buffer/Pipeline/BindGroup, and loadVolume/applyMaskSlice below
@@ -169,6 +191,17 @@ public:
     virtual void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG,
                                     float highB) = 0;
 
+    // Raymarch background color (RGB in [0,1], clamped) -- composited by
+    // the raymarch shader against whatever the ray didn't hit, and used as
+    // the render-pass clear color for the no-volume-loaded and 2D-slice-
+    // letterbox cases too, so there's no visible seam between them. Purely
+    // cosmetic (unlike setColormapPreset, no clinical window/level meaning
+    // attached), so presets live caller-side rather than as an engine-owned
+    // enum -- matching setCustomColormap's direct-RGB shape, not
+    // setColormapPreset's index shape. Default (0.05, 0.05, 0.12) matches
+    // pre-existing behavior for anyone who never touches this control.
+    virtual void setBackgroundColor(float r, float g, float b) = 0;
+
     // Resizes the render surface and recomputes the Orbit3D camera's
     // aspect ratio to match (issue #40 -- the canvas was previously a
     // fixed 640x480 box with no way to reconfigure it). width/height are
@@ -181,6 +214,13 @@ public:
     // initialize()'s async setup has completed, matching loadVolume's own
     // tolerance for being called at any time.
     virtual void resize(uint32_t width, uint32_t height) = 0;
+
+    // Debug/perf overlay support (baseline browser-performance measurement --
+    // see engine/tests/wasm_smoke/shell.html's stats panel). Both are cheap,
+    // side-effect-free snapshots safe to call every frame from JS-exported
+    // getters; neither affects rendering.
+    virtual FrameStatsSnapshot getFrameStats() const = 0;
+    virtual HardwareInfo getHardwareInfo() const = 0;
 };
 
 }  // namespace omnimed3d::rhi

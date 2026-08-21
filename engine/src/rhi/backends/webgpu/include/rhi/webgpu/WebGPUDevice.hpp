@@ -3,6 +3,7 @@
 #include "rhi/Device.hpp"
 
 #include "core/RenderGraph.hpp"
+#include "utils/FrameStats.hpp"
 
 #include <glm/glm.hpp>
 #include <webgpu/webgpu.h>
@@ -51,7 +52,11 @@ public:
     void setGradientOpacityStrength(float strength) override;
     void setOcclusionEnabled(bool enabled) override;
     void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
+    void setBackgroundColor(float r, float g, float b) override;
     void resize(uint32_t width, uint32_t height) override;
+
+    FrameStatsSnapshot getFrameStats() const override;
+    HardwareInfo getHardwareInfo() const override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -305,6 +310,24 @@ private:
     // at least once).
     ColorRGB customLowColor_{0, 0, 0};
     ColorRGB customHighColor_{255, 255, 255};
+
+    // Raymarch background color (setBackgroundColor()) -- composited by
+    // volume_raymarch.slang's fragmentMain against whatever the ray didn't
+    // hit, and mirrored into every render-pass clearValue in renderFrame()
+    // (letterbox bars, the no-volume-loaded fallback, and the otherwise-
+    // dead accumulation/composite-pass clears) so there's no visible seam
+    // between "this shader's own compositing" and "a render pass's plain
+    // clear color" cases. Default matches the previous hardcoded constant
+    // (0.05, 0.05, 0.12) exactly, so nobody who never touches this control
+    // sees any change.
+    glm::vec3 backgroundColor_{0.05F, 0.05F, 0.12F};
+
+    // Debug/perf overlay state (see getFrameStats()/getHardwareInfo()).
+    // frameStats_ is recorded once per renderFrame(); hardwareInfo_ is
+    // populated once in onDeviceRequested(), when adapter_ first becomes
+    // valid, and never changes after that.
+    utils::FrameStats frameStats_;
+    HardwareInfo hardwareInfo_;
 };
 
 }  // namespace omnimed3d::rhi::webgpu

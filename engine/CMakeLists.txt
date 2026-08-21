@@ -13,6 +13,7 @@ enable_testing()
 
 add_subdirectory(src/core)
 add_subdirectory(src/concurrency)
+add_subdirectory(src/utils)
 
 # Slang -> WGSL/SPIR-V shader compilation (ADR-0002). Unconditional (not
 # EMSCRIPTEN-gated) -- slangc always runs on the host regardless of which
@@ -46,9 +47,11 @@ if(EMSCRIPTEN)
         # EXPORTED_FUNCTIONS replaces the implicit default ["_main"] entirely.
         "SHELL:-s EXPORTED_FUNCTIONS=['_main','_malloc','_free']"
         # HEAPU8 (used by shell.html to build typed-array views over WASM
-        # linear memory for the volume/mask transfer) is a runtime-side
-        # export, tracked separately from EXPORTED_FUNCTIONS above.
-        "SHELL:-s EXPORTED_RUNTIME_METHODS=['HEAPU8']"
+        # linear memory for the volume/mask transfer) and UTF8ToString
+        # (used by the stats-panel overlay to decode the engine_get_gpu_*
+        # char* getters) are runtime-side exports, tracked separately from
+        # EXPORTED_FUNCTIONS above.
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=['HEAPU8','UTF8ToString']"
         "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/wasm_smoke/shell.html"
     )
     # Deliberately no -s ASYNCIFY=1 (avoided by design -- WebGPUDevice uses

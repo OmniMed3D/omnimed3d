@@ -344,6 +344,84 @@
           </button>
         </div>
       </div>
+      <!-- Raymarch background color (rhi::Device::setBackgroundColor) --
+           purely cosmetic, no clinical window/level meaning, so plain
+           presets rather than an engine-owned enum like the colormap
+           presets above. backgroundControls.ts owns the active-state
+           highlighting + engine_set_background_color calls. -->
+      <div class="panel-section">
+        <span class="section-label">Background</span>
+        <div class="row preset-buttons">
+          <button type="button" data-background-preset="dark" data-tooltip-key="background-preset-dark">Dark</button>
+          <button type="button" data-background-preset="black" data-tooltip-key="background-preset-black">
+            Black
+          </button>
+          <button type="button" data-background-preset="gray" data-tooltip-key="background-preset-gray">Gray</button>
+          <button type="button" data-background-preset="white" data-tooltip-key="background-preset-white">
+            White
+          </button>
+        </div>
+      </div>
+      <!-- Perf/hardware debug overlay (baseline browser-performance
+           measurement -- there was previously no way to see actual frame
+           time or GPU identity in this viewer at all). Off by default --
+           this is a developer-facing "test palette", not part of the
+           clinical-viewer UI proper. statsOverlay.ts owns #stats-overlay's
+           hidden state and its rAF-driven content updates. -->
+      <div class="panel-section">
+        <span class="section-label">Debug</span>
+        <div class="row checkbox-row">
+          <label for="stats-overlay-enabled">Show Stats</label>
+          <input id="stats-overlay-enabled" type="checkbox" data-tooltip-key="stats-overlay-enabled" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Draggable like #control-panel (panelDrag.ts's setupPanelDrag is
+         generalized to take a panel/handle id pair) -- defaults to the
+         top-left, clear of #control-panel's top-right dock and below
+         #debug-readout, but movable anywhere since a fixed corner isn't
+         guaranteed clear on every screen/volume layout. Each stat is its
+         own static row (label + value span), not one dynamically-built
+         text blob -- tooltipManager.ts's setupTooltips() only queries
+         [data-tooltip-key] once at startup, so per-field hover
+         explanations need the rows to already exist in the DOM;
+         statsOverlay.ts then only ever updates each *-value span's
+         textContent, never the row structure itself. -->
+    <div id="stats-overlay" hidden>
+      <div id="stats-overlay-drag-handle" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <div id="stats-overlay-content">
+        <div class="stat-row" data-tooltip-key="stat-perf">
+          <span class="stat-label">Perf</span><span id="stat-perf-value" class="stat-value">--</span>
+        </div>
+        <div class="stat-row" data-tooltip-key="stat-canvas">
+          <span class="stat-label">Canvas</span><span id="stat-canvas-value" class="stat-value">--</span>
+        </div>
+        <div class="stat-row" data-tooltip-key="stat-gpu-vendor">
+          <span class="stat-label">GPU vendor</span><span id="stat-gpu-vendor-value" class="stat-value">--</span>
+        </div>
+        <div class="stat-row" data-tooltip-key="stat-gpu-device">
+          <span class="stat-label">GPU device</span><span id="stat-gpu-device-value" class="stat-value">--</span>
+        </div>
+        <div class="stat-row" data-tooltip-key="stat-gpu-arch">
+          <span class="stat-label">GPU arch</span><span id="stat-gpu-arch-value" class="stat-value">--</span>
+        </div>
+        <div class="stat-row" data-tooltip-key="stat-gpu-desc">
+          <span class="stat-label">GPU desc</span><span id="stat-gpu-desc-value" class="stat-value">--</span>
+        </div>
+      </div>
+      <div class="row" id="stats-overlay-copy-row">
+        <button
+          type="button"
+          id="stats-overlay-copy"
+          class="upload-btn secondary"
+          data-tooltip-key="stats-overlay-copy"
+        >
+          Copy Stats
+        </button>
+      </div>
     </div>
 
     <script type="text/javascript">

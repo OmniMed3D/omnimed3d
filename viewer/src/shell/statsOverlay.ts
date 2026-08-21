@@ -1,0 +1,126 @@
+/**
+ * Perf/hardware debug overlay ("test palette", disableable) -- baseline
+ * browser-performance measurement, since there was previously no way to
+ * see actual frame time or GPU identity in this viewer at all. Mirrors
+ * engine/tests/wasm_smoke/shell.html's stats panel (same
+ * EMSCRIPTEN_KEEPALIVE getters), rewired into this viewer's own
+ * control-panel/tooltip conventions instead of that file's standalone
+ * toggle button. Off by default -- this is a developer-facing panel, not
+ * part of the clinical-viewer UI proper.
+ *
+ * The rAF poll only runs while the panel is visible (started/stopped from
+ * the checkbox's change handler) rather than always running and just
+ * hiding the DOM, so leaving it off costs nothing per frame. Each stat is a
+ * static row in index.html (see its own comment on why -- tooltipManager.ts
+ * needs the rows to already exist at startup); this file only ever writes
+ * to each row's *-value span, plus keeps lastStatsText up to date for the
+ * Copy button.
+ */
+
+const UPDATE_INTERVAL_MS = 250; // readable refresh rate, independent of actual frame rate
+const COPY_FEEDBACK_MS = 1200;
+
+export function setupStatsOverlay(): void {
+  const checkbox = document.getElementById("stats-overlay-enabled") as HTMLInputElement | null;
+  const panel = document.getElementById("stats-overlay");
+  const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
+  const copyButton = document.getElementById("stats-overlay-copy") as HTMLButtonElement | null;
+  const valueEls = {
+    perf: document.getElementById("stat-perf-value"),
+    canvas: document.getElementById("stat-canvas-value"),
+    gpuVendor: document.getElementById("stat-gpu-vendor-value"),
+    gpuDevice: document.getElementById("stat-gpu-device-value"),
+    gpuArch: document.getElementById("stat-gpu-arch-value"),
+    gpuDesc: document.getElementById("stat-gpu-desc-value"),
+  };
+  if (
+    !checkbox ||
+    !panel ||
+    !canvas ||
+    !copyButton ||
+    !valueEls.perf ||
+    !valueEls.canvas ||
+    !valueEls.gpuVendor ||
+    !valueEls.gpuDevice ||
+    !valueEls.gpuArch ||
+    !valueEls.gpuDesc
+  ) {
+    console.error("statsOverlay: one or more #stats-overlay-* elements not found in the DOM");
+    return;
+  }
+
+  let rafHandle: number | undefined;
+  let lastUpdateMs = 0;
+  // Plain "Label: value" lines, independent of the DOM's split label/value
+  // spans -- what Copy Stats actually puts on the clipboard.
+  let lastStatsText = "";
+
+  function tick(nowMs: number): void {
+    if (nowMs - lastUpdateMs >= UPDATE_INTERVAL_MS) {
+      lastUpdateMs = nowMs;
+      const module = window.Module;
+      const fps = module._engine_get_fps();
+      const avgFrameMs = module._engine_get_avg_frame_time_ms();
+      const vendor = module.UTF8ToString(module._engine_get_gpu_vendor()) || "n/a";
+      const architecture = module.UTF8ToString(module._engine_get_gpu_architecture()) || "n/a";
+      const device = module.UTF8ToString(module._engine_get_gpu_device()) || "n/a";
+      const description = module.UTF8ToString(module._engine_get_gpu_description()) || "n/a";
+      const canvasRes = `${canvas!.width}x${canvas!.height}`;
+
+      // FPS/Frame line matches Mini-Engine-reference's own Statistics panel
+      // format exactly (ImGuiManager.cpp: "FPS: %.1f  |  Frame: %.3f ms") --
+      // one line, pipe-separated, 3 decimal places on frame time. The GPU
+      // fields have no Mini-Engine equivalent (that codebase only logs its
+      // device name to stdout, never in-UI) -- they're this overlay's own
+      // addition for the hardware-baseline half of the original ask.
+      const perfText = `${fps.toFixed(1)}  |  Frame: ${avgFrameMs.toFixed(3)} ms`;
+      valueEls.perf!.textContent = perfText;
+      valueEls.canvas!.textContent = canvasRes;
+      valueEls.gpuVendor!.textContent = vendor;
+      valueEls.gpuDevice!.textContent = device;
+      valueEls.gpuArch!.textContent = architecture;
+      valueEls.gpuDesc!.textContent = description;
+
+      lastStatsText =
+        `FPS: ${perfText}\n` +
+        `Canvas: ${canvasRes}\n` +
+        `GPU vendor: ${vendor}\n` +
+        `GPU device: ${device}\n` +
+        `GPU arch: ${architecture}\n` +
+        `GPU desc: ${description}`;
+    }
+    rafHandle = requestAnimationFrame(tick);
+  }
+
+  checkbox.addEventListener("change", () => {
+    panel.hidden = !checkbox.checked;
+    if (checkbox.checked) {
+      lastUpdateMs = 0; // force an immediate update instead of waiting out a stale interval
+      rafHandle = requestAnimationFrame(tick);
+    } else if (rafHandle !== undefined) {
+      cancelAnimationFrame(rafHandle);
+      rafHandle = undefined;
+    }
+  });
+
+  let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
+  copyButton.addEventListener("click", () => {
+    void navigator.clipboard.writeText(lastStatsText).then(
+      () => {
+        copyButton.textContent = "Copied!";
+        clearTimeout(copyFeedbackTimeout);
+        copyFeedbackTimeout = setTimeout(() => {
+          copyButton.textContent = "Copy Stats";
+        }, COPY_FEEDBACK_MS);
+      },
+      (error: unknown) => {
+        console.error("statsOverlay: clipboard write failed", error);
+        copyButton.textContent = "Copy failed";
+        clearTimeout(copyFeedbackTimeout);
+        copyFeedbackTimeout = setTimeout(() => {
+          copyButton.textContent = "Copy Stats";
+        }, COPY_FEEDBACK_MS);
+      },
+    );
+  });
+}

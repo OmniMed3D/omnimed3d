@@ -57,6 +57,7 @@ struct RaymarchUBO {
     glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
     glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
+    glm::vec4 backgroundColor;  // xyz=RGB, w unused -- see setBackgroundColor()
 };
 
 static_assert(offsetof(RaymarchUBO, invView) == 0);
@@ -73,7 +74,8 @@ static_assert(offsetof(RaymarchUBO, clipMin) == 256);
 static_assert(offsetof(RaymarchUBO, clipMax) == 272);
 static_assert(offsetof(RaymarchUBO, occlusionParams) == 288);
 static_assert(offsetof(RaymarchUBO, tfParams) == 304);
-static_assert(sizeof(RaymarchUBO) == 320);
+static_assert(offsetof(RaymarchUBO, backgroundColor) == 320);
+static_assert(sizeof(RaymarchUBO) == 336);
 
 // Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang (issue
 // #37) -- deliberately a separate, smaller struct rather than reusing
@@ -233,6 +235,31 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     }
     self->device_ = device;
     self->queue_ = wgpuDeviceGetQueue(device);
+
+    // vendor/architecture/device/description are WGPUStringView in this
+    // emsdk's actual compiled-against header (the emdawnwebgpu port package
+    // at cache/ports/emdawnwebgpu/, not the older copy under
+    // cache/sysroot/include -- confirmed by hitting a real compile error
+    // from assuming the sysroot copy's plain char const* shape, then
+    // checking the header the compiler actually used). Same .data/.length
+    // shape logStringView() above already handles for the async-callback
+    // message params. Dawn allocates the backing storage;
+    // wgpuAdapterInfoFreeMembers() releases it once copied into
+    // hardwareInfo_'s std::strings.
+    WGPUAdapterInfo adapterInfo{};
+    if (wgpuAdapterGetInfo(self->adapter_, &adapterInfo) == WGPUStatus_Success) {
+        auto toStdString = [](WGPUStringView view) {
+            return (view.data && view.length > 0) ? std::string(view.data, view.length) : std::string();
+        };
+        self->hardwareInfo_.vendor = toStdString(adapterInfo.vendor);
+        self->hardwareInfo_.architecture = toStdString(adapterInfo.architecture);
+        self->hardwareInfo_.device = toStdString(adapterInfo.device);
+        self->hardwareInfo_.description = toStdString(adapterInfo.description);
+        wgpuAdapterInfoFreeMembers(adapterInfo);
+    } else {
+        std::printf("WebGPUDevice: wgpuAdapterGetInfo failed\n");
+    }
+
     self->configureSurface();
     self->createSamplerAndLut();
     self->createPipeline();
@@ -775,6 +802,8 @@ void WebGPUDevice::renderFrame() {
         return;
     }
 
+    frameStats_.recordFrame();
+
     WGPUSurfaceTexture surfaceTexture{};
     wgpuSurfaceGetCurrentTexture(surface_, &surfaceTexture);
     bool const acquired = surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
@@ -802,7 +831,8 @@ void WebGPUDevice::renderFrame() {
         colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         colorAttachment.loadOp = WGPULoadOp_Clear;
         colorAttachment.storeOp = WGPUStoreOp_Store;
-        colorAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+        colorAttachment.clearValue =
+            WGPUColor{backgroundColor_.r, backgroundColor_.g, backgroundColor_.b, 1.0};
 
         WGPURenderPassDescriptor passDesc{};
         passDesc.colorAttachmentCount = 1;
@@ -880,6 +910,7 @@ void WebGPUDevice::renderFrame() {
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
         ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
         ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, 0.0F, 0.0F};
+        ubo.backgroundColor = glm::vec4{backgroundColor_, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
         wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
@@ -891,7 +922,8 @@ void WebGPUDevice::renderFrame() {
         accumAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         accumAttachment.loadOp = dirty ? WGPULoadOp_Clear : WGPULoadOp_Load;
         accumAttachment.storeOp = WGPUStoreOp_Store;
-        accumAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+        accumAttachment.clearValue =
+            WGPUColor{backgroundColor_.r, backgroundColor_.g, backgroundColor_.b, 1.0};
 
         WGPURenderPassDescriptor accumPassDesc{};
         accumPassDesc.colorAttachmentCount = 1;
@@ -915,7 +947,8 @@ void WebGPUDevice::renderFrame() {
         swapAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         swapAttachment.loadOp = WGPULoadOp_Clear;
         swapAttachment.storeOp = WGPUStoreOp_Store;
-        swapAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+        swapAttachment.clearValue =
+            WGPUColor{backgroundColor_.r, backgroundColor_.g, backgroundColor_.b, 1.0};
 
         WGPURenderPassDescriptor compositePassDesc{};
         compositePassDesc.colorAttachmentCount = 1;
@@ -936,7 +969,8 @@ void WebGPUDevice::renderFrame() {
         colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         colorAttachment.loadOp = WGPULoadOp_Clear;
         colorAttachment.storeOp = WGPUStoreOp_Store;
-        colorAttachment.clearValue = WGPUColor{0.05, 0.05, 0.12, 1.0};
+        colorAttachment.clearValue =
+            WGPUColor{backgroundColor_.r, backgroundColor_.g, backgroundColor_.b, 1.0};
 
         WGPURenderPassDescriptor passDesc{};
         passDesc.colorAttachmentCount = 1;
@@ -1264,6 +1298,11 @@ void WebGPUDevice::setCustomColormap(float lowR, float lowG, float lowB, float h
     markAccumulationDirty();
 }
 
+void WebGPUDevice::setBackgroundColor(float r, float g, float b) {
+    backgroundColor_ = glm::vec3{std::clamp(r, 0.0F, 1.0F), std::clamp(g, 0.0F, 1.0F), std::clamp(b, 0.0F, 1.0F)};
+    markAccumulationDirty();
+}
+
 void WebGPUDevice::markAccumulationDirty() {
     accumFrameIndex_ = 0.0F;
 }
@@ -1296,6 +1335,18 @@ void WebGPUDevice::resize(uint32_t width, uint32_t height) {
     }
     updateCameraMatrices();
     markAccumulationDirty();
+}
+
+FrameStatsSnapshot WebGPUDevice::getFrameStats() const {
+    return FrameStatsSnapshot{
+        frameStats_.lastFrameTimeMs(),
+        frameStats_.avgFrameTimeMs(),
+        frameStats_.fps(),
+    };
+}
+
+HardwareInfo WebGPUDevice::getHardwareInfo() const {
+    return hardwareInfo_;
 }
 
 }  // namespace omnimed3d::rhi::webgpu

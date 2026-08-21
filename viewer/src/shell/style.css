@@ -182,7 +182,19 @@ canvas {
   position: fixed;
   top: 12px;
   right: 12px;
-  width: 264px;
+  /* Widened from 264px (pre-existing, unrelated to the stats-overlay work) --
+     264px was too narrow for several rows that pack two label+control pairs
+     side by side (e.g. Window & Level's Low Color/High Color swatches: two
+     90px-min-width labels + two color inputs + gaps run well past 264px's
+     ~236px content box), forcing #control-panel's overflow-y:auto to also
+     compute overflow-x:auto (CSS Overflow spec: setting one axis non-visible
+     computes the other to auto too -- tooltipManager.ts's header comment
+     already documents this same mechanism) and requiring horizontal
+     scrolling to see even ordinary rows that did fit. 320px clears every
+     row's natural content width (verified empirically, not just computed --
+     see the row-by-row scrollWidth/clientWidth check this was fixed with).
+  */
+  width: 320px;
   /* §5.3/§6.2/§6.3/§6.4 added enough panel-sections (TF Detail, Clip) that
      the panel can now exceed the viewport height on shorter screens, with
      no way to reach the lower controls -- internal scroll rather than
@@ -281,6 +293,105 @@ canvas {
 
 #control-panel.collapsed .panel-section {
   display: none;
+}
+
+/* Perf/hardware debug overlay (statsOverlay.ts). Default top-left, below
+   #debug-readout rather than overlapping it, and clear of #control-panel's
+   top-right dock -- draggable (panelDrag.ts's setupPanelDrag, generalized
+   from #control-panel's own drag handle) since a fixed corner isn't
+   guaranteed clear on every screen/volume layout. Sized with max-width +
+   wrapping rather than the fixed/unbounded width the first pass shipped
+   with: a long GPU description string (real examples run 60+ chars, e.g.
+   "ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0, D3D11)")
+   previously forced the panel wider than the viewport with no wrap
+   (white-space: pre, no max-width), pushing it past the left edge and
+   forcing the whole page to scroll horizontally to read even the FPS line
+   above it. :not([hidden]) is required, not stylistic -- an ID selector's
+   specificity otherwise beats the UA stylesheet's `[hidden] { display:
+   none }` rule, which is exactly the bug #empty-hint's own comment above
+   already documents; unqualified `#stats-overlay { display: flex }` would
+   leave the panel visible even while its `hidden` attribute is set. */
+#stats-overlay:not([hidden]) {
+  position: fixed;
+  top: 90px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px;
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+}
+
+/* Same title-bar-flush-with-padding trick as #panel-drag-handle above,
+   scaled to this panel's own 10px/12px padding. No collapse toggle here
+   (unlike #control-panel's handle) -- the Debug checkbox already fully
+   hides this panel, a second affordance for the same thing would be
+   redundant. */
+#stats-overlay-drag-handle {
+  position: relative;
+  height: 18px;
+  margin: -10px -12px 6px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: grab;
+  touch-action: none;
+}
+
+#stats-overlay-drag-handle:active {
+  cursor: grabbing;
+}
+
+#stats-overlay-drag-handle span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+#stats-overlay-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Each stat is its own row (label + value) rather than one text blob --
+   see index.html's comment on #stats-overlay for why (per-field hover
+   tooltips need static elements tooltipManager.ts can query at startup). */
+.stat-row {
+  display: flex;
+  gap: 8px;
+}
+
+.stat-label {
+  flex: 0 0 auto;
+  min-width: 78px;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-faint);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#stats-overlay-copy-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .hint-text {
