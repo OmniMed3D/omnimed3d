@@ -6,6 +6,35 @@ records what changed between one committed snapshot and the next, in
 addition to whatever "Last Updated" date `PRD.md`'s own header table
 carries.
 
+## 2026-08-21 — Two §10.2 open questions closed out (one resolved, one proposed)
+
+Both prompted by the AI track revisiting its own open items after wrapping
+up Issue #35 (WebGPU EP) and its follow-ups (fallback recovery, warmup,
+batched inference) — see `docs/verification/inference-worker.md` for the
+underlying measurements both of these cite.
+
+- **§10.2 "Upscaling Computation Location" row: resolved.** Decided a WASM
+  loop over a WebGPU compute shader — `docs/verification/inference-worker.md`
+  §3 measured postprocess (argmax + Nearest-Neighbor upscale) at 1-4ms per
+  slice across all three model variants, negligible next to this stage's
+  own >200ms inference time and nowhere near threatening the §4 500ms/slice
+  target that motivated the question. This was already this track's own
+  call per the row's original Decision Owner ("AI Track — to be decided
+  based on empirical measurement"), so marked Resolved directly.
+- **§10.2 "Acceptable Accuracy Degradation Threshold" row: a concrete
+  number proposed, not unilaterally resolved.** Unlike the row above, this
+  one's Decision Owner was "Open for team alignment" — the whole team, not
+  just this track — so it's marked as a pending proposal rather than
+  Resolved. Proposal: mean Dice degradation ≤ 1.0 percentage point vs. the
+  FP32 reference, and no individual evaluated slice below 0.98 Dice for
+  either class (a two-part mean+floor criterion, not mean-only, so one
+  badly-degraded outlier slice can't hide inside an average of many
+  near-perfect ones). Backed by `docs/verification/inference-worker.md`
+  §4's measured data: INT8's worst case (right-lung Dice mean 0.9985, min
+  0.9931) clears both parts of the proposed threshold with real margin;
+  FP16 is effectively at parity. Needs actual team confirmation before
+  this row flips to Resolved.
+
 ## First git-tracked snapshot — 2026-08-16
 
 This is the first version of `PRD.md` committed to git. Before this, the
