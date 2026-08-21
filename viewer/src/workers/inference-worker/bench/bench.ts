@@ -65,15 +65,15 @@ async function run(): Promise<void> {
 
   for (let i = 0; i < ITERATIONS; i++) {
     let t0 = performance.now();
-    const input = adapter.preprocess(slice);
+    const { tensor, meta } = adapter.preprocess(slice);
     preprocessMs.push(performance.now() - t0);
 
     t0 = performance.now();
-    const logits = await adapter.infer(session, input);
+    const logits = await adapter.infer(session, tensor);
     inferMs.push(performance.now() - t0);
 
     t0 = performance.now();
-    adapter.postprocess(logits, { width: slice.width, height: slice.height });
+    adapter.postprocess(logits, meta, { width: slice.width, height: slice.height });
     postprocessMs.push(performance.now() - t0);
   }
 

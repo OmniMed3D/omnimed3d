@@ -46,12 +46,37 @@ export function simpleBodymask(hu: Grid2D): BinaryGrid2D {
     mask = binaryDilation(isolated, 2);
   }
 
-  const upFloat = zoomNearest({ data: Float32Array.from(mask.data), height: BODYMASK_GRID, width: BODYMASK_GRID }, hu.height, hu.width);
+  const upFloat = zoomNearest(
+    { data: Float32Array.from(mask.data), height: BODYMASK_GRID, width: BODYMASK_GRID },
+    hu.height,
+    hu.width,
+  );
   return {
     data: Uint8Array.from(upFloat.data, (v) => (v !== 0 ? 1 : 0)),
     height: hu.height,
     width: hu.width,
   };
+}
+
+/**
+ * The body-mask bounding box `cropAndResize` cropped to before resizing to
+ * the model's native resolution — [minRow, minCol) inclusive, [maxRow,
+ * maxCol) exclusive, matching `labelComponents`' skimage-style convention.
+ * The model's 256x256 output only ever describes this sub-region of the
+ * original slice, never the full frame; `postprocess.ts` needs this to
+ * place the upscaled mask back at the right offset/size instead of
+ * stretching it to fill the whole slice (REQ-C01/A17 alignment).
+ */
+export interface CropBbox {
+  minRow: number;
+  minCol: number;
+  maxRow: number;
+  maxCol: number;
+}
+
+export interface PreprocessResult {
+  tensor: ort.Tensor;
+  cropBbox: CropBbox;
 }
 
 /**
@@ -61,7 +86,7 @@ export function simpleBodymask(hu: Grid2D): BinaryGrid2D {
  * 4-connected call inside simpleBodymask), then bilinear-resize to the
  * model's native resolution.
  */
-export function cropAndResize(clipped: Grid2D): Grid2D {
+export function cropAndResize(clipped: Grid2D): { grid: Grid2D; bbox: CropBbox } {
   const bmask = simpleBodymask(clipped);
   const { regions } = labelComponents(bmask, 2);
 
@@ -77,7 +102,10 @@ export function cropAndResize(clipped: Grid2D): Grid2D {
     }
   }
 
-  return zoomBilinear({ data: cropped, height: cropHeight, width: cropWidth }, MODEL_RESOLUTION, MODEL_RESOLUTION);
+  return {
+    grid: zoomBilinear({ data: cropped, height: cropHeight, width: cropWidth }, MODEL_RESOLUTION, MODEL_RESOLUTION),
+    bbox: { minRow, minCol, maxRow, maxCol },
+  };
 }
 
 /**
@@ -89,14 +117,14 @@ export function cropAndResize(clipped: Grid2D): Grid2D {
  *   2/3. body-mask threshold+morphology, crop to bbox, bilinear resize to 256x256
  *   4. re-clip upper bound at 600, normalize (HU + 1024) / 1624
  */
-export function lungmaskPreprocess(slice: HuSlice): ort.Tensor {
+export function lungmaskPreprocess(slice: HuSlice): PreprocessResult {
   const clipped: Grid2D = {
     data: Float32Array.from(slice.data, (v) => Math.min(Math.max(v, -1024), 600)),
     height: slice.height,
     width: slice.width,
   };
 
-  const resized = cropAndResize(clipped);
+  const { grid: resized, bbox } = cropAndResize(clipped);
 
   const normalized = new Float32Array(resized.data.length);
   for (let i = 0; i < normalized.length; i++) {
@@ -104,5 +132,8 @@ export function lungmaskPreprocess(slice: HuSlice): ort.Tensor {
     normalized[i] = (clampedUpper + 1024) / 1624;
   }
 
-  return new ort.Tensor("float32", normalized, [1, 1, MODEL_RESOLUTION, MODEL_RESOLUTION]);
+  return {
+    tensor: new ort.Tensor("float32", normalized, [1, 1, MODEL_RESOLUTION, MODEL_RESOLUTION]),
+    cropBbox: bbox,
+  };
 }

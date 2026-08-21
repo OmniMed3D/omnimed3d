@@ -37,7 +37,7 @@ describe("lungmask preprocess vs Python reference", () => {
       const hu = loadFloat32Bin(entry.stem, "hu");
       const reference = loadFloat32Bin(entry.stem, "preprocessed");
 
-      const tensor = lungmaskPreprocess({ data: hu, width: entry.originalWidth, height: entry.originalHeight });
+      const { tensor } = lungmaskPreprocess({ data: hu, width: entry.originalWidth, height: entry.originalHeight });
       const actual = tensor.data as Float32Array;
 
       expect(actual.length).toBe(reference.length);
