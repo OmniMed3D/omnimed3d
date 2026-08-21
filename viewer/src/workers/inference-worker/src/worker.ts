@@ -9,7 +9,11 @@
  * below is this worker's own provisional assumption for a single HU slice,
  * not a confirmed cross-track contract.
  */
-import * as ort from "onnxruntime-web";
+// "onnxruntime-web" (the default subpath) resolves to a bundle that only
+// registers the wasm/webgl backends -- the webgpu backend is a separate
+// subpath (see package.json's `exports["./webgpu"]`), so it has to be
+// imported explicitly to get WebGPU support at all (Issue #35).
+import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { SegmentationAdapter } from "./adapters/types.js";
 import { runSlice, type MaskSliceMessage } from "./pipeline.js";
@@ -55,7 +59,13 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
 
   if (msg.type === "init") {
     adapter = new LungmaskAdapter(msg.modelPath);
-    const options: ort.InferenceSession.SessionOptions = {};
+    // WebGPU first, WASM as fallback -- not a replacement (Issue #35). ORT
+    // assigns each graph node to the first EP in this list that supports
+    // it, falling back to the next one per-node rather than all-or-nothing,
+    // so an op WebGPU can't run (e.g. some quantized INT8 ops, see
+    // docs/verification/inference-worker.md §8) still runs correctly on
+    // WASM instead of failing the whole session.
+    const options: ort.InferenceSession.SessionOptions = { executionProviders: ["webgpu", "wasm"] };
     if (msg.externalDataPath) {
       const bytes = new Uint8Array(await (await fetch(msg.externalDataPath)).arrayBuffer());
       // The embedded external-data reference inside the ONNX graph is the
