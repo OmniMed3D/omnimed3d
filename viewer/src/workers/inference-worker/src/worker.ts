@@ -16,11 +16,28 @@
 import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { SegmentationAdapter } from "./adapters/types.js";
+import { resolveModelPath } from "./modelSelection.js";
 import { runSlice, type MaskSliceMessage } from "./pipeline.js";
 
 interface InitMessage {
   type: "init";
-  modelPath: string;
+  /**
+   * Exact, already-resolved model URL -- used as-is, no hardware-based
+   * selection. Kept for callers that need one specific file regardless of
+   * hardware (e.g. viewer/tests/e2e/shell-mask-integration.spec.ts's dummy
+   * plumbing model, which doesn't care about INT8/FP16 at all). Exactly one
+   * of this or `modelBasePath` must be set.
+   */
+  modelPath?: string;
+  /**
+   * Base path with no variant suffix or extension (e.g.
+   * "/models/lungmask_r231") for hardware-based model selection (Issue
+   * #35): this worker detects WebGPU adapter availability itself and picks
+   * the FP16 or INT8 variant accordingly -- see modelSelection.ts's
+   * resolveModelPath() for why, and the `gpuDetected` field on the
+   * `init-complete` ack if a caller wants to show which was picked.
+   */
+  modelBasePath?: string;
   /**
    * URL/path of the model's external-data companion file (e.g.
    * "lungmask_r231.onnx.data"), for models exported with
@@ -72,7 +89,19 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
 
   if (msg.type === "init") {
-    adapter = new LungmaskAdapter(msg.modelPath);
+    // Cheap capability probe (no session/model involved) -- Issue #35's
+    // hardware-based model selection below, and also informs which EP this
+    // session will actually prefer (see executionProviders just below).
+    const gpuDetected = !!(await navigator.gpu?.requestAdapter());
+
+    const resolvedModelPath = msg.modelBasePath
+      ? resolveModelPath(msg.modelBasePath, gpuDetected)
+      : msg.modelPath;
+    if (!resolvedModelPath) {
+      throw new Error("Inference Worker 'init' message needs either modelPath or modelBasePath");
+    }
+
+    adapter = new LungmaskAdapter(resolvedModelPath);
     // WebGPU first, WASM as fallback -- not a replacement (Issue #35). ORT
     // assigns each graph node to the first EP in this list that supports
     // it, falling back to the next one per-node rather than all-or-nothing,
@@ -88,13 +117,19 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       const externalDataName = msg.externalDataPath.split("/").pop()!;
       options.externalData = [{ path: externalDataName, data: bytes }];
     }
-    session = await ort.InferenceSession.create(msg.modelPath, options);
+    session = await ort.InferenceSession.create(resolvedModelPath, options);
     // Callers have no other way to know the (async) session load finished
     // -- without this ack, a caller sending hu-slice right after init()
     // races the load and hits the "received a slice before 'init'" error
     // below (found via real browser e2e testing,
-    // viewer/tests/e2e/shell-mask-integration.spec.ts).
-    (self as unknown as Worker).postMessage({ type: "init-complete" });
+    // viewer/tests/e2e/shell-mask-integration.spec.ts). modelPath/gpuDetected
+    // are extra, optional-to-use info for callers that want to show which
+    // variant/hardware path actually got picked (see inferenceControls.ts).
+    (self as unknown as Worker).postMessage({
+      type: "init-complete",
+      modelPath: resolvedModelPath,
+      gpuDetected,
+    });
     return;
   }
 

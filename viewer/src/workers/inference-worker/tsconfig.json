@@ -4,6 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "WebWorker"],
+    // TS's default "WebWorker" lib doesn't include WebGPU types -- worker.ts
+    // calls navigator.gpu.requestAdapter() directly for Issue #35's
+    // hardware-based model selection, needing this devDependency (the same
+    // package onnxruntime-common's own types reference for the same reason,
+    // see its type-helper.d.ts).
+    "types": ["@webgpu/types"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
