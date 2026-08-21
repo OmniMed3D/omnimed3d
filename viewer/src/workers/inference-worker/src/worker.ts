@@ -15,7 +15,7 @@
 // imported explicitly to get WebGPU support at all (Issue #35).
 import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
-import type { SegmentationAdapter } from "./adapters/types.js";
+import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
 import { resolveModelPath } from "./modelSelection.js";
 import { runSlice, type MaskSliceMessage } from "./pipeline.js";
 
@@ -71,6 +71,26 @@ type IncomingMessage = InitMessage | HuSliceMessage;
 let adapter: SegmentationAdapter | undefined;
 let session: ort.InferenceSession | undefined;
 
+/**
+ * Confirms a session can actually run a forward pass, not just that
+ * `ort.InferenceSession.create()` resolved (issue: "Recover from WebGPU
+ * session/inference failure after hardware detection succeeds" --
+ * `navigator.gpu.requestAdapter()` succeeding, per Issue #35's
+ * `gpuDetected` probe, doesn't guarantee `session.run()` itself works --
+ * a Dawn/driver quirk could still make the first real inference fail).
+ * Runs the adapter's own preprocess()/infer() on a throwaway all-zero
+ * slice -- deliberately reuses the real code path (not a hand-rolled
+ * shaped tensor) so this stays adapter-agnostic; `cropAndResize`'s
+ * "no body-mask region found" fallback (full-frame bbox) already handles
+ * an all-zero input without throwing, confirmed by reading
+ * preprocess.ts directly rather than assumed.
+ */
+async function validateSession(candidate: SegmentationAdapter, candidateSession: ort.InferenceSession): Promise<void> {
+  const probeSlice: HuSlice = { data: new Float32Array(64 * 64), width: 64, height: 64 };
+  const { tensor } = candidate.preprocess(probeSlice);
+  await candidate.infer(candidateSession, tensor);
+}
+
 // Serializes hu-slice processing so at most one session.run() is ever in
 // flight at a time (Issue #35 fallout, found via real browser e2e testing,
 // viewer/tests/e2e/shell-mask-integration.spec.ts): the WASM-only EP
@@ -94,30 +114,63 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // session will actually prefer (see executionProviders just below).
     const gpuDetected = !!(await navigator.gpu?.requestAdapter());
 
-    const resolvedModelPath = msg.modelBasePath
+    const primaryModelPath = msg.modelBasePath
       ? resolveModelPath(msg.modelBasePath, gpuDetected)
       : msg.modelPath;
-    if (!resolvedModelPath) {
+    if (!primaryModelPath) {
       throw new Error("Inference Worker 'init' message needs either modelPath or modelBasePath");
     }
 
-    adapter = new LungmaskAdapter(resolvedModelPath);
     // WebGPU first, WASM as fallback -- not a replacement (Issue #35). ORT
     // assigns each graph node to the first EP in this list that supports
     // it, falling back to the next one per-node rather than all-or-nothing,
     // so an op WebGPU can't run (e.g. some quantized INT8 ops, see
     // docs/verification/inference-worker.md §8) still runs correctly on
     // WASM instead of failing the whole session.
-    const options: ort.InferenceSession.SessionOptions = { executionProviders: ["webgpu", "wasm"] };
+    const primaryOptions: ort.InferenceSession.SessionOptions = { executionProviders: ["webgpu", "wasm"] };
     if (msg.externalDataPath) {
       const bytes = new Uint8Array(await (await fetch(msg.externalDataPath)).arrayBuffer());
       // The embedded external-data reference inside the ONNX graph is the
       // bare filename (see MODEL_SPEC.md / test/pipeline.test.ts) -- the
       // served file must keep that same name for this to line up.
       const externalDataName = msg.externalDataPath.split("/").pop()!;
-      options.externalData = [{ path: externalDataName, data: bytes }];
+      primaryOptions.externalData = [{ path: externalDataName, data: bytes }];
     }
-    session = await ort.InferenceSession.create(resolvedModelPath, options);
+
+    let resolvedModelPath = primaryModelPath;
+    let gpuActive = gpuDetected;
+    let usedFallback = false;
+    try {
+      adapter = new LungmaskAdapter(primaryModelPath);
+      session = await ort.InferenceSession.create(primaryModelPath, primaryOptions);
+      await validateSession(adapter, session);
+    } catch (err) {
+      // Only a modelBasePath (hardware-auto-selected) caller run against a
+      // detected GPU has a fallback target worth retrying with -- an
+      // explicit modelPath caller (e.g. shell-mask-integration.spec.ts's
+      // dummy plumbing model) asked for one exact file and has nothing
+      // else to fall back to, and a caller that already got gpuDetected
+      // false is already on the INT8/WASM baseline this fallback exists to
+      // reach, so there's nowhere further to fall back to either.
+      if (!msg.modelBasePath || !gpuDetected) {
+        throw err;
+      }
+      console.error(
+        "Inference Worker: primary session (gpuDetected=true) failed, falling back to INT8/WASM",
+        err,
+      );
+      usedFallback = true;
+      gpuActive = false;
+      resolvedModelPath = resolveModelPath(msg.modelBasePath, false);
+      adapter = new LungmaskAdapter(resolvedModelPath);
+      // Force wasm-only for the retry -- webgpu just failed for this
+      // session, so there's no reason to let ORT attempt it again here.
+      session = await ort.InferenceSession.create(resolvedModelPath, { executionProviders: ["wasm"] });
+      // Let this one throw for real if it fails too -- INT8/WASM is the
+      // baseline this fallback exists to reach; nothing left below it.
+      await validateSession(adapter, session);
+    }
+
     // Callers have no other way to know the (async) session load finished
     // -- without this ack, a caller sending hu-slice right after init()
     // races the load and hits the "received a slice before 'init'" error
@@ -125,10 +178,16 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // viewer/tests/e2e/shell-mask-integration.spec.ts). modelPath/gpuDetected
     // are extra, optional-to-use info for callers that want to show which
     // variant/hardware path actually got picked (see inferenceControls.ts).
+    // gpuDetected reflects the *active* path (false after a fallback, even
+    // though a GPU adapter really was detected) since that's what actually
+    // determines which model is running; usedFallback distinguishes that
+    // case from "no GPU was ever detected" for anything that wants to
+    // surface the difference.
     (self as unknown as Worker).postMessage({
       type: "init-complete",
       modelPath: resolvedModelPath,
-      gpuDetected,
+      gpuDetected: gpuActive,
+      usedFallback,
     });
     return;
   }
