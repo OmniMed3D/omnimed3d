@@ -17,7 +17,7 @@ import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
 import { resolveModelPath } from "./modelSelection.js";
-import { runBatch, type SliceRequest } from "./pipeline.js";
+import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
 interface InitMessage {
   type: "init";
@@ -151,7 +151,32 @@ function scheduleBatchFlush(): void {
           if (!adapter || !session) {
             throw new Error("Inference Worker received a slice before 'init'");
           }
-          const results = await runBatch(adapter, session, batch);
+          let results: MaskSliceMessage[];
+          try {
+            results = await runBatch(adapter, session, batch);
+          } catch (batchErr) {
+            // Some models have a statically-fixed batch=1 input shape
+            // rather than a dynamic batch axis (confirmed: the dummy
+            // plumbing model viewer/tests/e2e/shell-mask-integration.spec.ts
+            // uses, tests/fixtures/generate-dummy-onnx.py, has no
+            // dynamic_axes at all, unlike the real lungmask export) --
+            // runBatch() throws for those the moment more than one slice
+            // needs batching. Found via a real regression in that test,
+            // not a hypothetical. Fall back to one-at-a-time processing
+            // for this batch (sequential, not Promise.all -- concurrent
+            // session.run() calls are exactly what the original
+            // concurrency-hang fix above exists to prevent) rather than
+            // losing the whole batch silently.
+            console.error(
+              "Inference Worker: batched inference failed, falling back to per-slice for this batch",
+              batch.map((r) => r.sliceIndex),
+              batchErr,
+            );
+            results = [];
+            for (const r of batch) {
+              results.push(await runSlice(adapter, session, r));
+            }
+          }
           for (const result of results) {
             (self as unknown as Worker).postMessage(result, [result.data.buffer]);
           }
