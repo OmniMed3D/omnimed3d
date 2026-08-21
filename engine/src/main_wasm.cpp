@@ -7,6 +7,8 @@
 
 #include <emscripten/emscripten.h>
 
+#include <string>
+
 namespace {
 omnimed3d::rhi::webgpu::WebGPUDevice g_device;
 
@@ -155,6 +157,56 @@ void engine_set_occlusion_enabled(uint32_t enabled) {
 EMSCRIPTEN_KEEPALIVE
 void engine_set_custom_lut_colors(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
     g_device.setCustomColormap(lowR, lowG, lowB, highR, highG, highB);
+}
+
+// Debug/perf overlay (baseline browser-performance measurement --
+// engine/tests/wasm_smoke/shell.html's stats panel). See
+// rhi::Device::getFrameStats/getHardwareInfo's header comments.
+EMSCRIPTEN_KEEPALIVE
+float engine_get_frame_time_ms() {
+    return g_device.getFrameStats().frameTimeMs;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float engine_get_avg_frame_time_ms() {
+    return g_device.getFrameStats().avgFrameTimeMs;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float engine_get_fps() {
+    return g_device.getFrameStats().fps;
+}
+
+// String getters cache into a function-local static std::string, reassigned
+// on every call -- safe under Emscripten's single-threaded model, and gives
+// the returned char* a lifetime that outlives the call for
+// Module.UTF8ToString() on the JS side.
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_gpu_vendor() {
+    static std::string s;
+    s = g_device.getHardwareInfo().vendor;
+    return s.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_gpu_architecture() {
+    static std::string s;
+    s = g_device.getHardwareInfo().architecture;
+    return s.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_gpu_device() {
+    static std::string s;
+    s = g_device.getHardwareInfo().device;
+    return s.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_gpu_description() {
+    static std::string s;
+    s = g_device.getHardwareInfo().description;
+    return s.c_str();
 }
 
 }  // extern "C"

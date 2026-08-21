@@ -233,6 +233,31 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     }
     self->device_ = device;
     self->queue_ = wgpuDeviceGetQueue(device);
+
+    // vendor/architecture/device/description are WGPUStringView in this
+    // emsdk's actual compiled-against header (the emdawnwebgpu port package
+    // at cache/ports/emdawnwebgpu/, not the older copy under
+    // cache/sysroot/include -- confirmed by hitting a real compile error
+    // from assuming the sysroot copy's plain char const* shape, then
+    // checking the header the compiler actually used). Same .data/.length
+    // shape logStringView() above already handles for the async-callback
+    // message params. Dawn allocates the backing storage;
+    // wgpuAdapterInfoFreeMembers() releases it once copied into
+    // hardwareInfo_'s std::strings.
+    WGPUAdapterInfo adapterInfo{};
+    if (wgpuAdapterGetInfo(self->adapter_, &adapterInfo) == WGPUStatus_Success) {
+        auto toStdString = [](WGPUStringView view) {
+            return (view.data && view.length > 0) ? std::string(view.data, view.length) : std::string();
+        };
+        self->hardwareInfo_.vendor = toStdString(adapterInfo.vendor);
+        self->hardwareInfo_.architecture = toStdString(adapterInfo.architecture);
+        self->hardwareInfo_.device = toStdString(adapterInfo.device);
+        self->hardwareInfo_.description = toStdString(adapterInfo.description);
+        wgpuAdapterInfoFreeMembers(adapterInfo);
+    } else {
+        std::printf("WebGPUDevice: wgpuAdapterGetInfo failed\n");
+    }
+
     self->configureSurface();
     self->createSamplerAndLut();
     self->createPipeline();
@@ -775,6 +800,8 @@ void WebGPUDevice::renderFrame() {
         return;
     }
 
+    frameStats_.recordFrame();
+
     WGPUSurfaceTexture surfaceTexture{};
     wgpuSurfaceGetCurrentTexture(surface_, &surfaceTexture);
     bool const acquired = surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
@@ -1296,6 +1323,18 @@ void WebGPUDevice::resize(uint32_t width, uint32_t height) {
     }
     updateCameraMatrices();
     markAccumulationDirty();
+}
+
+FrameStatsSnapshot WebGPUDevice::getFrameStats() const {
+    return FrameStatsSnapshot{
+        frameStats_.lastFrameTimeMs(),
+        frameStats_.avgFrameTimeMs(),
+        frameStats_.fps(),
+    };
+}
+
+HardwareInfo WebGPUDevice::getHardwareInfo() const {
+    return hardwareInfo_;
 }
 
 }  // namespace omnimed3d::rhi::webgpu

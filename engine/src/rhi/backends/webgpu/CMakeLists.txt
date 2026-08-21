@@ -4,7 +4,7 @@ add_library(rhi_webgpu STATIC
 add_library(rhi::webgpu ALIAS rhi_webgpu)
 
 target_include_directories(rhi_webgpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(rhi_webgpu PUBLIC rhi::interface omnimed3d::core)
+target_link_libraries(rhi_webgpu PUBLIC rhi::interface omnimed3d::core omnimed3d::utils)
 
 # Compiled shader headers (engine/shaders/generated/*.wgsl.hpp), embedded as
 # constexpr C strings by engine/shaders/EmbedShader.cmake -- see

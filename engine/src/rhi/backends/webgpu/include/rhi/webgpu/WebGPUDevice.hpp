@@ -3,6 +3,7 @@
 #include "rhi/Device.hpp"
 
 #include "core/RenderGraph.hpp"
+#include "utils/FrameStats.hpp"
 
 #include <glm/glm.hpp>
 #include <webgpu/webgpu.h>
@@ -52,6 +53,9 @@ public:
     void setOcclusionEnabled(bool enabled) override;
     void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
     void resize(uint32_t width, uint32_t height) override;
+
+    FrameStatsSnapshot getFrameStats() const override;
+    HardwareInfo getHardwareInfo() const override;
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -305,6 +309,13 @@ private:
     // at least once).
     ColorRGB customLowColor_{0, 0, 0};
     ColorRGB customHighColor_{255, 255, 255};
+
+    // Debug/perf overlay state (see getFrameStats()/getHardwareInfo()).
+    // frameStats_ is recorded once per renderFrame(); hardwareInfo_ is
+    // populated once in onDeviceRequested(), when adapter_ first becomes
+    // valid, and never changes after that.
+    utils::FrameStats frameStats_;
+    HardwareInfo hardwareInfo_;
 };
 
 }  // namespace omnimed3d::rhi::webgpu
