@@ -364,4 +364,26 @@ not available this session); the render-scale mechanism above.
 native/WASM engine builds are unaffected. Full `viewer/tests/e2e/` suite
 (23 tests, 2 new — `mobile-render-perf.spec.ts`) passes.
 
+### 2026-08-22 — `feat/viewer-interaction-adaptive-shading`
+
+Not a rendering-technique change, but extends the interaction-adaptive
+mechanism the previous entry added: that entry only dropped the active
+quality tier (step count) during a camera drag. `qualityControls.ts` now
+also forces shading and occlusion shading off for the same duration,
+restoring each to whatever the user actually had selected once the drag
+ends — occlusion in particular does its own extra per-step sampling
+(§1.4a), so leaving it on during a drag was one of the pricier toggles
+still uncovered by the previous fix. The occlusion checkbox
+(`tfDetailControls.ts`) now calls `qualityControls.ts`'s
+`notifyOcclusionSelection()` instead of `engine_set_occlusion_enabled`
+directly, so its selection passes through the same interaction gate the
+tier buttons and shading checkbox already used.
+
+**Verified:** no engine (C++) changes — viewer-only. Full
+`viewer/tests/e2e/` suite (24 tests, 1 new) passes; the new test wraps
+the real `_engine_set_shading_enabled`/`_engine_set_occlusion_enabled`
+WASM exports and asserts both are actually called with 0 during a
+simulated drag and restored to the pre-drag selection (occlusion
+explicitly turned on first, so the restore is unambiguous) on release.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation above, once real profiling access exists -->

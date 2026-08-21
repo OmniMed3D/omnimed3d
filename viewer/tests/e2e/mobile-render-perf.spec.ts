@@ -96,3 +96,71 @@ test("camera drag drops the engine's active quality tier and restores it on rele
     })
     .toBe(2);
 });
+
+test("camera drag also forces shading and occlusion off, restoring both on release (issue #69)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  // Occlusion defaults off -- turn it on first so "restored to 1 after
+  // the drag" is unambiguous evidence of a real restore, not just both
+  // states happening to read 0.
+  await page.locator("#occlusion-enabled").check();
+
+  await page.evaluate(() => {
+    const w = window as unknown as { __shadingCalls: number[]; __occlusionCalls: number[] };
+    w.__shadingCalls = [];
+    w.__occlusionCalls = [];
+    const realShading = window.Module._engine_set_shading_enabled.bind(window.Module);
+    window.Module._engine_set_shading_enabled = (enabled: number) => {
+      w.__shadingCalls.push(enabled);
+      return realShading(enabled);
+    };
+    const realOcclusion = window.Module._engine_set_occlusion_enabled.bind(window.Module);
+    window.Module._engine_set_occlusion_enabled = (enabled: number) => {
+      w.__occlusionCalls.push(enabled);
+      return realOcclusion(enabled);
+    };
+  });
+
+  const canvas = page.locator("#canvas");
+  const box = (await canvas.boundingBox())!;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+
+  await page.mouse.move(centerX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(centerX + 60, centerY + 30, { steps: 5 });
+
+  const lastValue = (calls: number[]) => calls[calls.length - 1];
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const w = window as unknown as { __shadingCalls: number[] };
+        return w.__shadingCalls[w.__shadingCalls.length - 1];
+      }),
+    )
+    .toBe(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const w = window as unknown as { __occlusionCalls: number[] };
+        return w.__occlusionCalls[w.__occlusionCalls.length - 1];
+      }),
+    )
+    .toBe(0);
+
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => {
+      const calls = await page.evaluate(() => (window as unknown as { __shadingCalls: number[] }).__shadingCalls);
+      return lastValue(calls);
+    })
+    .toBe(1);
+  await expect
+    .poll(async () => {
+      const calls = await page.evaluate(() => (window as unknown as { __occlusionCalls: number[] }).__occlusionCalls);
+      return lastValue(calls);
+    })
+    .toBe(1);
+});
