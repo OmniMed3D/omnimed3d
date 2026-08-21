@@ -717,3 +717,48 @@ WebGPU op coverage for quantized graphs, not a flaw in the quantization
 itself. Any future decision to pick a single default model/EP combination
 should account for this rather than assuming "WebGPU + INT8" stacks both
 optimizations additively — here, they partially cancel.
+
+## 9. WebGPU Session/Inference Failure Recovery (2026-08-21)
+
+§8.4's hardware-based model selection (`resolveModelPath`) only checks
+whether a WebGPU *adapter* is obtainable -- it never confirmed the
+session actually works. This section closes that gap: `worker.ts` now
+validates the session with one throwaway inference (a synthetic all-zero
+slice through the adapter's real `preprocess()`/`infer()`, not a
+hand-rolled tensor, so this stays adapter-agnostic) immediately after
+creation, and if either session creation or that validation throws,
+retries as INT8 forced to `executionProviders: ["wasm"]` (WebGPU already
+failed once, so it isn't given a second chance in the retry). Falls back
+only when the caller used `modelBasePath` with a detected GPU -- an
+explicit `modelPath` caller or an already-WASM caller has no further
+fallback target and the original error propagates.
+
+**Verified against a real failure, not a mock:** the FP16 model URL was
+routed to 5 bytes of garbage (an invalid ONNX protobuf), making
+`ort.InferenceSession.create()` throw for a genuine reason rather than a
+simulated one -- `worker.ts`'s try/catch doesn't distinguish *why*
+creation failed, so this exercises the identical code path a real
+Dawn/driver failure would. Required a new test harness
+(`bench/worker-harness.html` + `bench/workerHarness.ts`) that
+instantiates the real `worker.ts` as an actual `new Worker(...)` and
+drives it via `postMessage`, since the existing `bench.ts` calls the
+adapter/session directly on the main thread and never exercises
+`worker.ts`'s own `self.onmessage` handling at all.
+
+**Results** (`e2e/worker-fallback.spec.ts`, both passing): the broken-FP16
+case recovers to INT8 on WASM (`usedFallback: true`, `gpuDetected: false`,
+resolved path contains `int8`); a companion healthy-FP16 case confirms no
+regression (`usedFallback: false`, `gpuDetected: true`, resolved path
+contains `fp16`). `inferenceControls.ts`'s status line now also says
+"(WebGPU failed, fell back automatically)" when `usedFallback` is true --
+without it, a fallback looks identical on screen to "no GPU was ever
+available," silently hiding the failure.
+
+**Deliberately not addressed here:** a latency-heuristic failure signal
+(inference taking dramatically longer than expected as a proxy for "this
+isn't really running on WebGPU"). §8.4 measured up to ~2000ms of
+first-inference shader-compile warmup on a *working* WebGPU session --
+without the separate warmup-hiding work (moving that cost into session
+init) landing first, there's no reliable threshold that distinguishes
+"broken" from "just cold," so this was left out rather than picking an
+arbitrary number.
