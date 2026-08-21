@@ -39,12 +39,17 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
   // this listens alongside it without replacing it.
   inferenceWorker.addEventListener(
     "message",
-    (event: MessageEvent<{ type: string; gpuDetected?: boolean }>) => {
+    (event: MessageEvent<{ type: string; gpuDetected?: boolean; usedFallback?: boolean }>) => {
       if (event.data.type === "init-complete") {
         button.disabled = true;
         button.textContent = "Segmentation model loaded";
         const variant = event.data.gpuDetected ? "FP16, WebGPU" : "INT8, WASM";
-        status.textContent = `lungmask R231 (${variant}) active -- real lung segmentation, not a placeholder.`;
+        // usedFallback (recover-from-WebGPU-failure issue) means gpuDetected
+        // is false despite a GPU adapter actually being found -- worth
+        // saying so explicitly, since otherwise this looks identical to "no
+        // GPU was ever available" even though something failed underneath.
+        const note = event.data.usedFallback ? " (WebGPU failed, fell back automatically)" : "";
+        status.textContent = `lungmask R231 (${variant}) active${note} -- real lung segmentation, not a placeholder.`;
       }
     },
   );
