@@ -125,7 +125,7 @@ float sampleN(float3 uvw, float windowCenter, float windowWidth)
     return clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
 }
 
-// Central-difference gradient of the *windowed* density n (not raw HU) at
+// Forward-difference gradient of the *windowed* density n (not raw HU) at
 // uvw, converted from normalized-texture-space to world-space mm by
 // dividing each axis by its own physical voxel spacing (worldTexelSize) --
 // doing this per-axis rather than with one scalar step matters on
@@ -139,16 +139,30 @@ float sampleN(float3 uvw, float windowCenter, float windowWidth)
 // have predictable behavior across different loaded volumes/windows.
 // -(gradient) points from higher to lower density, i.e. outward from
 // tissue, which is the convention fragmentMain's N.L term expects.
+//
+// Was central-difference (6 volume samples: +/-x/y/z) until a real-device
+// GPU-timing investigation (docs/current/PERF_BASELINE_2026-08-21.md
+// §11-12) found shading responsible for ~71% of this pass's per-step
+// cost -- centerN is fragmentMain's own already-sampled n at uvw (no
+// extra fetch), reused here instead of re-sampling it a second time, so
+// this only takes 3 additional samples (+x/+y/+z) instead of 6. This
+// halves gradWorld's magnitude relative to the old central-difference
+// convention (f(x+h)-f(x) approximates h*grad, vs the old f(x+h)-f(x-h)
+// approximating 2h*grad) -- the *2.0 below restores the original scale
+// so kGradientOpacityReferenceMagnitude and the gradient-opacity
+// strength slider's existing feel don't need retuning. Direction is
+// unaffected either way (normalize() removes any uniform scale factor);
+// this only trades a small amount of directional accuracy (forward-
+// difference is first-order vs central-difference's second-order, i.e.
+// slightly more sensitive to local asymmetry in the density field) for
+// half the sampling cost.
 float3 computeGradient(float3 uvw, float3 texelUvw, float3 worldTexelSize, float windowCenter, float windowWidth,
-                        out float outMagnitude)
+                        float centerN, out float outMagnitude)
 {
-    float dx = sampleN(uvw + float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth) -
-               sampleN(uvw - float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth);
-    float dy = sampleN(uvw + float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth) -
-               sampleN(uvw - float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth);
-    float dz = sampleN(uvw + float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth) -
-               sampleN(uvw - float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth);
-    float3 gradWorld = float3(dx, dy, dz) / worldTexelSize;
+    float dx = sampleN(uvw + float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth) - centerN;
+    float dy = sampleN(uvw + float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth) - centerN;
+    float dz = sampleN(uvw + float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth) - centerN;
+    float3 gradWorld = 2.0 * float3(dx, dy, dz) / worldTexelSize;
     outMagnitude = length(gradWorld);
     if (outMagnitude < 1e-8)
     {
@@ -294,7 +308,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         float gradMagnitude = 0.0;
         if (needsGradient)
         {
-            normal = computeGradient(uvw, texelUvw, worldTexelSize, windowCenter, windowWidth, gradMagnitude);
+            normal = computeGradient(uvw, texelUvw, worldTexelSize, windowCenter, windowWidth, n, gradMagnitude);
         }
 
         if (shadingEnabled)
