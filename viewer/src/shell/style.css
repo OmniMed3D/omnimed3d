@@ -102,6 +102,11 @@ canvas {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  /* Mobile drag-to-orbit fix (cameraControls.ts's own header comment) --
+     without this, a touch drag on the canvas triggers the browser's own
+     native scroll/pan gesture before pointermove ever reaches JS, no
+     matter what preventDefault() does in the handler. */
+  touch-action: none;
 }
 
 /* Visual polish pass: the empty-canvas hint (Nielsen #10). Centered,
