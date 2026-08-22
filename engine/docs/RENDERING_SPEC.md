@@ -20,7 +20,7 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 
 1. **Window/level normalization** — clamps raw HU into `[0,1]` as `n`, using `windowCenter`/`windowWidth`. (`engine_set_window_level`, `engine_set_colormap_preset`)
 2. **Pre-integrated transfer-function lookup** — samples a 256×256 2D LUT (binding 5) at `(frontN, backN)` to get this step segment's average color (`colorBar`) and average classification value (`sBar`). Compared to a single-point classification, this reduces thin high-contrast structures being missed between steps at low quality tiers (fewer/coarser steps). When `sf==sb` (consecutive steps' `n` values are nearly equal) it converges to the original single-point classification exactly. `sBar` is then scaled by `densityScale` (§1.4a, default `1.0` — no change) before it reaches absorption.
-3. **Gradient computation** — a central-difference gradient of the *windowed* density `n` (not raw HU, so its magnitude stays in a bounded, window-relative range) is computed once per step, shared by shading's normal and gradient-opacity's magnitude below. Skipped entirely when neither shading nor gradient-opacity is active, to avoid the extra sampling cost.
+3. **Gradient computation** — a forward-difference gradient of the *windowed* density `n` (not raw HU, so its magnitude stays in a bounded, window-relative range) is computed once per step, shared by shading's normal and gradient-opacity's magnitude below. Reuses this step's own already-sampled `n` as the center point (3 additional samples: +x/+y/+z) rather than re-sampling it and also sampling -x/-y/-z (central-difference, 6 samples) — changed 2026-08-22 after a real-device investigation found shading responsible for ~71% of this pass's per-step cost; the magnitude is scaled by `2.0` to preserve the original central-difference convention (and therefore `gradientOpacityStrength`'s existing feel) unchanged. Skipped entirely when neither shading nor gradient-opacity is active, to avoid the extra sampling cost.
 4. **Gradient-based Lambert shading** (optional, `engine_set_shading_enabled`) — the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.35) + diffuse(0.65)*max(N·L,0)*(1-occlusion*occlusionStrength)`. The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is also on) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
@@ -385,5 +385,49 @@ the real `_engine_set_shading_enabled`/`_engine_set_occlusion_enabled`
 WASM exports and asserts both are actually called with 0 during a
 simulated drag and restored to the pre-drag selection (occlusion
 explicitly turned on first, so the restore is unambiguous) on release.
+
+**Correction (2026-08-22, see the next entry below):** this entry's own
+claim that occlusion is "one of the pricier toggles" was an unverified
+assumption, not a measurement. A direct GPU-cost sweep afterward found
+the opposite: shading (the gradient computation) is responsible for
+~71% of this pass's per-step cost, occlusion only ~3%. Kept here
+unedited for an accurate record of what was believed at the time;
+extending the mechanism to both was still the right call (neither
+toggle is harmful to force off), just not for the reason originally
+given.
+
+### 2026-08-22 — `feat/engine-forward-diff-gradient`
+
+Follow-up to the previous two entries: a real-device investigation
+(`docs/current/PERF_BASELINE_2026-08-21.md` §11-12) found shading's
+gradient computation (§1.2 step 3) responsible for ~71% of the
+raymarch pass's per-step cost, versus ~3% for occlusion shading —
+correcting the previous entry's unverified assumption that occlusion
+was the pricier of the two. `computeGradient()`
+(`engine/shaders/src/volume_raymarch.slang`) switched from
+central-difference (6 volume samples: +/-x/y/z) to forward-difference
+(3 samples: +x/+y/+z), reusing `fragmentMain`'s own already-sampled
+center point `n` instead of re-sampling it a second time. Magnitude is
+scaled by `2.0` to preserve the original central-difference convention
+(and `gradientOpacityStrength`'s existing feel) unchanged; direction is
+unaffected either way (`normalize()` removes any uniform scale factor).
+Trades a small amount of directional accuracy (first-order vs
+central-difference's second-order approximation) for half the sampling
+cost.
+
+**Measured (same real-device methodology as §11-12, Medium tier,
+default view, 2560×1440):** shading's marginal cost dropped from
++4.35ms to +1.88ms (~57% reduction, slightly better than the ~50% a
+pure sample-count halving would predict — reusing the center sample
+removes a redundant fetch too). Total raymarch cost with shading and
+occlusion both on: 6.15ms → 4.26ms (~31%).
+
+**Verified:** shader compiles cleanly to both WGSL (`wasm-windows`) and
+SPIR-V (native `windows-default`, `compile_shaders` target built
+explicitly since nothing links it into the native build yet — see §7
+of `CLAUDE.md`/build docs). Native `ctest` passes. Full
+`viewer/tests/e2e/` suite (24 tests) passes with no regressions —
+screenshot-based tests confirm shading on/off still visibly changes the
+frame, i.e. shading still does something, not just that nothing broke.
 
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation above, once real profiling access exists -->
