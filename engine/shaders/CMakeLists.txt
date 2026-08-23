@@ -79,5 +79,6 @@ endfunction()
 compile_slang_shader(volume_raymarch kVolumeRaymarchWgsl)
 compile_slang_shader(axial_slice kAxialSliceWgsl)
 compile_slang_shader(accumulation_blit kAccumulationBlitWgsl)
+compile_slang_shader(gradient_bake kGradientBakeWgsl)
 
 add_custom_target(compile_shaders DEPENDS ${SHADER_OUTPUTS})

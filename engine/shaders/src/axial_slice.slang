@@ -39,6 +39,12 @@ struct AxialSliceUBO
 // per-pixel slice has no ray segment to pre-integrate over, so this view
 // keeps using lutTex's direct per-pixel classification above instead.
 [[vk::binding(5, 0)]] Texture2D<float4> preintegratedLutTex;  // unused in this shader
+// Declared for the same shared-bind-group-layout reason as
+// preintegratedLutTex above -- a single-plane view has no ray to shade
+// along, so this shader never samples the precomputed gradient volume
+// (gradient_bake.slang, issue #81's own follow-up) volume_raymarch.slang
+// uses.
+[[vk::binding(6, 0)]] Texture3D<float4> gradientTex;  // unused in this shader
 
 // Same fixed highlight color as volume_raymarch.slang -- one lung model,
 // one class set for this MVP, not a per-class palette.

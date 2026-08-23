@@ -46,6 +46,14 @@ struct RaymarchUBO
 // as axial_slice.slang, which still uses it directly for its per-pixel,
 // non-ray-marched classification) but this shader no longer samples it.
 [[vk::binding(5, 0)]] Texture2D<float4> preintegratedLutTex;  // 256x256, (front,back) -> (colorBar.rgb, sBar)
+// Precomputed raw-HU gradient (gradient_bake.slang, issue #81's own
+// follow-up) -- xyz = dHU/d(x,y,z) in HU/mm at each voxel, w unused.
+// Same dimensions as volumeTex; sampled trilinearly at the same uvw a
+// step's density sample uses, for a gradient field as spatially
+// continuous as the density field it's derived from. See
+// fragmentMain's own comment on why this replaced a per-step
+// computeGradient() call.
+[[vk::binding(6, 0)]] Texture3D<float4> gradientTex;
 
 // Mask overlay highlight -- one fixed color for this MVP (PRD P0 scope: one
 // lung model, one class set; not a per-class palette).
@@ -82,12 +90,13 @@ static const float3 kMaskHighlightColor = float3(1.0, 0.15, 0.15);
 static const float kShadingAmbient = 0.55;
 static const float kShadingDiffuse = 0.45;
 
-// Normalizes computeGradient()'s magnitude output (of windowed n, per mm)
-// into roughly [0,1] for gradientOpacityStrength (§6.3) -- an untuned
-// reference value; the strength slider is the actual user-facing control,
-// this constant just sets its effective sensitivity. Not derived from
-// window width because the gradient is already computed on window-
-// normalized n (see computeGradient's header comment), so this only needs
+// Normalizes fragmentMain's windowed-gradient magnitude (see its own
+// comment on gradientTex) into roughly [0,1] for gradientOpacityStrength
+// (§6.3) -- an untuned reference value; the strength slider is the
+// actual user-facing control, this constant just sets its effective
+// sensitivity. Not derived from window width because the gradient read
+// out of gradientTex is already converted to window-normalized units
+// (divided by windowWidth) before this is applied, so this only needs
 // to account for typical edge sharpness relative to voxel spacing.
 static const float kGradientOpacityReferenceMagnitude = 2.0;
 
@@ -136,55 +145,6 @@ float sampleN(float3 uvw, float windowCenter, float windowWidth)
 {
     float raw = volumeTex.SampleLevel(linearSampler, uvw, 0.0);
     return clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
-}
-
-// Forward-difference gradient of the *windowed* density n (not raw HU) at
-// uvw, converted from normalized-texture-space to world-space mm by
-// dividing each axis by its own physical voxel spacing (worldTexelSize) --
-// doing this per-axis rather than with one scalar step matters on
-// anisotropic volumes (thick-slice CT/MR): using a single isotropic step
-// would skew the computed gradient direction toward the coarser axis.
-// Using n instead of raw HU doesn't change the returned *direction* (n is
-// just raw HU rescaled by a positive per-window constant, and normalize()
-// removes magnitude entirely), but it does give outMagnitude a bounded,
-// window-relative range instead of one that varies wildly with each
-// volume's raw HU scale -- needed for gradientOpacityStrength (§6.3) to
-// have predictable behavior across different loaded volumes/windows.
-// -(gradient) points from higher to lower density, i.e. outward from
-// tissue, which is the convention fragmentMain's N.L term expects.
-//
-// Was central-difference (6 volume samples: +/-x/y/z) until a real-device
-// GPU-timing investigation (docs/current/PERF_BASELINE_2026-08-21.md
-// §11-12) found shading responsible for ~71% of this pass's per-step
-// cost -- centerN is fragmentMain's own already-sampled n at uvw (no
-// extra fetch), reused here instead of re-sampling it a second time, so
-// this only takes 3 additional samples (+x/+y/+z) instead of 6. This
-// halves gradWorld's magnitude relative to the old central-difference
-// convention (f(x+h)-f(x) approximates h*grad, vs the old f(x+h)-f(x-h)
-// approximating 2h*grad) -- the *2.0 below restores the original scale
-// so kGradientOpacityReferenceMagnitude and the gradient-opacity
-// strength slider's existing feel don't need retuning. Direction is
-// unaffected either way (normalize() removes any uniform scale factor);
-// this only trades a small amount of directional accuracy (forward-
-// difference is first-order vs central-difference's second-order, i.e.
-// slightly more sensitive to local asymmetry in the density field) for
-// half the sampling cost.
-float3 computeGradient(float3 uvw, float3 texelUvw, float3 worldTexelSize, float windowCenter, float windowWidth,
-                        float centerN, out float outMagnitude)
-{
-    float dx = sampleN(uvw + float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth) - centerN;
-    float dy = sampleN(uvw + float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth) - centerN;
-    float dz = sampleN(uvw + float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth) - centerN;
-    float3 gradWorld = 2.0 * float3(dx, dy, dz) / worldTexelSize;
-    outMagnitude = length(gradWorld);
-    if (outMagnitude < 1e-8)
-    {
-        // Flat/uniform region: no well-defined gradient direction. A zero
-        // vector makes the caller's N.L term evaluate to 0 (ambient-only
-        // shading there) rather than risking a normalize(0) NaN.
-        return float3(0.0, 0.0, 0.0);
-    }
-    return -gradWorld / outMagnitude;
 }
 
 // Directional Occlusion Shading (§6.2) -- a handful of short secondary
@@ -323,12 +283,28 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         // below is a fixed constant, no gradient sample required), but
         // gradient-opacity modulation is a separate feature that still
         // needs it regardless of shading mode.
+        //
+        // Reads gradientTex (precomputed raw-HU gradient, gradient_bake.slang,
+        // issue #81's own follow-up) instead of computing it here every
+        // step -- was the raymarch pass's dominant per-step cost (~71% per
+        // a real-device GPU-timing investigation) before this. Dividing by
+        // windowWidth converts the raw-HU-per-mm value into the same
+        // window-normalized-per-mm units the old runtime computation
+        // produced (n = (raw-center)/width is an affine rescaling of raw
+        // HU, so its gradient is exactly the raw gradient over windowWidth
+        // -- see gradient_bake.slang's own header comment for the one
+        // behavior difference this doesn't replicate: clamp-boundary
+        // zeroing outside the current window). -(gradient) points from
+        // higher to lower density, i.e. outward from tissue, the
+        // convention the N.L term below expects.
         bool needsGradient = (shadingEnabled && !shadingFlat) || gradientOpacityStrength > 0.0;
         float3 normal = float3(0.0, 0.0, 0.0);
         float gradMagnitude = 0.0;
         if (needsGradient)
         {
-            normal = computeGradient(uvw, texelUvw, worldTexelSize, windowCenter, windowWidth, n, gradMagnitude);
+            float3 gradWorld = gradientTex.SampleLevel(linearSampler, uvw, 0.0).xyz / windowWidth;
+            gradMagnitude = length(gradWorld);
+            normal = gradMagnitude < 1e-8 ? float3(0.0, 0.0, 0.0) : -gradWorld / gradMagnitude;
         }
 
         if (shadingEnabled)

@@ -23,17 +23,18 @@
  *   mechanism after Mini-Engine-reference's own "adaptive SPP during
  *   camera motion" pattern showed the same interaction-gated idea
  *   generalizes to any per-sample cost, not just step count.
- *   Shading (when the user has it on) drops to shading *mode 2*
- *   ("on-flat", `WebGPUDevice::setShadingMode`'s header comment) rather
- *   than fully off (issue #81) -- a real-device GPU-timing
- *   investigation found shading's per-step gradient computation is the
- *   raymarch pass's dominant cost (not occlusion, despite this file's
- *   own earlier assumption otherwise), so it's still worth dropping
- *   during a drag, but disabling shading outright turned out to cause a
- *   visible brightness pop the instant a drag started -- mode 2 keeps
- *   the same ambient/diffuse falloff shape with a fixed cheap diffuse
- *   term instead of skipping it, avoiding both the gradient's cost and
- *   the pop.
+ *   Shading is deliberately *not* part of this list (issue #81's own
+ *   follow-up, precomputing the raymarch gradient at load time instead
+ *   of sampling it per step): shading used to drop to a cheap flat
+ *   approximation (mode 2, see git history/RENDERING_SPEC.md) during a
+ *   drag, both to skip the gradient's sampling cost and to avoid the
+ *   brightness pop that fully disabling shading caused -- but
+ *   precomputing the gradient made real shading (mode 1) itself so
+ *   cheap (measured ~0.6ms slower than the flat approximation, down
+ *   from ~1.9ms) that the whole tradeoff stopped being worth its own
+ *   complexity. Shading now always reflects the user's actual
+ *   selection, interacting or not -- no pop, since nothing about it
+ *   ever changes at interaction boundaries.
  * - Startup auto-downgrade: main.ts calls applyStartupAutoTier() once,
  *   after sampling wall-clock frame time for a few frames post-load. A
  *   phone whose *static* frame is already too slow gets no benefit from
@@ -50,11 +51,12 @@
 const DEFAULT_QUALITY_TIER = 1; // Medium -- matches WebGPUDevice's kDefaultQualityTier.
 const INTERACTION_QUALITY_TIER = 0; // Low -- floor while actively dragging/orbiting.
 
-// Shading modes for engine_set_shading_enabled (issue #81) -- 0=off,
-// 1=on, 2=on-flat (see WebGPUDevice::setShadingMode's header comment).
+// Shading modes for engine_set_shading_enabled -- 0=off, 1=on (mode 2,
+// "on-flat", also exists at the engine level -- see
+// WebGPUDevice::setShadingMode's header comment -- but nothing in this
+// file uses it anymore, per this file's own header comment on why).
 const SHADING_OFF = 0;
 const SHADING_ON = 1;
-const SHADING_ON_FLAT = 2;
 
 // Must match WebGPUDevice's own member defaults (shadingEnabled_=true,
 // occlusionEnabled_=false) -- see tfDetailControls.ts's header comment
@@ -73,9 +75,11 @@ function setActiveTierButton(tier: number): void {
 }
 
 // Applies the current effective state to the engine -- the user's own
-// selections while idle, or the interaction floor (Low tier, shading
-// dropped to its cheap flat mode if the user has it on at all, occlusion
-// off) while a drag is in progress. Called on every state change
+// tier/occlusion selections while idle, or the interaction floor (Low
+// tier, occlusion off) while a drag is in progress. Shading always
+// reflects userSelectedShadingEnabled regardless of interacting -- see
+// this file's header comment for why it's no longer part of the
+// interaction-adaptive floor. Called on every state change
 // (tier/shading/occlusion selection, or entering/leaving interaction)
 // rather than diffing what actually changed -- these are infrequent
 // UI-driven calls, not per-frame, so the redundant WASM calls this
@@ -84,11 +88,7 @@ function setActiveTierButton(tier: number): void {
 // bookkeeping for.
 function applyEngineState(): void {
   window.Module._engine_set_quality_tier(interacting ? INTERACTION_QUALITY_TIER : userSelectedTier);
-  let shadingMode = SHADING_OFF;
-  if (userSelectedShadingEnabled) {
-    shadingMode = interacting ? SHADING_ON_FLAT : SHADING_ON;
-  }
-  window.Module._engine_set_shading_enabled(shadingMode);
+  window.Module._engine_set_shading_enabled(userSelectedShadingEnabled ? SHADING_ON : SHADING_OFF);
   window.Module._engine_set_occlusion_enabled(interacting ? 0 : userSelectedOcclusionEnabled ? 1 : 0);
 }
 

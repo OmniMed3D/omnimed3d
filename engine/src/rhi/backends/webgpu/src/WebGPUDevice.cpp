@@ -2,6 +2,7 @@
 
 #include "accumulation_blit.wgsl.hpp"
 #include "axial_slice.wgsl.hpp"
+#include "gradient_bake.wgsl.hpp"
 #include "volume_raymarch.wgsl.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -229,20 +230,44 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     // correct instead of a guess.
     self->timestampQuerySupported_ = wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery) != 0U;
 
+    // Default maxBufferSize (256 MiB) is too small for gradientTexture_
+    // (issue #81's own follow-up) on a volume of any real clinical size --
+    // Dawn's internal lazy-clear-before-first-use for a storage texture
+    // that size needs a staging buffer as large as the texture itself,
+    // which silently failed validation against the default limit
+    // (confirmed via a real "Buffer size ... exceeds the max buffer size
+    // limit" console warning firing every frame, not assumed) and left
+    // the raymarch output black. Requesting more than the default is safe
+    // -- wgpuAdapterGetLimits() reports what this adapter can actually
+    // support, and min() below never asks for more than that, so a weaker
+    // adapter that genuinely can't go past the default still gets exactly
+    // the default (feature-detected here, matching this file's own
+    // `timestamp-query` handling immediately above, not just assumed
+    // available). 512 MiB comfortably covers the demo CT's ~266 MiB
+    // gradient texture with headroom for a somewhat larger clinical
+    // volume; CLAUDE.md #8's UBO-size-mismatch lesson is the same
+    // "don't just hope the numbers agree" reasoning applied to buffer
+    // limits instead.
+    WGPULimits adapterLimits = WGPU_LIMITS_INIT;
+    wgpuAdapterGetLimits(adapter, &adapterLimits);
+    constexpr uint64_t kDesiredMaxBufferSize = 512ULL * 1024 * 1024;
+    uint64_t const maxBufferSize = std::min(kDesiredMaxBufferSize, adapterLimits.maxBufferSize);
+    WGPULimits requiredLimits = WGPU_LIMITS_INIT;
+    requiredLimits.maxBufferSize = maxBufferSize;
+
     WGPURequestDeviceCallbackInfo deviceCallbackInfo{};
     deviceCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
     deviceCallbackInfo.callback = &WebGPUDevice::onDeviceRequested;
     deviceCallbackInfo.userdata1 = self;
 
+    WGPUDeviceDescriptor deviceDesc{};
+    deviceDesc.requiredLimits = &requiredLimits;
     if (self->timestampQuerySupported_) {
         WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
-        WGPUDeviceDescriptor deviceDesc{};
         deviceDesc.requiredFeatureCount = 1;
         deviceDesc.requiredFeatures = requiredFeatures;
-        wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
-    } else {
-        wgpuAdapterRequestDevice(adapter, nullptr, deviceCallbackInfo);
     }
+    wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
 }
 
 void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
@@ -283,6 +308,7 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     self->createSamplerAndLut();
     self->createPipeline();
     self->createCompositePipeline();
+    self->createGradientBakePipeline();
     self->createAccumulationResources();
     if (self->timestampQuerySupported_) {
         self->createTimestampQuery();
@@ -589,7 +615,7 @@ void WebGPUDevice::createPipeline() {
     // LUT, declared but unused by axial_slice.slang -- see its own
     // comment), see createRenderPipelineFor()'s header comment for why one
     // bind group layout/pipeline layout/UBO buffer is valid for both.
-    std::array<WGPUBindGroupLayoutEntry, 6> entries{};
+    std::array<WGPUBindGroupLayoutEntry, 7> entries{};
     entries[0].binding = 0;
     entries[0].visibility = WGPUShaderStage_Fragment;
     entries[0].buffer.type = WGPUBufferBindingType_Uniform;
@@ -617,6 +643,15 @@ void WebGPUDevice::createPipeline() {
     entries[5].visibility = WGPUShaderStage_Fragment;
     entries[5].texture.sampleType = WGPUTextureSampleType_Float;
     entries[5].texture.viewDimension = WGPUTextureViewDimension_2D;
+
+    // Precomputed gradient volume (issue #81's own follow-up,
+    // gradient_bake.slang) -- see volume_raymarch.slang's own binding-6
+    // comment. Sampled trilinearly (linearSampler_, entry 2 above), so
+    // Float (filterable), not UnfilterableFloat.
+    entries[6].binding = 6;
+    entries[6].visibility = WGPUShaderStage_Fragment;
+    entries[6].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[6].texture.viewDimension = WGPUTextureViewDimension_3D;
 
     WGPUBindGroupLayoutDescriptor bglDesc{};
     bglDesc.entryCount = entries.size();
@@ -698,6 +733,102 @@ void WebGPUDevice::createCompositePipeline() {
     pipelineDesc.multisample.mask = 0xFFFFFFFF;
     pipelineDesc.fragment = &fragmentState;
     compositePipeline_ = wgpuDeviceCreateRenderPipeline(device_, &pipelineDesc);
+}
+
+void WebGPUDevice::createGradientBakePipeline() {
+    gradientBakeShaderModule_ = createShaderModuleFromWgsl(device_, kGradientBakeWgsl);
+
+    std::array<WGPUBindGroupLayoutEntry, 3> entries{};
+    entries[0].binding = 0;
+    entries[0].visibility = WGPUShaderStage_Compute;
+    entries[0].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[0].texture.viewDimension = WGPUTextureViewDimension_3D;
+
+    entries[1].binding = 1;
+    entries[1].visibility = WGPUShaderStage_Compute;
+    // WriteOnly, matching gradient_bake.slang's WTexture3D declaration
+    // (its own comment explains why RWTexture3D's default read_write
+    // access doesn't work here -- RGBA16Float isn't one of the handful of
+    // formats WebGPU's base feature set allows read-write storage access
+    // for).
+    entries[1].storageTexture.access = WGPUStorageTextureAccess_WriteOnly;
+    entries[1].storageTexture.format = WGPUTextureFormat_RGBA16Float;
+    entries[1].storageTexture.viewDimension = WGPUTextureViewDimension_3D;
+
+    entries[2].binding = 2;
+    entries[2].visibility = WGPUShaderStage_Compute;
+    entries[2].buffer.type = WGPUBufferBindingType_Uniform;
+
+    WGPUBindGroupLayoutDescriptor bglDesc{};
+    bglDesc.entryCount = entries.size();
+    bglDesc.entries = entries.data();
+    gradientBakeBindGroupLayout_ = wgpuDeviceCreateBindGroupLayout(device_, &bglDesc);
+
+    WGPUPipelineLayoutDescriptor layoutDesc{};
+    layoutDesc.bindGroupLayoutCount = 1;
+    layoutDesc.bindGroupLayouts = &gradientBakeBindGroupLayout_;
+    gradientBakePipelineLayout_ = wgpuDeviceCreatePipelineLayout(device_, &layoutDesc);
+
+    WGPUComputePipelineDescriptor pipelineDesc{};
+    pipelineDesc.layout = gradientBakePipelineLayout_;
+    pipelineDesc.compute.module = gradientBakeShaderModule_;
+    pipelineDesc.compute.entryPoint = WGPUStringView{"computeMain", WGPU_STRLEN};
+    gradientBakePipeline_ = wgpuDeviceCreateComputePipeline(device_, &pipelineDesc);
+
+    // GradientBakeParams is one float4 (spacing.xyz, w unused) -- see
+    // gradient_bake.slang's own struct. Rewritten per loadVolume() call
+    // (bakeGradientVolume()), never resized -- its size never changes.
+    WGPUBufferDescriptor paramsDesc{};
+    paramsDesc.size = sizeof(glm::vec4);
+    paramsDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    gradientBakeParamsBuffer_ = wgpuDeviceCreateBuffer(device_, &paramsDesc);
+}
+
+void WebGPUDevice::bakeGradientVolume(uint32_t width, uint32_t height, uint32_t depth,
+                                       float spacingX, float spacingY, float spacingZ) {
+    glm::vec4 const spacing{spacingX, spacingY, spacingZ, 0.0F};
+    wgpuQueueWriteBuffer(queue_, gradientBakeParamsBuffer_, 0, &spacing, sizeof(spacing));
+
+    // Built fresh here rather than kept as a member -- this bind group
+    // references volumeTextureView_/gradientTextureView_, both of which
+    // are recreated on every loadVolume() call, and bakeGradientVolume()
+    // itself only ever runs once per load right after those views exist.
+    std::array<WGPUBindGroupEntry, 3> entries{};
+    entries[0].binding = 0;
+    entries[0].textureView = volumeTextureView_;
+    entries[1].binding = 1;
+    entries[1].textureView = gradientTextureView_;
+    entries[2].binding = 2;
+    entries[2].buffer = gradientBakeParamsBuffer_;
+    entries[2].offset = 0;
+    entries[2].size = sizeof(glm::vec4);
+
+    WGPUBindGroupDescriptor bgDesc{};
+    bgDesc.layout = gradientBakeBindGroupLayout_;
+    bgDesc.entryCount = entries.size();
+    bgDesc.entries = entries.data();
+    WGPUBindGroup bindGroup = wgpuDeviceCreateBindGroup(device_, &bgDesc);
+
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device_, nullptr);
+    WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(encoder, nullptr);
+    wgpuComputePassEncoderSetPipeline(pass, gradientBakePipeline_);
+    wgpuComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, nullptr);
+    // numthreads(4,4,4) in gradient_bake.slang -- round up so every voxel
+    // gets a thread even when a dimension isn't a multiple of 4 (the
+    // shader's own bounds check discards the excess threads harmlessly).
+    uint32_t const groupsX = (width + 3) / 4;
+    uint32_t const groupsY = (height + 3) / 4;
+    uint32_t const groupsZ = (depth + 3) / 4;
+    wgpuComputePassEncoderDispatchWorkgroups(pass, groupsX, groupsY, groupsZ);
+    wgpuComputePassEncoderEnd(pass);
+
+    WGPUCommandBuffer cmdBuffer = wgpuCommandEncoderFinish(encoder, nullptr);
+    wgpuQueueSubmit(queue_, 1, &cmdBuffer);
+
+    wgpuCommandBufferRelease(cmdBuffer);
+    wgpuComputePassEncoderRelease(pass);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuBindGroupRelease(bindGroup);
 }
 
 // (Re)creates accumulationTexture_/View at the current canvasWidth_/
@@ -808,7 +939,7 @@ void WebGPUDevice::rebuildBindGroup() {
         bindGroup_ = nullptr;
     }
 
-    std::array<WGPUBindGroupEntry, 6> entries{};
+    std::array<WGPUBindGroupEntry, 7> entries{};
     entries[0].binding = 0;
     entries[0].buffer = uboBuffer_;
     entries[0].offset = 0;
@@ -828,6 +959,9 @@ void WebGPUDevice::rebuildBindGroup() {
 
     entries[5].binding = 5;
     entries[5].textureView = preintegratedLutTextureView_;
+
+    entries[6].binding = 6;
+    entries[6].textureView = gradientTextureView_;
 
     WGPUBindGroupDescriptor bgDesc{};
     bgDesc.layout = bindGroupLayout_;
@@ -1125,6 +1259,14 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
         wgpuTextureRelease(volumeTexture_);
         volumeTexture_ = nullptr;
     }
+    if (gradientTextureView_) {
+        wgpuTextureViewRelease(gradientTextureView_);
+        gradientTextureView_ = nullptr;
+    }
+    if (gradientTexture_) {
+        wgpuTextureRelease(gradientTexture_);
+        gradientTexture_ = nullptr;
+    }
 
     WGPUTextureDescriptor desc{};
     desc.dimension = WGPUTextureDimension_3D;
@@ -1134,6 +1276,20 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     desc.sampleCount = 1;
     desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
     volumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+
+    // Precomputed gradient volume (issue #81's own follow-up) -- same
+    // voxel dimensions as volumeTexture_, baked by bakeGradientVolume()
+    // below once volumeTextureView_ exists. StorageBinding for the
+    // compute pass's write-only access, TextureBinding for the raymarch
+    // fragment shader's later trilinear read.
+    WGPUTextureDescriptor gradientDesc{};
+    gradientDesc.dimension = WGPUTextureDimension_3D;
+    gradientDesc.size = WGPUExtent3D{width, height, depth};
+    gradientDesc.format = WGPUTextureFormat_RGBA16Float;
+    gradientDesc.mipLevelCount = 1;
+    gradientDesc.sampleCount = 1;
+    gradientDesc.usage = WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding;
+    gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
 
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = volumeTexture_;
@@ -1184,6 +1340,19 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     maskViewDesc.arrayLayerCount = 1;
     maskViewDesc.aspect = WGPUTextureAspect_All;
     maskTextureView_ = wgpuTextureCreateView(maskTexture_, &maskViewDesc);
+
+    WGPUTextureViewDescriptor gradientViewDesc{};
+    gradientViewDesc.format = WGPUTextureFormat_RGBA16Float;
+    gradientViewDesc.dimension = WGPUTextureViewDimension_3D;
+    gradientViewDesc.mipLevelCount = 1;
+    gradientViewDesc.arrayLayerCount = 1;
+    gradientViewDesc.aspect = WGPUTextureAspect_All;
+    gradientTextureView_ = wgpuTextureCreateView(gradientTexture_, &gradientViewDesc);
+
+    // Bakes gradientTexture_ from the just-written volumeTexture_ (issue
+    // #81's own follow-up) -- must run after both texture views above
+    // exist, before rebuildBindGroup() references gradientTextureView_.
+    bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
 
     currentVolumeId_ = volumeId;
     hasVolume_ = true;

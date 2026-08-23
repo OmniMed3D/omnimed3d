@@ -20,8 +20,8 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 
 1. **Window/level normalization** — clamps raw HU into `[0,1]` as `n`, using `windowCenter`/`windowWidth`. (`engine_set_window_level`, `engine_set_colormap_preset`)
 2. **Pre-integrated transfer-function lookup** — samples a 256×256 2D LUT (binding 5) at `(frontN, backN)` to get this step segment's average color (`colorBar`) and average classification value (`sBar`). Compared to a single-point classification, this reduces thin high-contrast structures being missed between steps at low quality tiers (fewer/coarser steps). When `sf==sb` (consecutive steps' `n` values are nearly equal) it converges to the original single-point classification exactly. `sBar` is then scaled by `densityScale` (§1.4a, default `1.0` — no change) before it reaches absorption.
-3. **Gradient computation** — a forward-difference gradient of the *windowed* density `n` (not raw HU, so its magnitude stays in a bounded, window-relative range) is computed once per step, shared by shading's normal and gradient-opacity's magnitude below. Reuses this step's own already-sampled `n` as the center point (3 additional samples: +x/+y/+z) rather than re-sampling it and also sampling -x/-y/-z (central-difference, 6 samples) — changed 2026-08-22 after a real-device investigation found shading responsible for ~71% of this pass's per-step cost; the magnitude is scaled by `2.0` to preserve the original central-difference convention (and therefore `gradientOpacityStrength`'s existing feel) unchanged. Skipped entirely when neither shading nor gradient-opacity is active, to avoid the extra sampling cost.
-4. **Gradient-based Lambert shading** (`engine_set_shading_enabled`, a 3-state mode as of issue #81: `0`=off, `1`=on (default), `2`=on-flat) — modes 0/1 behave as before: the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.55) + diffuse(0.45)*max(N·L,0)*(1-occlusion*occlusionStrength)` (ambient raised from `0.35`/diffuse lowered from `0.65`, sum unchanged at `1.0`, issue #81 — a fixed key light rarely faces a typical orbit-camera's visible surfaces, so most of a shaded frame sat near the low ambient floor rather than the diffuse ceiling, reading as too dark). Mode `2` ("on-flat") is used by the viewer during camera-drag interaction (`qualityControls.ts`): it applies the same formula but with a fixed representative diffuse term (`0.5`) instead of computing the real per-step gradient, skipping step 3's sampling cost entirely (`needsGradient` is false in this mode unless gradient-opacity also needs it) without the brightness jump that fully disabling shading caused (mode 0 skips the ambient/diffuse falloff itself, which most surfaces sat well below). Occlusion is also skipped in mode 2 (its own extra samples). The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is on and not in flat mode) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
+3. **Gradient read** — reads the precomputed gradient volume (binding 6, `gradient_bake.slang`, baked once per `loadVolume()` rather than sampled per raymarch step, issue #81's own follow-up) trilinearly at this step's `uvw`, then divides by `windowWidth` to convert the stored raw-HU-per-mm value into the same window-normalized-per-mm units the old runtime-computed gradient produced (windowed density `n = (raw-center)/width` is an affine rescaling of raw HU, so its gradient is exactly the raw gradient over `windowWidth`) — this is what keeps `gradientOpacityStrength`'s existing feel unchanged without needing to rebake per window/level change. Shared by shading's normal and gradient-opacity's magnitude below; skipped entirely when neither needs it. (History: this step was a per-step forward-difference computation, 3 volume samples, until 2026-08-23's precompute; before that, central-difference, 6 samples, until 2026-08-22 — see Change History for both.)
+4. **Gradient-based Lambert shading** (`engine_set_shading_enabled`, a 3-state mode: `0`=off, `1`=on (default), `2`=on-flat, still supported at the engine level though the viewer no longer uses mode 2 as of 2026-08-23 — see Change History) — modes 0/1: the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.55) + diffuse(0.45)*max(N·L,0)*(1-occlusion*occlusionStrength)` (ambient raised from `0.35`/diffuse lowered from `0.65`, sum unchanged at `1.0`, issue #81 — a fixed key light rarely faces a typical orbit-camera's visible surfaces, so most of a shaded frame sat near the low ambient floor rather than the diffuse ceiling, reading as too dark). Mode `2` ("on-flat") applies the same formula but with a fixed representative diffuse term (`0.5`) instead of computing the real per-step gradient, skipping step 3 entirely (`needsGradient` is false in this mode unless gradient-opacity also needs it) without the brightness jump fully disabling shading caused (mode 0 skips the ambient/diffuse falloff itself, which most surfaces sat well below) — originally added so the viewer's camera-drag interaction could avoid step 3's sampling cost without that jump, but once step 3 itself became a single precomputed-texture read (2026-08-23), the remaining cost gap between mode 1 and mode 2 shrank enough (~0.6ms measured, down from ~1.9ms) that the viewer stopped using mode 2 at all rather than keep the approximation's own residual inaccuracy. Occlusion is also skipped in mode 2 (its own extra samples). The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is on and not in flat mode) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
@@ -80,8 +80,9 @@ backgroundColor               xyz=RGB, w=unused -- engine_set_background_color
 | 3 | Mask texture (R8Uint, 3D) | `Load` only, never filtered |
 | 4 | 1D classification LUT (256×1, RGBA8Unorm) | Sampled directly by the axial shader. Declared but not sampled by the raymarch shader (kept only so both shaders' bind group layouts stay identical) |
 | 5 | Pre-integrated LUT (256×256, RGBA8Unorm) | Raymarch shader only. rgb = segment-average color, a = segment-average classification value (sBar) |
+| 6 | Gradient texture (RGBA16Float, 3D) | Raymarch shader only, trilinear (same sampler as binding 1). Precomputed raw-HU gradient (issue #81's own follow-up, `gradient_bake.slang`) — xyz = dHU/d(x,y,z) in HU/mm, baked once per `loadVolume()` by a compute pass rather than sampled per raymarch step. Declared but not sampled by the axial shader, same reasoning as binding 4 |
 
-Both LUT textures (bindings 4 and 5) are regenerated together whenever the colormap preset changes (`setColormapPreset`) — the color ramp plus window/level both change. A window/level-only change does not regenerate either LUT, since the classification curve itself is level-independent.
+Both LUT textures (bindings 4 and 5) are regenerated together whenever the colormap preset changes (`setColormapPreset`) — the color ramp plus window/level both change. A window/level-only change does not regenerate either LUT, since the classification curve itself is level-independent. Binding 6 is only rebaked on `loadVolume()` — window/level changes don't need it either, since it's baked on raw HU rather than windowed density (see its own §1.2 step 3 description for why).
 
 ### 1.7 Temporal accumulation / composite pipeline structure
 
@@ -474,4 +475,78 @@ phone both confirmed the default view is visibly brighter after the
 ambient change; the interaction pop is reduced but not fully gone,
 consistent with the "deliberately left open" note above.
 
-<!-- Next entry: precomputed gradient volume (compute pass), the follow-up noted above -- would let mode 1 (real per-pixel shading) run during interaction too, at which point mode 2 becomes unnecessary -->
+### 2026-08-23 — gradient volume precompute (compute pass)
+
+The follow-up the previous entry itself flagged: precomputes the
+raymarch gradient once per `loadVolume()` (a new compute pass,
+`gradient_bake.slang`, this engine's first) instead of sampling it every
+raymarch step. Written on *raw* HU rather than window/level-normalized
+density, deliberately -- window/level is an interactive per-frame
+control, and baking would otherwise need to re-run on every slider
+change; raw-HU gradient is window-independent (§1.2 step 3's own
+comment explains the conversion math), so one bake per volume load
+suffices. One documented behavior difference from the runtime
+computation it replaces: the old code computed on already
+window-clamped samples, so regions fully outside the current window
+read as gradient-free there -- this bake doesn't replicate that
+clamp-boundary zeroing (raw HU has no notion of the current window), so
+shading detail can now show through in regions the window would
+otherwise flatten. Not replicated deliberately, not a regression --
+that zeroing was a side effect of the old approach, not a documented
+design goal.
+
+**Two real bugs found and fixed getting the compute pass working (both
+confirmed via the browser console, not assumed):**
+
+1. Rendering went completely black on load. Root cause: the default
+   WebGPU `maxBufferSize` (256 MiB) is smaller than the gradient
+   texture's own byte size for the demo CT (~266 MiB) -- Dawn's internal
+   lazy-clear-before-first-use for a storage texture that large needs a
+   staging buffer as big as the texture itself, which silently failed
+   validation against the default limit, firing every frame. Fixed by
+   requesting a higher `maxBufferSize` (512 MiB, clamped to whatever the
+   adapter actually reports supporting via `wgpuAdapterGetLimits` --
+   feature-detected, not assumed available) when requesting the device.
+2. `[[vk::binding(1,0)]] RWTexture3D<float4> gradientTex` compiled to a
+   WGSL `read_write` storage texture regardless of the shader body only
+   ever writing it -- and WebGPU's base feature set doesn't support
+   read-write storage access for most formats, RGBA16Float included
+   (only a handful of single-channel 32-bit ones do), so the
+   WebGPUDevice-side bind group layout (declared `WriteOnly` to match
+   the intended usage) failed validation against that `read_write`
+   shader declaration. Fixed by using Slang's `WTexture3D<float4>` (a
+   genuinely distinct write-only resource type, not just an attribute on
+   `RWTexture3D`) with `.Store()` instead of `[]=` -- confirmed via both
+   the WGSL output (`texture_storage_3d<rgba16float, write>`) and the
+   SPIR-V output (a `NonReadable`-decorated image) that this compiles to
+   real write-only access on both backends, not assumed from the type
+   name alone. A `[format("rgba16f")]` attribute was needed either way --
+   an `RWTexture3D`/`WTexture3D` with no format hint gets slangc's own
+   best-guess format (`rgba32float` for a `float4` element type), which
+   silently mismatched this texture's actual RGBA16Float C++-side format
+   until this was added.
+
+**Measured (same real-device methodology as the previous two entries,
+Medium tier, default view, 2560×1440):** shading's marginal cost over
+shading-off dropped from +1.88ms (forward-difference, previous entry)
+to **+0.67ms** -- roughly 85% down from the original central-difference
+entry's +4.35ms across all three changes combined. More importantly,
+the gap between real shading (mode 1) and its flat interaction-mode
+approximation (mode 2) shrank to ~0.6ms (was ~1.9ms) -- small enough
+that `qualityControls.ts` was simplified to stop using mode 2 at all:
+shading now always reflects the user's actual selection, interacting or
+not, which also fully closes out the previous entry's "brightness pop
+reduced but not eliminated" finding by removing the interaction-time
+mode switch that caused it in the first place. Mode 2 itself is
+unchanged at the engine level (still a supported, tested value) in case
+a future need for it resurfaces.
+
+**Verified:** shader compiles cleanly to both WGSL and SPIR-V (native
+`compile_shaders` target built explicitly, same as prior entries).
+Native `ctest` passes. Full `viewer/tests/e2e/` suite (24 tests, 1
+rewritten to match the new no-mode-2-during-drag behavior) passes.
+Manual verification: real Chrome screenshot after the fix shows the
+demo CT rendering correctly (no regression from the black-screen bug
+above), visually consistent with pre-precompute screenshots.
+
+<!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

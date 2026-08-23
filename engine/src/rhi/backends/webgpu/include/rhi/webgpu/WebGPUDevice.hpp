@@ -133,6 +133,22 @@ private:
     void writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor);
     void rebuildBindGroup();
 
+    // One-time creation of the gradient-bake compute pipeline (issue #81's
+    // own follow-up) -- called once from createPipeline(), analogous to
+    // createCompositePipeline(). Its own 3-entry bind group layout (HU
+    // volume read, gradient volume storage-write, a small spacing uniform)
+    // is unrelated to bindGroupLayout_/pipelineLayout_ above -- a genuinely
+    // different (compute, not render) pipeline with different resources.
+    void createGradientBakePipeline();
+    // Dispatches the gradient-bake compute pass over the just-loaded
+    // volume's full extent -- called once from loadVolume(), after
+    // volumeTexture_/gradientTexture_ both exist. One-shot: builds its own
+    // bind group referencing this call's specific texture views rather
+    // than keeping one around, since it only ever runs right after a new
+    // volume load.
+    void bakeGradientVolume(uint32_t width, uint32_t height, uint32_t depth,
+                             float spacingX, float spacingY, float spacingZ);
+
     // Factors out the blend-state/color-target/pipeline-descriptor
     // boilerplate shared by both render pipelines (issue #37) -- the only
     // difference between the raymarch and axial-slice pipelines is which
@@ -201,6 +217,11 @@ private:
     WGPUTexture maskTexture_ = nullptr;
     WGPUTextureView volumeTextureView_ = nullptr;
     WGPUTextureView maskTextureView_ = nullptr;
+    // Precomputed gradient volume (issue #81's own follow-up,
+    // gradient_bake.slang) -- same voxel dimensions as volumeTexture_,
+    // (re)created and baked in loadVolume() every time a new volume loads.
+    WGPUTexture gradientTexture_ = nullptr;
+    WGPUTextureView gradientTextureView_ = nullptr;
     uint32_t currentVolumeId_ = 0;
     bool hasVolume_ = false;
     uint32_t volumeWidth_ = 0;
@@ -265,6 +286,20 @@ private:
     // Rebuilt in createAccumulationResources() -- depends on
     // accumulationTextureView_, which is recreated on every resize().
     WGPUBindGroup compositeBindGroup_ = nullptr;
+
+    // Gradient-bake compute pipeline (issue #81's own follow-up) -- built
+    // once by createGradientBakePipeline(). gradientBakeParamsBuffer_ holds
+    // just the loaded volume's physical voxel spacing (a GradientBakeParams
+    // uniform, gradient_bake.slang), rewritten by bakeGradientVolume() on
+    // every loadVolume() call; the bind group referencing that call's
+    // specific volumeTextureView_/gradientTextureView_ is built fresh each
+    // time inside bakeGradientVolume() itself rather than kept as a member
+    // (see bakeGradientVolume()'s own header comment for why).
+    WGPUShaderModule gradientBakeShaderModule_ = nullptr;
+    WGPUBindGroupLayout gradientBakeBindGroupLayout_ = nullptr;
+    WGPUPipelineLayout gradientBakePipelineLayout_ = nullptr;
+    WGPUComputePipeline gradientBakePipeline_ = nullptr;
+    WGPUBuffer gradientBakeParamsBuffer_ = nullptr;
 
     // 0 = Orbit3D (default), 1 = AxialSlice2D -- see setViewMode().
     uint32_t viewMode_ = 0;
