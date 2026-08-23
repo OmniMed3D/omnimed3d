@@ -1,0 +1,80 @@
+# Pure-benchmark inference-worker files, split out of test.yml's per-PR
+# path: these report a number (ms/slice at various batch sizes) with
+# little to no real correctness assertion, so a fixed model + fixed
+# fixture + variable CI runner performance doesn't give fresh signal on
+# every single PR the way test.yml's regression tests do. Manual trigger
+# only, run whenever you actually want fresh numbers (e.g. after a real
+# perf-relevant change, or periodically to spot drift).
+#
+# latency-browser.spec.ts (also a pure benchmark) is deliberately NOT
+# included here -- it also exercises the FP32 model, which has no CI
+# fallback anywhere (see test.yml's header comment), so it would just fail
+# here too. Add it once FP32 has a CI provisioning story.
+
+name: "Benchmark: inference-worker (manual)"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-vitest:
+    name: Batch-size latency benchmark (Node/WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # See test.yml's identical comment -- actions/checkout defaults
+          # to lfs:false, which leaves LFS pointer text files in place
+          # instead of the real committed fixture/model content.
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: batch-latency-benchmark (INT8/FP16, Node/WASM)
+        working-directory: viewer/src/workers/inference-worker
+        run: npx vitest run test/batch-latency-benchmark.test.ts
+
+  benchmark-browser:
+    name: Batch-size latency benchmark (real browser, WebGPU + WASM)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # See test.yml's identical comment -- actions/checkout defaults
+          # to lfs:false, which leaves LFS pointer text files in place
+          # instead of the real committed fixture/model content.
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: Install Chromium browser binary
+        working-directory: viewer/src/workers/inference-worker
+        run: npx playwright install chromium
+
+      - name: batch-latency-browser (INT8/FP16, WebGPU + WASM)
+        working-directory: viewer/src/workers/inference-worker
+        run: npx playwright test e2e/batch-latency-browser.spec.ts

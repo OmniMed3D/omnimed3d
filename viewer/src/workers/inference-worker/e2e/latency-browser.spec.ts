@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js";
 
 /**
  * Real-browser counterpart to test/latency-benchmark.test.ts (Section 3 of
@@ -37,7 +38,6 @@ import { expect, test } from "@playwright/test";
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 const FIXTURES_DIR = `${REPO_ROOT}ai-pipeline/quantization/calibration_data/inference_fixtures/`;
 const FP32_DIR = `${REPO_ROOT}ai-pipeline/conversion/adapters/lungmask/`;
-const QUANT_DIR = `${REPO_ROOT}ai-pipeline/quantization/`;
 
 const SLICE_STEM = "LIDC-IDRI-0001_inst0034";
 const SLICE_WIDTH = 512;
@@ -53,10 +53,24 @@ function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-const MODELS = [
-  { label: "FP32", modelFile: "lungmask_r231.onnx", dir: FP32_DIR, hasExternalData: true },
-  { label: "INT8", modelFile: "lungmask_r231_int8.onnx", dir: QUANT_DIR, hasExternalData: false },
-  { label: "FP16", modelFile: "lungmask_r231_fp16.onnx", dir: QUANT_DIR, hasExternalData: false },
+interface ModelEntry {
+  label: string;
+  modelFile: string;
+  modelPath: string;
+  hasExternalData: boolean;
+  externalDataPath?: string;
+}
+
+const MODELS: ModelEntry[] = [
+  {
+    label: "FP32",
+    modelFile: "lungmask_r231.onnx",
+    modelPath: `${FP32_DIR}lungmask_r231.onnx`,
+    externalDataPath: `/@fs${FP32_DIR}lungmask_r231.onnx.data`,
+    hasExternalData: true,
+  },
+  { label: "INT8", modelFile: "lungmask_r231_int8.onnx", modelPath: ONNX_MODEL_PATH_INT8, hasExternalData: false },
+  { label: "FP16", modelFile: "lungmask_r231_fp16.onnx", modelPath: ONNX_MODEL_PATH_FP16, hasExternalData: false },
 ];
 
 const EPS = ["wasm", "webgpu"] as const;
@@ -71,7 +85,7 @@ const results: {
   cpuFallbackOps: string; // e.g. "QuantizeLinear x117, LogSoftmax x2" -- always "" for ep=wasm
 }[] = [];
 
-for (const { label, modelFile, dir, hasExternalData } of MODELS) {
+for (const { label, modelFile, modelPath, hasExternalData, externalDataPath } of MODELS) {
   for (const ep of EPS) {
     test(`${label} per-slice latency, ${ep} EP (real browser)`, async ({ page }) => {
       const fallbackLogs: string[] = [];
@@ -82,12 +96,12 @@ for (const { label, modelFile, dir, hasExternalData } of MODELS) {
         });
       }
 
-      await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: `${dir}${modelFile}` }));
+      await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: modelPath }));
       await page.route("**/slice.bin", (route) => route.fulfill({ path: `${FIXTURES_DIR}${SLICE_STEM}_hu.bin` }));
 
       // See the module doc comment -- deliberately not page.route(), that's
       // what crashed the browser on this specific (116MB) file.
-      const externalDataParam = hasExternalData ? `&externalData=/@fs${dir}${modelFile}.data` : "";
+      const externalDataParam = hasExternalData ? `&externalData=${externalDataPath}` : "";
       const verboseParam = ep === "webgpu" ? "&verbose=1" : "";
       await page.goto(
         `/?model=/${modelFile}&slice=/slice.bin&width=${SLICE_WIDTH}&height=${SLICE_HEIGHT}&ep=${ep}${externalDataParam}${verboseParam}`,

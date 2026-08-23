@@ -42,3 +42,19 @@ Preprocessing (HU clip at 600, normalize by `(HU + 1024) / 1624`, resize to
 256x256) happens in `quantize_ptq.py`'s CalibrationDataReader, matching
 `../conversion/adapters/lungmask/MODEL_SPEC.md` — not baked into the files
 in `selected/`, which stay as raw DICOM.
+
+- `inference_fixtures/`, `ground_truth_fixtures/` — derived (not raw DICOM)
+  reference fixtures generated from `selected/` by
+  `../../viewer/src/workers/inference-worker/scripts/export_reference_fixtures.py`
+  and `export_ground_truth_masks.py` respectively: float32 HU/preprocessed
+  tensors and expected mask outputs, consumed by inference-worker's
+  vitest/Playwright suites (`viewer/src/workers/inference-worker/test/`,
+  `e2e/`). **Exception to "gitignored — never commit raw CT data" above:**
+  a 5-stem subset (the same 5 stems in both directories) is committed via
+  Git LFS so those suites can actually run in CI, same "never commit raw
+  medical imaging data, except one deliberately attributed subset" pattern
+  as `test-data/lidc_idri/` (see that directory's README). The remaining
+  locally-regenerated slices in both directories stay gitignored as
+  before. License/attribution: CC BY 3.0 via TCIA — see
+  `test-data/lidc_idri/README.md`'s "License and attribution" section for
+  the required citations, which apply here too (same source collection).

@@ -1,0 +1,27 @@
+[
+  {
+    "stem": "LIDC-IDRI-0001_inst0034",
+    "originalHeight": 512,
+    "originalWidth": 512
+  },
+  {
+    "stem": "LIDC-IDRI-0001_inst0056",
+    "originalHeight": 512,
+    "originalWidth": 512
+  },
+  {
+    "stem": "LIDC-IDRI-0001_inst0078",
+    "originalHeight": 512,
+    "originalWidth": 512
+  },
+  {
+    "stem": "LIDC-IDRI-0002_inst0066",
+    "originalHeight": 512,
+    "originalWidth": 512
+  },
+  {
+    "stem": "LIDC-IDRI-0002_inst0109",
+    "originalHeight": 512,
+    "originalWidth": 512
+  }
+]

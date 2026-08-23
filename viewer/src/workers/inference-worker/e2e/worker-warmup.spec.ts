@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js";
 
 /**
  * Verifies whether `validateSession()` (added for the WebGPU
@@ -23,7 +24,6 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 const FIXTURES_DIR = `${REPO_ROOT}ai-pipeline/quantization/calibration_data/inference_fixtures/`;
-const QUANT_DIR = `${REPO_ROOT}ai-pipeline/quantization/`;
 
 const SLICE_STEM = "LIDC-IDRI-0001_inst0034";
 const SLICE_WIDTH = 512;
@@ -38,12 +38,8 @@ interface InitCompleteResult {
 }
 
 test("first real hu-slice after init is not inflated by WebGPU shader-compile warmup", async ({ page }) => {
-  await page.route("**/warmup-check_fp16.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_fp16.onnx` }),
-  );
-  await page.route("**/warmup-check_int8.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_int8.onnx` }),
-  );
+  await page.route("**/warmup-check_fp16.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_FP16 }));
+  await page.route("**/warmup-check_int8.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_INT8 }));
   await page.route("**/slice.bin", (route) =>
     route.fulfill({ path: `${FIXTURES_DIR}${SLICE_STEM}_hu.bin` }),
   );

@@ -1,23 +1,41 @@
-# Runs the subset of viewer/'s vitest suites that don't depend on
-# artifacts we deliberately don't commit (REQ-C03, first slice):
-#   - inference-worker: several test/*.test.ts files load real ONNX models
-#     (ai-pipeline/conversion, ai-pipeline/quantization) and calibration
-#     fixtures, both covered by .gitignore's "generated model artifacts" /
-#     "never commit raw medical imaging data" rules -- a fresh checkout
-#     doesn't have them.
+# Runs the subset of viewer/'s vitest + Playwright suites that (a) don't
+# depend on artifacts we deliberately don't commit and (b) assert
+# correctness/regression behavior rather than just reporting a benchmark
+# number, so every run gives a pass/fail signal worth blocking a PR on
+# (REQ-C03). See docs/ko/ci-cd-setup.md for what each individual test file
+# verifies and why it's in this file's per-PR path vs.
+# benchmark-inference-worker.yml's manual-trigger path vs. excluded
+# entirely.
+#
+#   - inference-worker: test/fixtures.ts resolves the INT8/FP16 model paths
+#     with a fallback to the committed copies at
+#     viewer/src/shell/public/models/ when ai-pipeline/quantization/'s own
+#     (gitignored, locally-regenerated) copies aren't present, and
+#     ai-pipeline/quantization/calibration_data/{inference_fixtures,
+#     ground_truth_fixtures}/ each have a minimal 5-stem subset committed
+#     via Git LFS (see .gitignore's exception there and
+#     ai-pipeline/quantization/README.md) -- so most test files now run
+#     here. pipeline.test.ts, latency-benchmark.test.ts, dice-iou.test.ts,
+#     and e2e/latency-browser.spec.ts all still exercise the FP32 model
+#     too, which has no committed fallback anywhere (116MB+, no
+#     public/models/ equivalent) -- all four stay excluded from every
+#     workflow in this repo until FP32 has a CI provisioning story.
 #   - parse-worker/test/pipeline.test.ts needs engine/build_wasm/ (the
 #     native dicom-parser WASM build), which requires Engine's own
 #     cmake/emsdk toolchain -- not wired into CI here.
-# Both gaps are tracked, not silently skipped: running the full "npm test"
-# in each workspace once those artifacts have a CI provisioning story is
-# the natural follow-up. WebGPU e2e (Playwright, both viewer/tests/e2e/ and
-# inference-worker/e2e/) is left out of CI entirely for the same reason --
-# see playwright.config.ts's own comments in each of those two dirs for why
-# it's macOS-only today.
-#
-# NN pure-logic files run here (5): inference-worker's modelSelection.ts /
-# postprocess.ts unit tests, and parse-worker's assembleSeries / orientation
-# / halfFloat unit tests -- none of them touch the filesystem.
+#   - batch-latency-benchmark.test.ts and e2e/batch-latency-browser.spec.ts
+#     are pure benchmarks (report ms/slice, no real correctness assertion)
+#     -- moved to benchmark-inference-worker.yml's workflow_dispatch
+#     trigger instead of running on every PR, since a fixed model/runner
+#     doesn't give fresh signal on every single PR the way a regression
+#     test does, and this repo expects a high PR volume for a while.
+# WebGPU e2e (Playwright): the 4 inference-worker/e2e/ files below run on
+# macos-latest -- spike-webgpu-macos-runner.yml confirmed (2026-08-23) that
+# runner exposes a real WebGPU adapter. viewer/tests/e2e/ (Engine-owned) is
+# still left out entirely -- same macOS-only constraint, but that suite's
+# CI runner strategy needs Engine track agreement, not just AI track's own
+# call. See playwright.config.ts's own comments in each of those two dirs
+# for the underlying macOS-only flag issue.
 
 name: Test
 
@@ -35,6 +53,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to lfs:false, which leaves LFS
+          # pointer text files (not the real binary content) in the
+          # working tree -- fatal here since both jobs read committed
+          # LFS-tracked calibration fixtures and/or models.
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -47,10 +71,66 @@ jobs:
         working-directory: viewer
         run: npm ci
 
-      - name: inference-worker unit tests (fixture-free subset)
+      - name: inference-worker unit tests (INT8/FP16 + fixture-free subset)
         working-directory: viewer/src/workers/inference-worker
-        run: npx vitest run test/modelSelection.test.ts test/postprocess.test.ts
+        run: >
+          npx vitest run
+          test/modelSelection.test.ts
+          test/postprocess.test.ts
+          test/preprocess.test.ts
+          test/quantized-models.test.ts
+          test/batch-pipeline.test.ts
 
       - name: parse-worker unit tests (fixture-free subset)
         working-directory: viewer/src/workers/parse-worker
         run: npx vitest run test/assembleSeries.test.ts test/orientation.test.ts test/halfFloat.test.ts
+
+  e2e-inference-worker:
+    name: E2E (Playwright, inference-worker, real WebGPU)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to lfs:false, which leaves LFS
+          # pointer text files (not the real binary content) in the
+          # working tree -- fatal here since both jobs read committed
+          # LFS-tracked calibration fixtures and/or models.
+          lfs: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: Install Chromium browser binary
+        working-directory: viewer/src/workers/inference-worker
+        run: npx playwright install chromium
+
+      # Some of these assert on real wall-clock timing (e.g.
+      # worker-batch-throughput.spec.ts's burst-vs-sequential comparison,
+      # worker-warmup.spec.ts's first-vs-steady-state ratio) -- a shared
+      # CI runner's performance is less consistent than a dedicated dev
+      # machine, so treat an occasional failure here as a flakiness
+      # candidate to investigate before assuming a real regression.
+      #
+      # Explicit file list, not a bare `npx playwright test` (which would
+      # also pick up batch-latency-browser.spec.ts, a pure benchmark moved
+      # to benchmark-inference-worker.yml, and latency-browser.spec.ts,
+      # which needs the FP32 model and has no CI fallback for it -- see
+      # this file's header comment).
+      - name: inference-worker e2e tests (WebGPU + WASM, real GPU hardware)
+        working-directory: viewer/src/workers/inference-worker
+        run: >
+          npx playwright test
+          e2e/worker-fallback.spec.ts
+          e2e/worker-warmup.spec.ts
+          e2e/worker-batch-throughput.spec.ts
+          e2e/worker-batch-static-shape-fallback.spec.ts

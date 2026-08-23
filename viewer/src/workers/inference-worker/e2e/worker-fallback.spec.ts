@@ -1,5 +1,5 @@
-import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js";
 
 /**
  * Verifies the WebGPU-session-failure fallback (issue: "Recover from
@@ -17,9 +17,6 @@ import { expect, test } from "@playwright/test";
  * is testing worker.ts's own `self.onmessage` handling end-to-end, the
  * same way the Shell's main.ts does.
  */
-
-const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
-const QUANT_DIR = `${REPO_ROOT}ai-pipeline/quantization/`;
 
 interface InitCompleteResult {
   type: "init-complete";
@@ -47,9 +44,7 @@ test("recovers to INT8/WASM when the WebGPU-selected FP16 session fails to creat
   await page.route("**/probe-broken_fp16.onnx", (route) =>
     route.fulfill({ body: Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04]) }),
   );
-  await page.route("**/probe-broken_int8.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_int8.onnx` }),
-  );
+  await page.route("**/probe-broken_int8.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_INT8 }));
 
   await page.goto("/worker-harness.html");
   const result = await postInitAndWait(page, "/probe-broken");
@@ -60,12 +55,8 @@ test("recovers to INT8/WASM when the WebGPU-selected FP16 session fails to creat
 });
 
 test("does not fall back when the FP16/WebGPU session is healthy (regression guard)", async ({ page }) => {
-  await page.route("**/probe-healthy_fp16.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_fp16.onnx` }),
-  );
-  await page.route("**/probe-healthy_int8.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_int8.onnx` }),
-  );
+  await page.route("**/probe-healthy_fp16.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_FP16 }));
+  await page.route("**/probe-healthy_int8.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_INT8 }));
 
   await page.goto("/worker-harness.html");
   const result = await postInitAndWait(page, "/probe-healthy");

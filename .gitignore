@@ -67,8 +67,51 @@ viewer/.dev-server.pid
 # variants need to be fetchable, not just INT8.
 !viewer/src/shell/public/models/lungmask_r231_fp16.onnx
 
-# Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data
-ai-pipeline/quantization/calibration_data/
+# Calibration/sample CT data (e.g. LIDC-IDRI) — never commit raw medical imaging data.
+# dir/* (not a bare dir/) so the exceptions below can carve out a minimal,
+# attributed CI/test fixture subset from inference_fixtures/ and
+# ground_truth_fixtures/ -- ai-pipeline/quantization/README.md documents
+# both directories and this exception in full.
+ai-pipeline/quantization/calibration_data/*
+
+# Exception: a minimal, curated subset (the same 5 of ~30 locally-generated
+# slices in both directories below) that inference-worker's vitest/Playwright
+# suites need and a fresh CI checkout otherwise can't run against. Tracked via
+# Git LFS (.gitattributes), same "never commit raw medical imaging data,
+# except one deliberately attributed subset" pattern as test-data/lidc_idri/
+# below. Everything else in each locally-regenerated pool stays gitignored.
+!ai-pipeline/quantization/calibration_data/inference_fixtures/
+ai-pipeline/quantization/calibration_data/inference_fixtures/*
+!ai-pipeline/quantization/calibration_data/inference_fixtures/manifest.json
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0034_hu.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0034_mask.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0034_preprocessed.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0056_hu.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0056_mask.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0056_preprocessed.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0078_hu.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0078_mask.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0001_inst0078_preprocessed.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0066_hu.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0066_mask.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0066_preprocessed.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0109_hu.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0109_mask.bin
+!ai-pipeline/quantization/calibration_data/inference_fixtures/LIDC-IDRI-0002_inst0109_preprocessed.bin
+
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/
+ai-pipeline/quantization/calibration_data/ground_truth_fixtures/*
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/manifest.json
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0034_hu.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0034_groundtruth.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0056_hu.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0056_groundtruth.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0078_hu.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0001_inst0078_groundtruth.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0002_inst0066_hu.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0002_inst0066_groundtruth.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0002_inst0109_hu.bin
+!ai-pipeline/quantization/calibration_data/ground_truth_fixtures/LIDC-IDRI-0002_inst0109_groundtruth.bin
 
 # test-data/lidc_idri/ (a real, CC BY 3.0 LIDC-IDRI patient CT series) is
 # a deliberate exception to the "never commit raw medical imaging data"

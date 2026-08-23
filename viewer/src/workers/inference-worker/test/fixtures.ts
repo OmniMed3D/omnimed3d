@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -21,8 +21,20 @@ export const ONNX_MODEL_PATH = path.join(
 );
 
 const QUANTIZATION_DIR = path.join(REPO_ROOT, "ai-pipeline", "quantization");
-export const ONNX_MODEL_PATH_INT8 = path.join(QUANTIZATION_DIR, "lungmask_r231_int8.onnx");
-export const ONNX_MODEL_PATH_FP16 = path.join(QUANTIZATION_DIR, "lungmask_r231_fp16.onnx");
+// ai-pipeline/quantization/*.onnx is gitignored (regenerated locally via
+// quantize_ptq.py) -- a fresh CI checkout doesn't have it. viewer/src/shell/public/models/
+// carries a committed copy of the same INT8/FP16 outputs for the Shell's "Load
+// Segmentation Model" button (REQ-A06), so tests fall back to that copy when the
+// freshly-regenerated one isn't present locally. No FP32 equivalent exists there,
+// so ONNX_MODEL_PATH below has no fallback -- FP32-dependent tests still require a
+// local regeneration.
+const PUBLIC_MODELS_DIR = path.join(REPO_ROOT, "viewer", "src", "shell", "public", "models");
+function resolveQuantizedModel(filename: string): string {
+  const primary = path.join(QUANTIZATION_DIR, filename);
+  return existsSync(primary) ? primary : path.join(PUBLIC_MODELS_DIR, filename);
+}
+export const ONNX_MODEL_PATH_INT8 = resolveQuantizedModel("lungmask_r231_int8.onnx");
+export const ONNX_MODEL_PATH_FP16 = resolveQuantizedModel("lungmask_r231_fp16.onnx");
 
 /** REQ-A10: ground truth = raw PyTorch lungmask model, independent of the ONNX/TS chain. */
 export const GROUND_TRUTH_DIR = path.join(QUANTIZATION_DIR, "calibration_data", "ground_truth_fixtures");
