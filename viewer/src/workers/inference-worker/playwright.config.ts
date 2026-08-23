@@ -31,7 +31,17 @@ export default defineConfig({
         // straight to the WASM fallback, which is itself a legitimate
         // thing for REQ-C02's hardware-fallback hierarchy to exercise.
         launchOptions: {
-          args: ["--use-angle=metal", "--enable-unsafe-webgpu"],
+          // --ignore-gpu-blocklist added after this project's real
+          // GitHub-hosted macos-latest CI runner returned gpuDetected:false
+          // across the board (all tests silently WASM-fallback-passed,
+          // some timing assertions then failed from WASM being slower) --
+          // a local physical GPU (this suite's dev/verification machine)
+          // never hits Chromium's blocklist, but macos-latest's virtualized
+          // GPU does. Matches viewer/playwright.config.ts's (Engine-owned)
+          // non-Windows args exactly, and spike-webgpu-macos-runner.yml's
+          // flags, which is how this gap was found -- that workflow's own
+          // inline launch args included this flag, this file's didn't.
+          args: ["--use-gl=angle", "--use-angle=metal", "--enable-unsafe-webgpu", "--ignore-gpu-blocklist"],
         },
       },
     },

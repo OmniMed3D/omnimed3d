@@ -26,6 +26,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See test.yml's identical comment -- actions/checkout defaults
+          # to lfs:false, which leaves LFS pointer text files in place
+          # instead of the real committed fixture/model content.
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -49,6 +54,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See test.yml's identical comment -- actions/checkout defaults
+          # to lfs:false, which leaves LFS pointer text files in place
+          # instead of the real committed fixture/model content.
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4

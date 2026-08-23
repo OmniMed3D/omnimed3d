@@ -53,6 +53,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to lfs:false, which leaves LFS
+          # pointer text files (not the real binary content) in the
+          # working tree -- fatal here since both jobs read committed
+          # LFS-tracked calibration fixtures and/or models.
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -86,6 +92,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to lfs:false, which leaves LFS
+          # pointer text files (not the real binary content) in the
+          # working tree -- fatal here since both jobs read committed
+          # LFS-tracked calibration fixtures and/or models.
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
