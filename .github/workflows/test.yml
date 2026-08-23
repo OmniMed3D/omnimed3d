@@ -1,5 +1,12 @@
-# Runs the subset of viewer/'s vitest suites that don't depend on
-# artifacts we deliberately don't commit (REQ-C03):
+# Runs the subset of viewer/'s vitest + Playwright suites that (a) don't
+# depend on artifacts we deliberately don't commit and (b) assert
+# correctness/regression behavior rather than just reporting a benchmark
+# number, so every run gives a pass/fail signal worth blocking a PR on
+# (REQ-C03). See docs/ko/ci-cd-setup.md for what each individual test file
+# verifies and why it's in this file's per-PR path vs.
+# benchmark-inference-worker.yml's manual-trigger path vs. excluded
+# entirely.
+#
 #   - inference-worker: test/fixtures.ts resolves the INT8/FP16 model paths
 #     with a fallback to the committed copies at
 #     viewer/src/shell/public/models/ when ai-pipeline/quantization/'s own
@@ -8,18 +15,23 @@
 #     ground_truth_fixtures}/ each have a minimal 5-stem subset committed
 #     via Git LFS (see .gitignore's exception there and
 #     ai-pipeline/quantization/README.md) -- so most test files now run
-#     here. The three that still don't (pipeline.test.ts,
-#     latency-benchmark.test.ts, dice-iou.test.ts) all exercise the FP32
-#     model too, which has no committed fallback anywhere (116MB+, no
-#     public/models/ equivalent) -- still blocked on a CI provisioning
-#     story for that one specifically.
+#     here. pipeline.test.ts, latency-benchmark.test.ts, dice-iou.test.ts,
+#     and e2e/latency-browser.spec.ts all still exercise the FP32 model
+#     too, which has no committed fallback anywhere (116MB+, no
+#     public/models/ equivalent) -- all four stay excluded from every
+#     workflow in this repo until FP32 has a CI provisioning story.
 #   - parse-worker/test/pipeline.test.ts needs engine/build_wasm/ (the
 #     native dicom-parser WASM build), which requires Engine's own
 #     cmake/emsdk toolchain -- not wired into CI here.
-# WebGPU e2e (Playwright): inference-worker/e2e/'s 6 files run below on
+#   - batch-latency-benchmark.test.ts and e2e/batch-latency-browser.spec.ts
+#     are pure benchmarks (report ms/slice, no real correctness assertion)
+#     -- moved to benchmark-inference-worker.yml's workflow_dispatch
+#     trigger instead of running on every PR, since a fixed model/runner
+#     doesn't give fresh signal on every single PR the way a regression
+#     test does, and this repo expects a high PR volume for a while.
+# WebGPU e2e (Playwright): the 4 inference-worker/e2e/ files below run on
 # macos-latest -- spike-webgpu-macos-runner.yml confirmed (2026-08-23) that
-# runner exposes a real WebGPU adapter, and all 6 files pass locally
-# against this same fixture subset. viewer/tests/e2e/ (Engine-owned) is
+# runner exposes a real WebGPU adapter. viewer/tests/e2e/ (Engine-owned) is
 # still left out entirely -- same macOS-only constraint, but that suite's
 # CI runner strategy needs Engine track agreement, not just AI track's own
 # call. See playwright.config.ts's own comments in each of those two dirs
@@ -62,7 +74,6 @@ jobs:
           test/preprocess.test.ts
           test/quantized-models.test.ts
           test/batch-pipeline.test.ts
-          test/batch-latency-benchmark.test.ts
 
       - name: parse-worker unit tests (fixture-free subset)
         working-directory: viewer/src/workers/parse-worker
@@ -97,6 +108,17 @@ jobs:
       # CI runner's performance is less consistent than a dedicated dev
       # machine, so treat an occasional failure here as a flakiness
       # candidate to investigate before assuming a real regression.
+      #
+      # Explicit file list, not a bare `npx playwright test` (which would
+      # also pick up batch-latency-browser.spec.ts, a pure benchmark moved
+      # to benchmark-inference-worker.yml, and latency-browser.spec.ts,
+      # which needs the FP32 model and has no CI fallback for it -- see
+      # this file's header comment).
       - name: inference-worker e2e tests (WebGPU + WASM, real GPU hardware)
         working-directory: viewer/src/workers/inference-worker
-        run: npx playwright test
+        run: >
+          npx playwright test
+          e2e/worker-fallback.spec.ts
+          e2e/worker-warmup.spec.ts
+          e2e/worker-batch-throughput.spec.ts
+          e2e/worker-batch-static-shape-fallback.spec.ts
