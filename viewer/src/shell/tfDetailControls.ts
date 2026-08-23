@@ -1,8 +1,9 @@
 /**
  * TF detail controls (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
  * §5.3) -- extinction/density-scale/threshold sliders, a gradient-opacity
- * ("edge emphasis") slider, a Directional Occlusion Shading toggle, and a
- * mask overlay opacity slider. All call their `engine_set_*` WASM exports
+ * ("edge emphasis") slider, a Directional Occlusion Shading toggle, a mask
+ * overlay opacity slider, and a mask overlay show/hide toggle. All call
+ * their `engine_set_*` WASM exports
  * directly and synchronously on every input event (no queueing needed --
  * see cameraControls.ts's comment on why). Defaults here must match
  * WebGPUDevice's own member defaults (extinction_=8.0, densityScale_=1.0,
@@ -77,6 +78,20 @@ export function setupTfDetailControls(): void {
   bindRangeWithNumericEntry("mask-opacity", "mask-opacity-value", DEFAULT_MASK_OPACITY, (value) => {
     window.Module._engine_set_mask_opacity(value);
   });
+
+  // Show/hide the mask overlay entirely, independent of its opacity slider
+  // above -- purely a display toggle on the engine's already-populated
+  // mask texture (rhi::Device::setMaskOverlayEnabled's header comment), so
+  // switching it back on redisplays already-received mask slices instantly
+  // with no re-fetch or re-inference.
+  const maskEnabledCheckbox = document.getElementById("mask-overlay-enabled") as HTMLInputElement | null;
+  if (!maskEnabledCheckbox) {
+    console.error("tfDetailControls: #mask-overlay-enabled not found in the DOM");
+  } else {
+    maskEnabledCheckbox.addEventListener("change", () => {
+      window.Module._engine_set_mask_overlay_enabled(maskEnabledCheckbox.checked ? 1 : 0);
+    });
+  }
 
   const occlusionCheckbox = document.getElementById("occlusion-enabled") as HTMLInputElement | null;
   if (!occlusionCheckbox) {

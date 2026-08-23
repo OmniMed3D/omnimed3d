@@ -619,6 +619,58 @@ button.upload-btn:disabled:hover {
   filter: none;
 }
 
+/* Progress gauge overlay for long-running button actions (buttonGauge.ts)
+   -- demoCtControls.ts's volume slice fetch, inferenceControls.ts's model
+   download and per-slice segmentation. .gauge-fill is a semi-transparent
+   sheet that grows left-to-right under the label rather than replacing
+   the button's own background color, so both the fill and the underlying
+   .secondary/default accent stay visible at a glance -- reading the same
+   button also tells you which action it belongs to. */
+.gauge-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.gauge-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.28);
+  transition: width 0.2s ease;
+  pointer-events: none;
+}
+
+/* Content-Length wasn't available to compute a real percentage -- a
+   moving stripe communicates "still working" without claiming a specific
+   completion amount the code doesn't actually know. */
+.gauge-fill.gauge-indeterminate {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.28) 0,
+    rgba(255, 255, 255, 0.28) 10px,
+    rgba(255, 255, 255, 0.12) 10px,
+    rgba(255, 255, 255, 0.12) 20px
+  );
+  background-size: 28px 28px;
+  animation: gauge-stripes 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-fill.gauge-indeterminate {
+    animation: none;
+  }
+}
+
+@keyframes gauge-stripes {
+  to {
+    background-position: 28px 0;
+  }
+}
+
+.gauge-label {
+  position: relative;
+}
+
 .file-input {
   /* Visually hidden but still focusable/clickable via its <label for>. */
   position: absolute;

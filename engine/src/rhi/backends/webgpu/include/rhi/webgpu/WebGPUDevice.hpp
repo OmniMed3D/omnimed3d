@@ -52,6 +52,7 @@ public:
     void setGradientOpacityStrength(float strength) override;
     void setOcclusionEnabled(bool enabled) override;
     void setMaskOverlayAlpha(float alpha) override;
+    void setMaskOverlayEnabled(bool enabled) override;
     void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
     void setBackgroundColor(float r, float g, float b) override;
     void resize(uint32_t width, uint32_t height) override;

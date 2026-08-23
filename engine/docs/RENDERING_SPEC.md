@@ -25,7 +25,7 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
-8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest). Composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at `engine_set_mask_opacity`'s alpha (default `0.6`), but only once per boundary *crossing* along the ray (previous step's class `== 0` and this step's `!= 0`), not on every step spent inside the mask — see Change History's 2026-08-23 "mask overlay boundary-crossing compositing" entry for why per-step compositing was replaced. (Mask on/off itself has no UI/export yet — still hardcoded to always-on.)
+8. **Mask overlay compositing** — skipped entirely when `engine_set_mask_overlay_enabled` is off (default on); the underlying mask texture is untouched either way, so toggling this back on redisplays already-received mask data with no re-fetch or re-inference. When on, the R8Uint mask texture is sampled via `Load` (nearest) and composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at `engine_set_mask_opacity`'s alpha (default `0.6`), but only once per boundary *crossing* along the ray (previous step's class `== 0` and this step's `!= 0`), not on every step spent inside the mask — see Change History's 2026-08-23 "mask overlay boundary-crossing compositing" entry for why per-step compositing was replaced.
 9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingMode`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
@@ -121,13 +121,14 @@ A 6th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, h
 | Edge Emphasis (gradient-opacity strength) | TF Detail | `engine_set_gradient_opacity_strength` |
 | Occlusion Shading on/off | TF Detail | `engine_set_occlusion_enabled` |
 | Mask Opacity (slider + numeric entry) | TF Detail | `engine_set_mask_opacity` |
+| Show Mask (on/off) | TF Detail | `engine_set_mask_overlay_enabled` |
 | Clip X/Y/Z min+max sliders, Reset button | Clip | `engine_set_clip_box` |
 | Background color (Dark/Black/Gray/White presets) | Background | `engine_set_background_color` |
 | Camera orbit/zoom (mouse drag/wheel, not in the panel) | — | `engine_orbit_camera`, `engine_zoom_camera` |
 
 ### 1.10 Parameters not yet exposed via UI/export
 
-Light direction / ambient & diffuse shading strength (fixed constants), mask overlay on/off (fixed at true — alpha is now exposed via `engine_set_mask_opacity`, see §1.9's table), occlusion strength (fixed at full effect when enabled — no slider yet), the color transfer function's second axis as a genuine classification axis (gradient magnitude is only used as an opacity modulator, §1.4a, not a second LUT axis). No further branch is currently planned against this list — pick these up if a concrete need comes up.
+Light direction / ambient & diffuse shading strength (fixed constants), occlusion strength (fixed at full effect when enabled — no slider yet), the color transfer function's second axis as a genuine classification axis (gradient magnitude is only used as an opacity modulator, §1.4a, not a second LUT axis). Mask overlay alpha and on/off are both exposed now (`engine_set_mask_opacity`, `engine_set_mask_overlay_enabled` — see §1.9's table). No further branch is currently planned against this list — pick these up if a concrete need comes up.
 
 ---
 
@@ -666,5 +667,59 @@ assertions reference fixed presets 0-2 (Lung/Bone/Soft Tissue) and the
 the default preset's index or on Custom's `data-colormap-preset` value,
 so no test updates were needed -- but real e2e/manual re-verification in
 an environment with a working WebGPU adapter is still owed before merge.
+
+### 2026-08-24 — mask overlay show/hide toggle, viewer progress gauges
+
+Three small usability asks: an on/off toggle for the mask overlay
+(separate from its opacity slider, added above), and a visual progress
+gauge on the "Load Demo CT" and "Load Segmentation Model" buttons.
+
+**Mask overlay on/off:** `maskOverlayEnabled_` already existed
+(hardcoded `true`, no setter) -- added
+`rhi::Device::setMaskOverlayEnabled`/`WebGPUDevice::setMaskOverlayEnabled`
+and the `engine_set_mask_overlay_enabled` WASM export, wired to a new
+"Show Mask" checkbox in the TF Detail panel. The engine skips the mask
+block entirely when off, but never touches the mask texture itself --
+switching back on redisplays whatever mask data has already arrived,
+with no re-fetch or re-inference (the "caching" behavior this was
+requested as -- it falls directly out of the existing texture-backed
+mask storage; no new cache was built).
+
+**Viewer progress gauges (`viewer/`, not this engine module, but
+recorded here since the ask arrived alongside the mask toggle):** a new
+`buttonGauge.ts` primitive (a semi-transparent fill `<span>` plus a
+label `<span>`, both children of the button, so updating the label
+doesn't blow away the fill the way a plain `button.textContent =`
+assignment would) is now used by:
+- `demoCtControls.ts`'s "Load Demo CT" button -- fraction = slices
+  fetched / total, reusing counters that already existed for the
+  button's old text-only status.
+- `inferenceControls.ts`'s "Load Segmentation Model" button, across two
+  phases sharing the same gauge: first the model's own byte download
+  (new `fetchModelBytes()` in `worker.ts`, replacing the URL-string form
+  of `ort.InferenceSession.create()` with a manual `fetch()` + streamed
+  `Content-Length`-tracked read, so progress can be observed at all --
+  ORT gives no hook into its own internal fetch), then -- once
+  `init-complete` fires -- how many of the currently loaded volume's
+  slices have actually been segmented so far (`notifyVolumeLoadedForInference`/
+  `notifyMaskSliceApplied`, called from `main.ts` at the existing
+  volume-ready/mask-slice handling sites). The two phases never overlap
+  (segmentation can't start before the model is ready), so one gauge
+  represents both without ambiguity. When `Content-Length` is missing,
+  the gauge falls back to an indeterminate striped-animation state
+  (`prefers-reduced-motion`-aware) rather than claiming a specific
+  percentage the code doesn't actually know.
+
+**Verified:** `wasm-macos` and native `compile_shaders` rebuild cleanly.
+Native `ctest` passes (unaffected). `viewer`'s `vite build` and the
+inference-worker package's `tsc --noEmit` both pass with no errors.
+`inference-worker`'s `vitest` suite: 2 passed, 7 failed -- confirmed
+pre-existing and unrelated (missing `ai-pipeline/quantization/calibration_data/`
+fixture files in this environment, not this change) by re-running the
+same suite with `worker.ts` reverted to `HEAD` and observing the
+identical 7 failures. `viewer/tests/e2e/` could not be run to completion
+in this environment for the same no-WebGPU-adapter reason as the
+previous two entries -- real browser/e2e and manual mobile
+re-verification still owed before merge.
 
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

@@ -105,7 +105,10 @@
              from public/demo-ct/ (npm run sync-demo-ct), not committed
              there directly. demoCtControls.ts owns the button/status. -->
         <div class="row">
-          <button type="button" id="load-demo-ct" class="upload-btn secondary">Load Demo CT</button>
+          <button type="button" id="load-demo-ct" class="upload-btn secondary gauge-btn">
+            <span class="gauge-fill" aria-hidden="true"></span>
+            <span class="gauge-label">Load Demo CT</span>
+          </button>
         </div>
         <p id="demo-ct-status" class="hint-text"></p>
         <!-- Issue #42: shown between file selection and engine_load_volume
@@ -126,7 +129,10 @@
       <div class="panel-section">
         <span class="section-label">Segmentation</span>
         <div class="row">
-          <button type="button" id="load-demo-model" class="upload-btn secondary">Load Segmentation Model</button>
+          <button type="button" id="load-demo-model" class="upload-btn secondary gauge-btn">
+            <span class="gauge-fill" aria-hidden="true"></span>
+            <span class="gauge-label">Load Segmentation Model</span>
+          </button>
         </div>
         <p id="demo-model-status" class="hint-text"></p>
       </div>
@@ -291,6 +297,10 @@
             step="0.05"
             aria-label="Mask Opacity value"
           />
+        </div>
+        <div class="row checkbox-row">
+          <label for="mask-overlay-enabled">Show Mask</label>
+          <input id="mask-overlay-enabled" type="checkbox" checked data-tooltip-key="mask-overlay-enabled" />
         </div>
       </div>
       <!-- §6.4 clip box: 3 axes, each a min/max pair over the loaded

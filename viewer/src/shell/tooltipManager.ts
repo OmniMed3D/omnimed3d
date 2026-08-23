@@ -53,6 +53,7 @@ const TOOLTIP_TEXT: Record<string, string> = {
   "gradient-opacity": "Weights opacity by local edge strength -- emphasizes boundaries, suppresses flat regions.",
   "occlusion-enabled": "Approximate self-shadowing toward the light. Only visible when Shading is also on.",
   "mask-opacity": "Blend strength of the AI segmentation mask highlight over the volume. 0 hides it, 1 fully replaces the underlying color.",
+  "mask-overlay-enabled": "Shows or hides the mask overlay entirely. Already-received mask data stays cached -- turning this back on redisplays it instantly, no re-inference needed.",
   "clip-x-min": "Clip box: minimum X bound (world mm).",
   "clip-x-max": "Clip box: maximum X bound (world mm).",
   "clip-y-min": "Clip box: minimum Y bound (world mm).",
