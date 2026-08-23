@@ -260,10 +260,20 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     deviceCallbackInfo.callback = &WebGPUDevice::onDeviceRequested;
     deviceCallbackInfo.userdata1 = self;
 
+    // Must outlive the wgpuAdapterRequestDevice() call below -- declaring
+    // this inside the if-block and pointing deviceDesc.requiredFeatures at
+    // it left a dangling pointer once the block's closing brace ended the
+    // array's lifetime, since the request call itself happens after that
+    // brace. Emscripten's JS glue reads through the pointer when it
+    // marshals deviceDesc into a real GPUDeviceDescriptor, so a stale/
+    // garbage stack value there surfaced as a browser-side "requiredFeatures
+    // ... is not a valid enum value of type GPUFeatureName" TypeError
+    // instead of a native crash.
+    WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
+
     WGPUDeviceDescriptor deviceDesc{};
     deviceDesc.requiredLimits = &requiredLimits;
     if (self->timestampQuerySupported_) {
-        WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
         deviceDesc.requiredFeatureCount = 1;
         deviceDesc.requiredFeatures = requiredFeatures;
     }

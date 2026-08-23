@@ -549,4 +549,30 @@ Manual verification: real Chrome screenshot after the fix shows the
 demo CT rendering correctly (no regression from the black-screen bug
 above), visually consistent with pre-precompute screenshots.
 
+### 2026-08-23 — fix dangling `requiredFeatures` pointer in device request
+
+Found via a real-browser console error on a device whose adapter
+actually supports `timestamp-query` (the `feat/engine-gpu-timestamp-query`
+entry above): `WebGPUDevice: device request failed: ... Failed to read
+the 'requiredFeatures' property from 'GPUDeviceDescriptor': The provided
+value 'undefined' is not a valid enum value of type GPUFeatureName`.
+`onAdapterRequested()` declared the one-element `requiredFeatures` array
+*inside* the `if (timestampQuerySupported_)` block, then pointed
+`deviceDesc.requiredFeatures` at it -- but `wgpuAdapterRequestDevice()`
+is called after that block's closing brace, i.e. after the array's
+lifetime has already ended. Reading through the resulting dangling
+pointer is undefined behavior; in this Emscripten build it surfaced as
+Dawn's JS glue marshaling whatever stale stack bytes were there into an
+invalid `GPUFeatureName` enum value rather than a native crash, which is
+why device creation failed cleanly (with a message) instead of hard
+faulting. Not caught earlier because the previous review environment
+(a Playwright sandbox with no WebGPU adapter at all) never exercised
+this branch. Fixed by hoisting the array to the same scope as
+`deviceDesc`, so its lifetime covers the request call in both branches.
+
+**Verified:** `wasm-macos` rebuilds cleanly. Native `ctest` unaffected
+(this file isn't part of the native build target). Confirmed fixed via
+real-device mobile testing over a Cloudflare tunnel, on the same
+adapter/browser that originally hit the bug.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->
