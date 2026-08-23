@@ -14,18 +14,27 @@
  *
  * - Interaction-adaptive: cameraControls.ts calls
  *   notifyInteractionStart()/notifyInteractionEnd() around its drag
- *   lifecycle so the active tier drops to Low, and shading/occlusion
- *   shading both force off, only while the camera is actually being
- *   dragged -- restored to the user's own selections on release.
- *   Dropped frames are most noticeable during interaction and least
- *   noticeable there too (a moving image masks the coarser sampling) --
- *   the cheapest quality/perf trade available. Shading and occlusion
- *   were added to this same mechanism after Mini-Engine-reference's own
- *   "adaptive SPP during camera motion" pattern showed the same
- *   interaction-gated idea generalizes to any per-sample cost, not just
- *   step count -- occlusion in particular does its own extra sampling
- *   per step (see tfDetailControls.ts), so it's one of the more
- *   expensive toggles to leave on during a drag.
+ *   lifecycle so the active tier drops to Low and occlusion forces off,
+ *   only while the camera is actually being dragged -- restored to the
+ *   user's own selections on release. Dropped frames are most
+ *   noticeable during interaction and least noticeable there too (a
+ *   moving image masks the coarser sampling) -- the cheapest
+ *   quality/perf trade available. Occlusion was added to this same
+ *   mechanism after Mini-Engine-reference's own "adaptive SPP during
+ *   camera motion" pattern showed the same interaction-gated idea
+ *   generalizes to any per-sample cost, not just step count.
+ *   Shading is deliberately *not* part of this list (issue #81's own
+ *   follow-up, precomputing the raymarch gradient at load time instead
+ *   of sampling it per step): shading used to drop to a cheap flat
+ *   approximation (mode 2, see git history/RENDERING_SPEC.md) during a
+ *   drag, both to skip the gradient's sampling cost and to avoid the
+ *   brightness pop that fully disabling shading caused -- but
+ *   precomputing the gradient made real shading (mode 1) itself so
+ *   cheap (measured ~0.6ms slower than the flat approximation, down
+ *   from ~1.9ms) that the whole tradeoff stopped being worth its own
+ *   complexity. Shading now always reflects the user's actual
+ *   selection, interacting or not -- no pop, since nothing about it
+ *   ever changes at interaction boundaries.
  * - Startup auto-downgrade: main.ts calls applyStartupAutoTier() once,
  *   after sampling wall-clock frame time for a few frames post-load. A
  *   phone whose *static* frame is already too slow gets no benefit from
@@ -41,6 +50,13 @@
 
 const DEFAULT_QUALITY_TIER = 1; // Medium -- matches WebGPUDevice's kDefaultQualityTier.
 const INTERACTION_QUALITY_TIER = 0; // Low -- floor while actively dragging/orbiting.
+
+// Shading modes for engine_set_shading_enabled -- 0=off, 1=on (mode 2,
+// "on-flat", also exists at the engine level -- see
+// WebGPUDevice::setShadingMode's header comment -- but nothing in this
+// file uses it anymore, per this file's own header comment on why).
+const SHADING_OFF = 0;
+const SHADING_ON = 1;
 
 // Must match WebGPUDevice's own member defaults (shadingEnabled_=true,
 // occlusionEnabled_=false) -- see tfDetailControls.ts's header comment
@@ -59,17 +75,20 @@ function setActiveTierButton(tier: number): void {
 }
 
 // Applies the current effective state to the engine -- the user's own
-// selections while idle, or the interaction floor (Low tier, shading
-// and occlusion both off) while a drag is in progress. Called on every
-// state change (tier/shading/occlusion selection, or entering/leaving
-// interaction) rather than diffing what actually changed -- these are
-// infrequent UI-driven calls, not per-frame, so the redundant WASM calls
-// this occasionally causes (e.g. re-asserting occlusion=off on drag
-// start when it was already off) cost nothing worth avoiding the extra
+// tier/occlusion selections while idle, or the interaction floor (Low
+// tier, occlusion off) while a drag is in progress. Shading always
+// reflects userSelectedShadingEnabled regardless of interacting -- see
+// this file's header comment for why it's no longer part of the
+// interaction-adaptive floor. Called on every state change
+// (tier/shading/occlusion selection, or entering/leaving interaction)
+// rather than diffing what actually changed -- these are infrequent
+// UI-driven calls, not per-frame, so the redundant WASM calls this
+// occasionally causes (e.g. re-asserting occlusion=off on drag start
+// when it was already off) cost nothing worth avoiding the extra
 // bookkeeping for.
 function applyEngineState(): void {
   window.Module._engine_set_quality_tier(interacting ? INTERACTION_QUALITY_TIER : userSelectedTier);
-  window.Module._engine_set_shading_enabled(interacting ? 0 : userSelectedShadingEnabled ? 1 : 0);
+  window.Module._engine_set_shading_enabled(userSelectedShadingEnabled ? SHADING_ON : SHADING_OFF);
   window.Module._engine_set_occlusion_enabled(interacting ? 0 : userSelectedOcclusionEnabled ? 1 : 0);
 }
 

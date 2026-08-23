@@ -97,7 +97,16 @@ test("camera drag drops the engine's active quality tier and restores it on rele
     .toBe(2);
 });
 
-test("camera drag also forces shading and occlusion off, restoring both on release (issue #69)", async ({ page }) => {
+test("camera drag forces occlusion off (restoring on release) but leaves shading alone (issue #81 follow-up)", async ({
+  page,
+}) => {
+  // Precomputing the raymarch gradient at load time (issue #81's own
+  // follow-up) made real shading (mode 1) cheap enough that it no longer
+  // needs an interaction-time fallback -- qualityControls.ts stopped
+  // dropping shading to its old flat approximation (mode 2) during a
+  // drag, precisely to eliminate the brightness pop that approximation
+  // itself couldn't quite avoid. Occlusion, unrelated to that change,
+  // still drops during a drag.
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
@@ -135,14 +144,6 @@ test("camera drag also forces shading and occlusion off, restoring both on relea
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const w = window as unknown as { __shadingCalls: number[] };
-        return w.__shadingCalls[w.__shadingCalls.length - 1];
-      }),
-    )
-    .toBe(0);
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
         const w = window as unknown as { __occlusionCalls: number[] };
         return w.__occlusionCalls[w.__occlusionCalls.length - 1];
       }),
@@ -153,14 +154,20 @@ test("camera drag also forces shading and occlusion off, restoring both on relea
 
   await expect
     .poll(async () => {
-      const calls = await page.evaluate(() => (window as unknown as { __shadingCalls: number[] }).__shadingCalls);
-      return lastValue(calls);
-    })
-    .toBe(1);
-  await expect
-    .poll(async () => {
       const calls = await page.evaluate(() => (window as unknown as { __occlusionCalls: number[] }).__occlusionCalls);
       return lastValue(calls);
     })
     .toBe(1);
+
+  // Shading must never have been called with anything but 1 (on) --
+  // interaction never touches it now. notifyInteractionStart()/End() both
+  // call applyEngineState() (which always re-asserts shading too, see its
+  // own comment), so this list is non-empty by construction -- checked
+  // explicitly rather than trusting a for-of over a possibly-empty array
+  // to prove anything.
+  const shadingCalls = await page.evaluate(() => (window as unknown as { __shadingCalls: number[] }).__shadingCalls);
+  expect(shadingCalls.length).toBeGreaterThan(0);
+  for (const mode of shadingCalls) {
+    expect(mode).toBe(1);
+  }
 });
