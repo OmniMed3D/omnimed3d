@@ -1,15 +1,15 @@
 /**
  * TF detail controls (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
  * §5.3) -- extinction/density-scale/threshold sliders, a gradient-opacity
- * ("edge emphasis") slider, and a Directional Occlusion Shading toggle.
- * All call their `engine_set_*` WASM exports directly and synchronously
- * on every input event (no queueing needed -- see cameraControls.ts's
- * comment on why). Defaults here must match WebGPUDevice's own member
- * defaults (extinction_=8.0, densityScale_=1.0, threshold_=0.0,
- * gradientOpacityStrength_=0.0, occlusionEnabled_=false) -- there is no
- * readback export, so both sides just agree on the same defaults
- * independently, the same way windowLevelControls.ts's DEFAULT_PRESET_ID
- * already does.
+ * ("edge emphasis") slider, a Directional Occlusion Shading toggle, and a
+ * mask overlay opacity slider. All call their `engine_set_*` WASM exports
+ * directly and synchronously on every input event (no queueing needed --
+ * see cameraControls.ts's comment on why). Defaults here must match
+ * WebGPUDevice's own member defaults (extinction_=8.0, densityScale_=1.0,
+ * threshold_=0.0, gradientOpacityStrength_=0.0, occlusionEnabled_=false,
+ * maskOverlayAlpha_=0.6) -- there is no readback export, so both sides
+ * just agree on the same defaults independently, the same way
+ * windowLevelControls.ts's DEFAULT_PRESET_ID already does.
  *
  * The occlusion checkbox is the one exception to "calls its engine_set_*
  * export directly": see its own comment below for why it's routed
@@ -24,6 +24,7 @@ const DEFAULT_EXTINCTION = 8;
 const DEFAULT_DENSITY_SCALE = 1;
 const DEFAULT_THRESHOLD = 0;
 const DEFAULT_GRADIENT_OPACITY = 0;
+const DEFAULT_MASK_OPACITY = 0.6;
 
 // Mirrors windowLevelControls.ts's own bindRangeWithNumericEntry (not
 // exported from there -- it's file-private since only that file's two
@@ -72,6 +73,9 @@ export function setupTfDetailControls(): void {
   });
   bindRangeInput("gradient-opacity", "gradient-opacity-value", DEFAULT_GRADIENT_OPACITY, (value) => {
     window.Module._engine_set_gradient_opacity_strength(value);
+  });
+  bindRangeWithNumericEntry("mask-opacity", "mask-opacity-value", DEFAULT_MASK_OPACITY, (value) => {
+    window.Module._engine_set_mask_opacity(value);
   });
 
   const occlusionCheckbox = document.getElementById("occlusion-enabled") as HTMLInputElement | null;

@@ -51,6 +51,7 @@ public:
     void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) override;
     void setGradientOpacityStrength(float strength) override;
     void setOcclusionEnabled(bool enabled) override;
+    void setMaskOverlayAlpha(float alpha) override;
     void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
     void setBackgroundColor(float r, float g, float b) override;
     void resize(uint32_t width, uint32_t height) override;
@@ -333,6 +334,10 @@ private:
     float windowCenter_ = 0.0F;
     float windowWidth_ = 400.0F;
     bool maskOverlayEnabled_ = true;
+    // Mask highlight blend strength (§5.3.1) -- was a fixed 0.6 literal
+    // written directly into both UBOs' maskParams.y before setMaskOverlayAlpha()
+    // existed.
+    float maskOverlayAlpha_ = 0.6F;
 
     // REQ-R04 quality/step-count tier -- see kQualityTiers in
     // WebGPUDevice.cpp. Default matches the previous hardcoded behavior
