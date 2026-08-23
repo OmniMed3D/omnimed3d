@@ -1,23 +1,28 @@
 # Runs the subset of viewer/'s vitest suites that don't depend on
-# artifacts we deliberately don't commit (REQ-C03, first slice):
-#   - inference-worker: several test/*.test.ts files load real ONNX models
-#     (ai-pipeline/conversion, ai-pipeline/quantization) and calibration
-#     fixtures, both covered by .gitignore's "generated model artifacts" /
-#     "never commit raw medical imaging data" rules -- a fresh checkout
-#     doesn't have them.
+# artifacts we deliberately don't commit (REQ-C03):
+#   - inference-worker: test/fixtures.ts resolves the INT8/FP16 model paths
+#     with a fallback to the committed copies at
+#     viewer/src/shell/public/models/ when ai-pipeline/quantization/'s own
+#     (gitignored, locally-regenerated) copies aren't present, and
+#     ai-pipeline/quantization/calibration_data/{inference_fixtures,
+#     ground_truth_fixtures}/ each have a minimal 5-stem subset committed
+#     via Git LFS (see .gitignore's exception there and
+#     ai-pipeline/quantization/README.md) -- so most test files now run
+#     here. The three that still don't (pipeline.test.ts,
+#     latency-benchmark.test.ts, dice-iou.test.ts) all exercise the FP32
+#     model too, which has no committed fallback anywhere (116MB+, no
+#     public/models/ equivalent) -- still blocked on a CI provisioning
+#     story for that one specifically.
 #   - parse-worker/test/pipeline.test.ts needs engine/build_wasm/ (the
 #     native dicom-parser WASM build), which requires Engine's own
 #     cmake/emsdk toolchain -- not wired into CI here.
-# Both gaps are tracked, not silently skipped: running the full "npm test"
-# in each workspace once those artifacts have a CI provisioning story is
-# the natural follow-up. WebGPU e2e (Playwright, both viewer/tests/e2e/ and
-# inference-worker/e2e/) is left out of CI entirely for the same reason --
-# see playwright.config.ts's own comments in each of those two dirs for why
-# it's macOS-only today.
-#
-# NN pure-logic files run here (5): inference-worker's modelSelection.ts /
-# postprocess.ts unit tests, and parse-worker's assembleSeries / orientation
-# / halfFloat unit tests -- none of them touch the filesystem.
+# WebGPU e2e (Playwright, both viewer/tests/e2e/ and inference-worker/e2e/)
+# is left out of CI entirely -- see playwright.config.ts's own comments in
+# each of those two dirs for why it's macOS-only today. (Confirmed
+# 2026-08-23 via spike-webgpu-macos-runner.yml that macos-latest does
+# expose a real WebGPU adapter, and inference-worker/e2e/'s 6 files all
+# pass locally against this same fixture subset -- wiring that suite into
+# CI is a ready, but separate, follow-up.)
 
 name: Test
 
@@ -47,9 +52,16 @@ jobs:
         working-directory: viewer
         run: npm ci
 
-      - name: inference-worker unit tests (fixture-free subset)
+      - name: inference-worker unit tests (INT8/FP16 + fixture-free subset)
         working-directory: viewer/src/workers/inference-worker
-        run: npx vitest run test/modelSelection.test.ts test/postprocess.test.ts
+        run: >
+          npx vitest run
+          test/modelSelection.test.ts
+          test/postprocess.test.ts
+          test/preprocess.test.ts
+          test/quantized-models.test.ts
+          test/batch-pipeline.test.ts
+          test/batch-latency-benchmark.test.ts
 
       - name: parse-worker unit tests (fixture-free subset)
         working-directory: viewer/src/workers/parse-worker

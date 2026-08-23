@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js";
 
 /**
  * Confirms the actual accumulate-and-flush wiring in worker.ts (not just
@@ -17,7 +18,6 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 const FIXTURES_DIR = `${REPO_ROOT}ai-pipeline/quantization/calibration_data/inference_fixtures/`;
-const QUANT_DIR = `${REPO_ROOT}ai-pipeline/quantization/`;
 const SLICE_STEM = "LIDC-IDRI-0001_inst0034";
 const SLICE_WIDTH = 512;
 const SLICE_HEIGHT = 512;
@@ -26,12 +26,8 @@ const SLICE_COUNT = 8;
 test("a burst of hu-slice messages is meaningfully faster per-slice than sending them sequentially", async ({
   page,
 }) => {
-  await page.route("**/throughput-check_fp16.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_fp16.onnx` }),
-  );
-  await page.route("**/throughput-check_int8.onnx", (route) =>
-    route.fulfill({ path: `${QUANT_DIR}lungmask_r231_int8.onnx` }),
-  );
+  await page.route("**/throughput-check_fp16.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_FP16 }));
+  await page.route("**/throughput-check_int8.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_INT8 }));
 
   await page.goto("/worker-harness.html");
 

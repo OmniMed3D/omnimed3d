@@ -1,0 +1,82 @@
+[
+  {
+    "stem": "LIDC-IDRI-0001_inst0034",
+    "originalHeight": 512,
+    "originalWidth": 512,
+    "bodyMaskBbox": [
+      115,
+      3,
+      437,
+      489
+    ],
+    "argmaxClassCounts": {
+      "0": 47747,
+      "1": 8745,
+      "2": 9044
+    }
+  },
+  {
+    "stem": "LIDC-IDRI-0001_inst0056",
+    "originalHeight": 512,
+    "originalWidth": 512,
+    "bodyMaskBbox": [
+      95,
+      11,
+      457,
+      473
+    ],
+    "argmaxClassCounts": {
+      "0": 47000,
+      "1": 10215,
+      "2": 8321
+    }
+  },
+  {
+    "stem": "LIDC-IDRI-0001_inst0078",
+    "originalHeight": 512,
+    "originalWidth": 512,
+    "bodyMaskBbox": [
+      99,
+      39,
+      441,
+      461
+    ],
+    "argmaxClassCounts": {
+      "0": 49465,
+      "1": 7732,
+      "2": 8339
+    }
+  },
+  {
+    "stem": "LIDC-IDRI-0002_inst0066",
+    "originalHeight": 512,
+    "originalWidth": 512,
+    "bodyMaskBbox": [
+      123,
+      3,
+      425,
+      509
+    ],
+    "argmaxClassCounts": {
+      "0": 48529,
+      "1": 8845,
+      "2": 8162
+    }
+  },
+  {
+    "stem": "LIDC-IDRI-0002_inst0109",
+    "originalHeight": 512,
+    "originalWidth": 512,
+    "bodyMaskBbox": [
+      87,
+      3,
+      433,
+      509
+    ],
+    "argmaxClassCounts": {
+      "0": 43459,
+      "1": 11712,
+      "2": 10365
+    }
+  }
+]

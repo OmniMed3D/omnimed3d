@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js";
 
 /**
  * Real-browser batch-size-vs-throughput measurement (Issue #24),
@@ -13,7 +14,6 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 const FIXTURES_DIR = `${REPO_ROOT}ai-pipeline/quantization/calibration_data/inference_fixtures/`;
-const QUANT_DIR = `${REPO_ROOT}ai-pipeline/quantization/`;
 
 const SLICE_STEM = "LIDC-IDRI-0001_inst0034";
 const SLICE_WIDTH = 512;
@@ -31,19 +31,19 @@ interface BatchBenchResult {
 }
 
 const MODELS = [
-  { label: "INT8", modelFile: "lungmask_r231_int8.onnx" },
-  { label: "FP16", modelFile: "lungmask_r231_fp16.onnx" },
+  { label: "INT8", modelFile: "lungmask_r231_int8.onnx", modelPath: ONNX_MODEL_PATH_INT8 },
+  { label: "FP16", modelFile: "lungmask_r231_fp16.onnx", modelPath: ONNX_MODEL_PATH_FP16 },
 ];
 
 const EPS = ["wasm", "webgpu"] as const;
 
 const allResults: { label: string; ep: string; results: BatchBenchResult[] }[] = [];
 
-for (const { label, modelFile } of MODELS) {
+for (const { label, modelFile, modelPath } of MODELS) {
   for (const ep of EPS) {
     test(`${label} batch-size throughput, ${ep} EP (real browser)`, async ({ page }) => {
       test.setTimeout(120_000); // WASM batch runs are compute-bound, not overhead-bound -- see BATCH_SIZES comment
-      await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: `${QUANT_DIR}${modelFile}` }));
+      await page.route(`**/${modelFile}`, (route) => route.fulfill({ path: modelPath }));
       await page.route("**/slice.bin", (route) => route.fulfill({ path: `${FIXTURES_DIR}${SLICE_STEM}_hu.bin` }));
 
       await page.goto(
