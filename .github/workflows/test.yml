@@ -16,13 +16,14 @@
 #   - parse-worker/test/pipeline.test.ts needs engine/build_wasm/ (the
 #     native dicom-parser WASM build), which requires Engine's own
 #     cmake/emsdk toolchain -- not wired into CI here.
-# WebGPU e2e (Playwright, both viewer/tests/e2e/ and inference-worker/e2e/)
-# is left out of CI entirely -- see playwright.config.ts's own comments in
-# each of those two dirs for why it's macOS-only today. (Confirmed
-# 2026-08-23 via spike-webgpu-macos-runner.yml that macos-latest does
-# expose a real WebGPU adapter, and inference-worker/e2e/'s 6 files all
-# pass locally against this same fixture subset -- wiring that suite into
-# CI is a ready, but separate, follow-up.)
+# WebGPU e2e (Playwright): inference-worker/e2e/'s 6 files run below on
+# macos-latest -- spike-webgpu-macos-runner.yml confirmed (2026-08-23) that
+# runner exposes a real WebGPU adapter, and all 6 files pass locally
+# against this same fixture subset. viewer/tests/e2e/ (Engine-owned) is
+# still left out entirely -- same macOS-only constraint, but that suite's
+# CI runner strategy needs Engine track agreement, not just AI track's own
+# call. See playwright.config.ts's own comments in each of those two dirs
+# for the underlying macOS-only flag issue.
 
 name: Test
 
@@ -66,3 +67,36 @@ jobs:
       - name: parse-worker unit tests (fixture-free subset)
         working-directory: viewer/src/workers/parse-worker
         run: npx vitest run test/assembleSeries.test.ts test/orientation.test.ts test/halfFloat.test.ts
+
+  e2e-inference-worker:
+    name: E2E (Playwright, inference-worker, real WebGPU)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: Install Chromium browser binary
+        working-directory: viewer/src/workers/inference-worker
+        run: npx playwright install chromium
+
+      # Some of these assert on real wall-clock timing (e.g.
+      # worker-batch-throughput.spec.ts's burst-vs-sequential comparison,
+      # worker-warmup.spec.ts's first-vs-steady-state ratio) -- a shared
+      # CI runner's performance is less consistent than a dedicated dev
+      # machine, so treat an occasional failure here as a flakiness
+      # candidate to investigate before assuming a real regression.
+      - name: inference-worker e2e tests (WebGPU + WASM, real GPU hardware)
+        working-directory: viewer/src/workers/inference-worker
+        run: npx playwright test
