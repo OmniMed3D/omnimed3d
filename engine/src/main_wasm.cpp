@@ -60,8 +60,8 @@ void engine_set_window_level(float center, float width) {
     g_device.setWindowLevel(center, width);
 }
 
-// presetId: 0=Lung, 1=Bone, 2=Soft Tissue, 3=Brain -- see kColormapPresets
-// in WebGPUDevice.cpp for the concrete values.
+// presetId: 0=Lung, 1=Bone, 2=Soft Tissue, 3=Brain, 4=Grayscale (default)
+// -- see kColormapPresets in WebGPUDevice.cpp for the concrete values.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_colormap_preset(uint32_t presetId) {
     g_device.setColormapPreset(presetId);
@@ -155,11 +155,18 @@ void engine_set_occlusion_enabled(uint32_t enabled) {
     g_device.setOcclusionEnabled(enabled != 0);
 }
 
-// Custom colormap (5th preset) -- low/high RGB in [0,1]. See
-// rhi::Device::setCustomColormap's header comment.
+// Custom colormap (on top of the 5 fixed presets above) -- low/high RGB
+// in [0,1]. See rhi::Device::setCustomColormap's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_custom_lut_colors(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
     g_device.setCustomColormap(lowR, lowG, lowB, highR, highG, highB);
+}
+
+// AI segmentation mask overlay blend strength -- see
+// rhi::Device::setMaskOverlayAlpha's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_mask_opacity(float alpha) {
+    g_device.setMaskOverlayAlpha(alpha);
 }
 
 // See rhi::Device::setBackgroundColor's header comment.
