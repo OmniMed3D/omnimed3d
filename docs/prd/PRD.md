@@ -215,13 +215,15 @@ each time a new file is loaded and threaded through Parse Worker →
 Inference Worker → back to the Shell, lets the receiving layer discard any
 mask message whose `volumeId` doesn't match the currently loaded volume.
 
-**Message shapes (draft, language-agnostic; illustrative field names only):**
+**Message shapes:**
 
 | Message | Fields | Notes |
 | --- | --- | --- |
 | `mask-slice` | `volumeId`, `sliceIndex`, `width`, `height`, `data` (Transferable `ArrayBuffer`, `uint8`, row-major, length = `width*height`) | One per completed slice. |
-| `mask-complete` *(optional, P1)* | `volumeId`, `totalSlices` | UI progress only — no engine logic depends on it. |
-| `mask-slice-error` *(optional, P1)* | `volumeId`, `sliceIndex`, `message` | MVP can omit — a missing slice already reads as background (zero-initialized mask texture). |
+| `mask-complete` *(optional, P1)* | `volumeId`, `totalSlices` | UI progress only — no engine logic depends on it. Not implemented in the MVP build. |
+| `mask-slice-error` *(optional, P1)* | `volumeId`, `sliceIndex`, `message` | MVP can omit — a missing slice already reads as background (zero-initialized mask texture). Not implemented in the MVP build. |
+
+The `mask-slice` row is not illustrative — it is the field-for-field shape of the implemented `MaskSliceMessage`: the Inference Worker's own canonical definition (`viewer/src/workers/inference-worker/src/pipeline.ts`), mirrored on the receiving side by the Web Application Shell's own `MaskSliceMessage` declaration (`viewer/src/shell/main.ts`), which is what actually receives it and calls into the engine per the ownership boundary above. The one difference between the two sides — `data` typed as `Uint8Array` in `pipeline.ts` versus `ArrayBuffer` in `main.ts` — is not a discrepancy; both describe the same underlying Transferable buffer, just as each side's own code naturally references it.
 
 **Ordering:** slices may arrive in any order — each slice update is
 independent (writes one Z-region of the mask texture), so the Inference
