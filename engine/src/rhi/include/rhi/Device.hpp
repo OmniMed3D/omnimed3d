@@ -208,6 +208,14 @@ public:
     // pass's diffuse term.
     virtual void setOcclusionEnabled(bool enabled) = 0;
 
+    // Blend strength of the AI segmentation mask highlight color over the
+    // volume, in raymarch and axial-slice shading alike (PRD §5.3.1's mask
+    // overlay compositor). 0.0 makes the mask invisible; 1.0 fully replaces
+    // the underlying volume color where a mask class is present. Clamped to
+    // [0,1]. Was a fixed 0.6 constant before this control existed. Safe to
+    // call before any volume/mask is loaded, like setQualityTier.
+    virtual void setMaskOverlayAlpha(float alpha) = 0;
+
     // Sets a fifth, user-defined colormap (§5.3's "Custom" preset) --
     // low/high RGB in [0,1], distinct from setColormapPreset's fixed
     // 0-3 index range. Does not change window/level (unlike

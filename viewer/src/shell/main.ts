@@ -79,6 +79,7 @@ interface EngineModule {
   _engine_set_clip_box(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): void;
   _engine_set_gradient_opacity_strength(strength: number): void;
   _engine_set_occlusion_enabled(enabled: number): void;
+  _engine_set_mask_opacity(alpha: number): void;
   _engine_set_custom_lut_colors(
     lowR: number,
     lowG: number,

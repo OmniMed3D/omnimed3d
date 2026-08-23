@@ -121,13 +121,16 @@ struct ColormapPreset {
     ColorRGB highColor;
 };
 
-constexpr std::array<ColormapPreset, 4> kColormapPresets{{
+constexpr std::array<ColormapPreset, 5> kColormapPresets{{
     {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}},  // 0: Lung -- cool blue
     {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}},   // 1: Bone -- warm ivory
-    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}},     // 2: Soft Tissue (default) -- warm red
+    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}},     // 2: Soft Tissue -- warm red
     {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}},      // 3: Brain -- neutral warm gray
+    {40.0F, 400.0F, {12, 12, 12}, {245, 245, 245}},     // 4: Grayscale (default) -- no color tint,
+                                                         // same window/level as Soft Tissue, traditional
+                                                         // CT-film look
 }};
-constexpr uint32_t kDefaultColormapPreset = 2;
+constexpr uint32_t kDefaultColormapPreset = 4;
 
 // REQ-R04 quality/step-count tiers -- WebGPUDevice::setQualityTier().
 // stepsAcrossDiagonal sizes stepSize (diagonal / this); maxSteps is a
@@ -260,10 +263,20 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     deviceCallbackInfo.callback = &WebGPUDevice::onDeviceRequested;
     deviceCallbackInfo.userdata1 = self;
 
+    // Must outlive the wgpuAdapterRequestDevice() call below -- declaring
+    // this inside the if-block and pointing deviceDesc.requiredFeatures at
+    // it left a dangling pointer once the block's closing brace ended the
+    // array's lifetime, since the request call itself happens after that
+    // brace. Emscripten's JS glue reads through the pointer when it
+    // marshals deviceDesc into a real GPUDeviceDescriptor, so a stale/
+    // garbage stack value there surfaced as a browser-side "requiredFeatures
+    // ... is not a valid enum value of type GPUFeatureName" TypeError
+    // instead of a native crash.
+    WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
+
     WGPUDeviceDescriptor deviceDesc{};
     deviceDesc.requiredLimits = &requiredLimits;
     if (self->timestampQuerySupported_) {
-        WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
         deviceDesc.requiredFeatureCount = 1;
         deviceDesc.requiredFeatures = requiredFeatures;
     }
@@ -1064,7 +1077,7 @@ void WebGPUDevice::renderFrame() {
 
         AxialSliceUBO ubo{};
         ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
-        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, maskOverlayAlpha_, 0.0F, 0.0F};
         ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
 
         wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
@@ -1115,7 +1128,7 @@ void WebGPUDevice::renderFrame() {
         ubo.aabbMax = glm::vec4{aabbMax_, 0.0F};
         ubo.rayParams = glm::vec4{stepSize, maxSteps, extinction_, densityScale_};
         ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
-        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
+        ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, maskOverlayAlpha_, 0.0F, 0.0F};
         ubo.shadingParams = glm::vec4{kLightDirection, static_cast<float>(shadingMode_)};
         ubo.jitterParams = glm::vec4{accumFrameIndex_, 1.0F, 0.0F, 0.0F};
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
@@ -1560,6 +1573,11 @@ void WebGPUDevice::setGradientOpacityStrength(float strength) {
 
 void WebGPUDevice::setOcclusionEnabled(bool enabled) {
     occlusionEnabled_ = enabled;
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setMaskOverlayAlpha(float alpha) {
+    maskOverlayAlpha_ = std::clamp(alpha, 0.0F, 1.0F);
     markAccumulationDirty();
 }
 

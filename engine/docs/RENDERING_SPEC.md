@@ -25,7 +25,7 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
-8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest). Composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at alpha `0.6`, but only once per boundary *crossing* along the ray (previous step's class `== 0` and this step's `!= 0`), not on every step spent inside the mask — see Change History's 2026-08-23 "mask overlay boundary-crossing compositing" entry for why per-step compositing was replaced. (Mask on/off and alpha themselves have no UI/export yet — still hardcoded.)
+8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest). Composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at `engine_set_mask_opacity`'s alpha (default `0.6`), but only once per boundary *crossing* along the ray (previous step's class `== 0` and this step's `!= 0`), not on every step spent inside the mask — see Change History's 2026-08-23 "mask overlay boundary-crossing compositing" entry for why per-step compositing was replaced. (Mask on/off itself has no UI/export yet — still hardcoded to always-on.)
 9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingMode`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
@@ -95,23 +95,24 @@ Orbit3D rendering is now two passes:
 
 ### 1.8 Color transfer-function presets (REQ-R03)
 
-`engine_set_colormap_preset(presetId)` — `0=Lung, 1=Bone, 2=Soft Tissue (default), 3=Brain`. Each preset carries window/level values plus a low/high RGB color pair; the LUT is a linear gradient between them (the alpha channel is always a plain `t*255` ramp regardless of preset — currently unused by either shader).
+`engine_set_colormap_preset(presetId)` — `0=Lung, 1=Bone, 2=Soft Tissue, 3=Brain, 4=Grayscale (default)`. Each preset carries window/level values plus a low/high RGB color pair; the LUT is a linear gradient between them (the alpha channel is always a plain `t*255` ramp regardless of preset — currently unused by either shader).
 
 | Preset | Center/Width (HU) | Color |
 | --- | --- | --- |
 | Lung | -600 / 1500 | desaturated navy → pale sky blue |
 | Bone | 300 / 1500 | dark brown → ivory |
-| Soft Tissue (default) | 40 / 400 | dark red-brown → soft pink |
+| Soft Tissue | 40 / 400 | dark red-brown → soft pink |
 | Brain | 40 / 80 | dark gray → warm light gray |
+| Grayscale (default) | 40 / 400 | near-black → near-white, no color tint (traditional CT-film look) |
 
-A 5th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, highR,G,B)`, values in `[0,1]`) is layered on top of these four — unlike the fixed presets, it doesn't change window/level, only the color ramp. Not one of `kColormapPresets`' indices; the "Custom" button in the UI is a visual-active-state indicator only (its click doesn't call `engine_set_colormap_preset`), while the two color pickers own actually applying the colors.
+A 6th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, highR,G,B)`, values in `[0,1]`) is layered on top of these five — unlike the fixed presets, it doesn't change window/level, only the color ramp. Not one of `kColormapPresets`' indices; the "Custom" button in the UI is a visual-active-state indicator only (its click doesn't call `engine_set_colormap_preset`), while the two color pickers own actually applying the colors.
 
 ### 1.9 Controls exposed in the viewer UI
 
 | Control | Panel section | WASM export |
 | --- | --- | --- |
 | Window Center / Width (slider + numeric entry) | Window & Level | `engine_set_window_level` |
-| 4 preset buttons + Custom (5th, color pickers) | Window & Level | `engine_set_colormap_preset`, `engine_set_custom_lut_colors` |
+| 5 preset buttons + Custom (6th, color pickers) | Window & Level | `engine_set_colormap_preset`, `engine_set_custom_lut_colors` |
 | View mode (3D Orbit / 2D Slice) | View | `engine_set_view_mode` |
 | Axial slice index | View | `engine_set_axial_slice_index` |
 | Quality tier (Low/Medium/High) | Rendering | `engine_set_quality_tier` |
@@ -119,13 +120,14 @@ A 5th, user-defined **Custom** preset (`engine_set_custom_lut_colors(lowR,G,B, h
 | Extinction / Density Scale / Threshold (slider + numeric entry) | TF Detail | `engine_set_extinction`, `engine_set_density_scale`, `engine_set_threshold` |
 | Edge Emphasis (gradient-opacity strength) | TF Detail | `engine_set_gradient_opacity_strength` |
 | Occlusion Shading on/off | TF Detail | `engine_set_occlusion_enabled` |
+| Mask Opacity (slider + numeric entry) | TF Detail | `engine_set_mask_opacity` |
 | Clip X/Y/Z min+max sliders, Reset button | Clip | `engine_set_clip_box` |
 | Background color (Dark/Black/Gray/White presets) | Background | `engine_set_background_color` |
 | Camera orbit/zoom (mouse drag/wheel, not in the panel) | — | `engine_orbit_camera`, `engine_zoom_camera` |
 
 ### 1.10 Parameters not yet exposed via UI/export
 
-Light direction / ambient & diffuse shading strength (fixed constants), mask overlay on/off and alpha (fixed at true/0.6), occlusion strength (fixed at full effect when enabled — no slider yet), the color transfer function's second axis as a genuine classification axis (gradient magnitude is only used as an opacity modulator, §1.4a, not a second LUT axis). No further branch is currently planned against this list — pick these up if a concrete need comes up.
+Light direction / ambient & diffuse shading strength (fixed constants), mask overlay on/off (fixed at true — alpha is now exposed via `engine_set_mask_opacity`, see §1.9's table), occlusion strength (fixed at full effect when enabled — no slider yet), the color transfer function's second axis as a genuine classification axis (gradient magnitude is only used as an opacity modulator, §1.4a, not a second LUT axis). No further branch is currently planned against this list — pick these up if a concrete need comes up.
 
 ---
 
@@ -592,5 +594,77 @@ add) to avoid reintroducing this exact bug.
 `wasm-macos` and native `compile_shaders` targets. Native `ctest`
 unaffected (shader-only change). Confirmed fixed via real-device mobile
 testing over a Cloudflare tunnel.
+
+### 2026-08-23 — fix dangling `requiredFeatures` pointer in device request
+
+Found via a real-browser console error on a device whose adapter
+actually supports `timestamp-query` (the `feat/engine-gpu-timestamp-query`
+entry above): `WebGPUDevice: device request failed: ... Failed to read
+the 'requiredFeatures' property from 'GPUDeviceDescriptor': The provided
+value 'undefined' is not a valid enum value of type GPUFeatureName`.
+`onAdapterRequested()` declared the one-element `requiredFeatures` array
+*inside* the `if (timestampQuerySupported_)` block, then pointed
+`deviceDesc.requiredFeatures` at it -- but `wgpuAdapterRequestDevice()`
+is called after that block's closing brace, i.e. after the array's
+lifetime has already ended. Reading through the resulting dangling
+pointer is undefined behavior; in this Emscripten build it surfaced as
+Dawn's JS glue marshaling whatever stale stack bytes were there into an
+invalid `GPUFeatureName` enum value rather than a native crash, which is
+why device creation failed cleanly (with a message) instead of hard
+faulting. Not caught earlier because the previous review environment
+(a Playwright sandbox with no WebGPU adapter at all) never exercised
+this branch. Fixed by hoisting the array to the same scope as
+`deviceDesc`, so its lifetime covers the request call in both branches.
+
+**Verified:** `wasm-macos` rebuilds cleanly. Native `ctest` unaffected
+(this file isn't part of the native build target). Confirmed fixed via
+real-device mobile testing over a Cloudflare tunnel, on the same
+adapter/browser that originally hit the bug.
+
+### 2026-08-23 — mask overlay opacity control + Grayscale default preset
+
+Two small, independent UI/rendering asks. Both touch the same two
+files' worth of already-existing plumbing rather than adding anything
+structurally new.
+
+**Mask overlay opacity:** `maskParams.y` (`overlayAlpha` in both
+`RaymarchUBO` and `AxialSliceUBO`, §1.5) was already declared and read
+by both shaders, but the C++ side never backed it with a real member --
+both UBO-population call sites wrote a literal `0.6F` directly. Added
+`rhi::Device::setMaskOverlayAlpha`/`WebGPUDevice::setMaskOverlayAlpha`
+(clamped `[0,1]`, backed by a new `maskOverlayAlpha_` member defaulting
+to the same `0.6F`) and the `engine_set_mask_opacity` WASM export, wired
+to a new "Mask Opacity" slider in the TF Detail panel
+(`tfDetailControls.ts`). No UBO layout change, no bind-group change --
+the field already existed on both sides of the C++/shader boundary.
+
+**Grayscale default preset:** `kColormapPresets` gains a 5th entry
+("Grayscale", same 40/400 HU window as Soft Tissue, near-black →
+near-white with no color tint) and `kDefaultColormapPreset` moves from
+`2` (Soft Tissue) to `4` (Grayscale) -- none of the four original
+presets was a true neutral ramp, and Soft Tissue's warm salmon tint was
+the first thing every newly loaded volume showed. Custom (the
+user-defined 6th colormap, `customColormapControls.ts`) shifts from
+`data-colormap-preset="4"` to `"5"` in the UI to make room, with
+`windowLevelControls.ts`'s special-case check updated to match --
+`kColormapPresets`' own array bounds check (`setColormapPreset`)
+required no change since it already sizes off `.size()` rather than a
+hardcoded constant.
+
+**Verified:** native `ctest` passes (unaffected -- these files aren't
+part of the native build target). The `wasm-macos` CMake preset rebuilds
+cleanly with no errors, and `viewer`'s `vite build` bundles the changed
+TS with no errors. The `viewer/tests/e2e/` suite itself could not be
+run to completion in this environment -- every spec fails identically
+at the initial `#shell-status` "ready for input" wait with "engine
+failed to start" (no WebGPU adapter available to Playwright's Chromium
+in this sandbox). Confirmed this is pre-existing and unrelated to this
+change: reverting to HEAD (`git stash`), rebuilding, and re-running the
+same spec reproduces the identical failure. Existing preset-related
+assertions reference fixed presets 0-2 (Lung/Bone/Soft Tissue) and the
+`#custom-preset-button` element ID directly, none of which depend on
+the default preset's index or on Custom's `data-colormap-preset` value,
+so no test updates were needed -- but real e2e/manual re-verification in
+an environment with a working WebGPU adapter is still owed before merge.
 
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

@@ -6,9 +6,10 @@
  * see cameraControls.ts's comment on why). Preset button order/values
  * must match `kColormapPresets` in
  * engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp exactly (0=Lung,
- * 1=Bone, 2=Soft Tissue, 3=Brain).
+ * 1=Bone, 2=Soft Tissue, 3=Brain, 4=Grayscale). Custom (id 5) is a 6th,
+ * user-defined colormap layered on top -- see customColormapControls.ts.
  *
- * Sliders initialize to the Soft Tissue preset's values (40/400) to
+ * Sliders initialize to the Grayscale preset's values (40/400) to
  * match `WebGPUDevice`'s own default-on-load preset -- no read-back
  * export from the engine exists (or is needed) to sync this; both sides
  * just agree on the same default independently, the same way
@@ -86,22 +87,23 @@ function bindRangeWithNumericEntry(
 
 // Preset center/width values, indexed by presetId -- must match
 // WebGPUDevice.cpp's kColormapPresets exactly (0=Lung, 1=Bone, 2=Soft
-// Tissue, 3=Brain). Kept in sync here (rather than read back from the
-// engine, which has no readback export) so a preset click can update the
-// slider UI/labels to match, not just the engine's own state -- without
-// this, the sliders silently went stale after a preset click and the
-// next manual drag would overwrite the preset with the pre-click values.
+// Tissue, 3=Brain, 4=Grayscale). Kept in sync here (rather than read back
+// from the engine, which has no readback export) so a preset click can
+// update the slider UI/labels to match, not just the engine's own state --
+// without this, the sliders silently went stale after a preset click and
+// the next manual drag would overwrite the preset with the pre-click values.
 const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = {
   0: { center: -600, width: 1500 }, // Lung
   1: { center: 300, width: 1500 }, // Bone
   2: { center: 40, width: 400 }, // Soft Tissue
   3: { center: 40, width: 80 }, // Brain
+  4: { center: 40, width: 400 }, // Grayscale
 };
 
 // The engine's own default-on-load preset (kDefaultColormapPreset in
-// WebGPUDevice.cpp) -- Soft Tissue. Marked active on setup so the UI
+// WebGPUDevice.cpp) -- Grayscale. Marked active on setup so the UI
 // agrees with engine state from the first frame, not just after a click.
-const DEFAULT_PRESET_ID = 2;
+const DEFAULT_PRESET_ID = 4;
 
 // Visual polish pass: presets get the same selected-state feedback the
 // view-mode toggle already had (critique heuristic #4, Consistency).
@@ -146,12 +148,12 @@ export function setupWindowLevelControls(): void {
   presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const presetId = Number(button.dataset["colormapPreset"]);
-      // Custom (§5.3, id 4) isn't one of kColormapPresets' 0-3 indices --
+      // Custom (§5.3, id 5) isn't one of kColormapPresets' 0-4 indices --
       // its color application is owned by customColormapControls.ts (the
       // color pickers call engine_set_custom_lut_colors directly), and it
       // doesn't imply a specific window/level. This handler only needs to
-      // give it the same active-state feedback the other 4 presets get.
-      if (presetId === 4) {
+      // give it the same active-state feedback the other 5 presets get.
+      if (presetId === 5) {
         setActivePreset(presetId);
         return;
       }
