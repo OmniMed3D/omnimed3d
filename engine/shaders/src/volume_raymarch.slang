@@ -254,6 +254,11 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     // (degenerates to the original point-classification behavior for
     // that one step).
     float prevN = -1.0;
+    // Tracks the mask class from the previous step so the overlay below
+    // can detect boundary *crossings* (0 -> nonzero) instead of
+    // compositing on every step inside the mask -- see that block's own
+    // comment for why.
+    uint prevMaskClass = 0u;
 
     // Front-to-back: accum starts transparent at the near face and
     // composites forward, early-terminating once effectively opaque.
@@ -377,11 +382,28 @@ float4 fragmentMain(VertexOutput input) : SV_Target
             // producer side's own upscaling.
             int3 texel = int3(uvw * float3(maskW, maskH, maskD));
             uint maskClass = maskTex.Load(int4(texel, 0));
-            if (maskClass != 0u)
+            // Composites the highlight exactly once per boundary crossing
+            // (prevMaskClass==0 -> maskClass!=0), not on every step the
+            // ray spends inside the mask. Compositing every step would
+            // apply the same front-to-back formula the density pass uses
+            // above, which approaches full opacity after enough steps
+            // regardless of how low maskAlpha is set -- correct for a
+            // literal semi-transparent substance, wrong for a boundary
+            // highlight, where a thick mask region would end up darker
+            // than a thin one at the same maskAlpha and the opacity
+            // slider would lose most of its range. A single blend per
+            // crossing, weighted by whatever transmittance (1-accum.a)
+            // the volume has already accumulated up to that depth, keeps
+            // maskAlpha meaning the same thing (this crossing's own
+            // opacity) regardless of the mask's thickness along the ray,
+            // and reads as a crisp highlighted surface rather than a
+            // depth-blurred wash.
+            if (maskClass != 0u && prevMaskClass == 0u)
             {
                 accum.rgb += (1.0 - accum.a) * kMaskHighlightColor * maskAlpha;
                 accum.a += (1.0 - accum.a) * maskAlpha;
             }
+            prevMaskClass = maskClass;
         }
 
         t += stepSize;

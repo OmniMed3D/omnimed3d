@@ -25,7 +25,7 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
-8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest); a nonzero class additively composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at `engine_set_mask_opacity`'s alpha (default `0.6`). (Mask on/off itself has no UI/export yet — still hardcoded to always-on.)
+8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest). Composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at `engine_set_mask_opacity`'s alpha (default `0.6`), but only once per boundary *crossing* along the ray (previous step's class `== 0` and this step's `!= 0`), not on every step spent inside the mask — see Change History's 2026-08-23 "mask overlay boundary-crossing compositing" entry for why per-step compositing was replaced. (Mask on/off itself has no UI/export yet — still hardcoded to always-on.)
 9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingMode`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
@@ -550,6 +550,50 @@ rewritten to match the new no-mode-2-during-drag behavior) passes.
 Manual verification: real Chrome screenshot after the fix shows the
 demo CT rendering correctly (no regression from the black-screen bug
 above), visually consistent with pre-precompute screenshots.
+
+### 2026-08-23 — mask overlay boundary-crossing compositing
+
+Reported against real usage: lowering the mask overlay's alpha made
+mask boundaries look *blurrier*, not more transparent, and a thick mask
+region's interior stayed dark red regardless of how low the alpha went.
+Root cause: the raymarch's mask block ran the same front-to-back
+compositing formula the density pass uses
+(`accum.rgb/accum.a += (1-accum.a) * ... * alpha`) on *every* step
+where the mask was present, not once. That formula is correct for a
+substance whose apparent opacity should legitimately grow with how much
+of it a ray passes through (e.g. absorptive haze) -- but a segmentation
+mask is a boundary label, not a substance with thickness, so per-step
+compositing meant a ray through a thick region of the mask converged
+toward `accum.a == 1` (fully opaque highlight) within a few steps
+regardless of `maskAlpha`, while the transition zone at the boundary
+itself spanned however many steps it took to build up that accumulation
+-- read as "blurry edge, opaque interior," exactly the opposite of the
+intended crisp highlighted boundary.
+
+**Changed:** the mask block now tracks the previous step's class
+(`prevMaskClass`) and only composites the highlight on a *crossing*
+(`prevMaskClass == 0 && maskClass != 0`) -- once per boundary the ray
+passes through, not once per step spent inside the mask. `maskAlpha`
+now means exactly what its configured value implies (this crossing's
+own opacity), independent of how thick the masked region is along that
+ray, and the boundary itself is as sharp as a single step (no
+multi-step accumulation ramp). A ray that clips directly into a mask's
+interior (e.g. via the clip box) still highlights correctly, since
+`prevMaskClass` starts at `0`, making the first sampled step read as a
+crossing.
+
+**Deliberately not done:** no separate "interior wash" tint for the
+masked region's interior beyond the boundary highlight -- the ask this
+addresses was specifically that a wash-style fill couldn't be made to
+look transparent, not a request to remove all interior indication. If a
+faint, non-accumulating interior tint is wanted later, it would need
+its own single-composite-per-crossing-style guard (not a naive per-step
+add) to avoid reintroducing this exact bug.
+
+**Verified:** shader compiles cleanly to WGSL and SPIR-V, both the
+`wasm-macos` and native `compile_shaders` targets. Native `ctest`
+unaffected (shader-only change). Confirmed fixed via real-device mobile
+testing over a Cloudflare tunnel.
 
 ### 2026-08-23 — fix dangling `requiredFeatures` pointer in device request
 
