@@ -1,0 +1,89 @@
+# One-off spike, NOT part of the regular test suite: checks whether a
+# GitHub-hosted macos-latest runner exposes a real WebGPU adapter to a
+# headless Chromium launched with the same flags viewer/playwright.config.ts
+# and inference-worker/playwright.config.ts already use locally
+# (--use-angle=metal --enable-unsafe-webgpu --ignore-gpu-blocklist).
+#
+# Both of those configs are proven to work on a real developer Mac (their
+# own comments say so, confirmed via requestAdapter() directly), but
+# whether GitHub's macOS VMs pass through a real GPU to the guest is
+# unverified -- this answers that question cheaply before committing to
+# macos-latest as the runner for the actual WebGPU e2e suites
+# (viewer/tests/e2e/, inference-worker/e2e/).
+#
+# Manual trigger only (workflow_dispatch) -- deliberately not on
+# pull_request, so it doesn't burn macOS-runner minutes (~10x an ubuntu
+# runner) on every push. Run it once from the Actions tab, read the
+# result, then delete this file regardless of outcome -- it's not meant to
+# become a permanent workflow.
+
+name: "Spike: WebGPU on macos-latest"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-webgpu-adapter:
+    name: Check navigator.gpu.requestAdapter() on macos-latest
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies (for @playwright/test)
+        working-directory: viewer
+        run: npm ci
+
+      - name: Install Chromium browser binary
+        working-directory: viewer
+        run: npx playwright install chromium
+
+      - name: Launch headless Chromium and request a WebGPU adapter
+        working-directory: viewer
+        run: |
+          cat <<'EOF' > webgpu-check.mjs
+          import { chromium } from "@playwright/test";
+          import http from "node:http";
+
+          // navigator.gpu is only exposed on a secure context -- about:blank
+          // (Playwright's default new-page target) doesn't count, so this
+          // serves a throwaway page over http://localhost (which the spec
+          // treats as trustworthy) instead, matching how the real e2e
+          // suites navigate to a Vite dev server rather than a blank page.
+          const server = http.createServer((_req, res) => {
+            res.writeHead(200, { "content-type": "text/html" });
+            res.end("<!doctype html><title>webgpu-check</title>");
+          });
+          await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+          const port = server.address().port;
+
+          const browser = await chromium.launch({
+            args: ["--use-gl=angle", "--use-angle=metal", "--enable-unsafe-webgpu", "--ignore-gpu-blocklist"],
+          });
+          const page = await browser.newPage();
+          await page.goto(`http://localhost:${port}/`);
+          const result = await page.evaluate(async () => {
+            if (!("gpu" in navigator)) return { supported: false, adapterFound: false, isSecureContext: window.isSecureContext };
+            const adapter = await navigator.gpu.requestAdapter();
+            return { supported: true, adapterFound: adapter !== null, isSecureContext: window.isSecureContext };
+          });
+          await browser.close();
+          server.close();
+
+          console.log("WebGPU check result:", JSON.stringify(result));
+          if (!result.supported || !result.adapterFound) {
+            console.log("::warning::No WebGPU adapter available on this macos-latest runner.");
+            process.exitCode = 1;
+          }
+          EOF
+          node webgpu-check.mjs
