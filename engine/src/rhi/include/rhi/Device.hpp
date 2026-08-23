@@ -216,6 +216,14 @@ public:
     // call before any volume/mask is loaded, like setQualityTier.
     virtual void setMaskOverlayAlpha(float alpha) = 0;
 
+    // Shows/hides the AI segmentation mask overlay entirely, independent of
+    // setMaskOverlayAlpha. The underlying mask texture is untouched either
+    // way -- toggling this back on after a volume's mask slices have
+    // already arrived redisplays them immediately, with no re-fetch or
+    // re-inference needed. Safe to call before any volume/mask is loaded,
+    // like setQualityTier.
+    virtual void setMaskOverlayEnabled(bool enabled) = 0;
+
     // Sets a fifth, user-defined colormap (§5.3's "Custom" preset) --
     // low/high RGB in [0,1], distinct from setColormapPreset's fixed
     // 0-3 index range. Does not change window/level (unlike

@@ -169,6 +169,13 @@ void engine_set_mask_opacity(float alpha) {
     g_device.setMaskOverlayAlpha(alpha);
 }
 
+// AI segmentation mask overlay show/hide -- see
+// rhi::Device::setMaskOverlayEnabled's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_mask_overlay_enabled(uint32_t enabled) {
+    g_device.setMaskOverlayEnabled(enabled != 0);
+}
+
 // See rhi::Device::setBackgroundColor's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_background_color(float r, float g, float b) {

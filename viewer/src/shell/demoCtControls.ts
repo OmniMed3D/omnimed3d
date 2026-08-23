@@ -25,6 +25,8 @@
  * at runtime).
  */
 
+import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
+
 const MANIFEST_URL = "/demo-ct/LIDC-IDRI-0001/manifest.json";
 const DATA_BASE_URL = "/demo-ct/LIDC-IDRI-0001/";
 
@@ -63,7 +65,8 @@ async function loadDemoCt(
   showLoadError: (message?: string) => void,
 ): Promise<void> {
   button.disabled = true;
-  button.textContent = "Loading…";
+  setGaugeLabel(button, "Loading…");
+  setGaugeProgress(button, 0);
   status.textContent = "";
 
   let manifest: DemoCtManifest;
@@ -76,14 +79,15 @@ async function loadDemoCt(
   } catch {
     showLoadError("Demo CT not available -- run npm run sync-demo-ct first.");
     button.disabled = false;
-    button.textContent = "Load Demo CT";
+    setGaugeLabel(button, "Load Demo CT");
+    setGaugeProgress(button, 0);
     return;
   }
 
   try {
     const total = manifest.files.length;
     let completed = 0;
-    status.textContent = `Loading demo CT... (0/${total})`;
+    setGaugeLabel(button, `Loading demo CT... (0/${total})`);
 
     const buffers = await Promise.all(
       manifest.files.map(async (filename) => {
@@ -93,7 +97,8 @@ async function loadDemoCt(
         }
         const buffer = await response.arrayBuffer();
         completed += 1;
-        status.textContent = `Loading demo CT... (${completed}/${total})`;
+        setGaugeLabel(button, `Loading demo CT... (${completed}/${total})`);
+        setGaugeProgress(button, completed / total);
         return buffer;
       }),
     );
@@ -101,7 +106,8 @@ async function loadDemoCt(
     await loadVolumeFromBuffers(buffers);
 
     button.disabled = true;
-    button.textContent = "Demo CT loaded";
+    setGaugeLabel(button, "Demo CT loaded");
+    setGaugeProgress(button, 1);
     status.replaceChildren();
     status.append(document.createTextNode(ATTRIBUTION_SUMMARY + " "));
     const details = document.createElement("details");
@@ -115,6 +121,7 @@ async function loadDemoCt(
   } catch {
     showLoadError("Couldn't load the demo CT series -- one or more slice requests failed.");
     button.disabled = false;
-    button.textContent = "Load Demo CT";
+    setGaugeLabel(button, "Load Demo CT");
+    setGaugeProgress(button, 0);
   }
 }

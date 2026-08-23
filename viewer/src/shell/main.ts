@@ -35,7 +35,7 @@ import { setupBackgroundControls } from "./backgroundControls.js";
 import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
-import { setupInferenceControls } from "./inferenceControls.js";
+import { notifyMaskSliceApplied, notifyVolumeLoadedForInference, setupInferenceControls } from "./inferenceControls.js";
 import { setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
 import { setupStatsOverlay } from "./statsOverlay.js";
@@ -80,6 +80,7 @@ interface EngineModule {
   _engine_set_gradient_opacity_strength(strength: number): void;
   _engine_set_occlusion_enabled(enabled: number): void;
   _engine_set_mask_opacity(alpha: number): void;
+  _engine_set_mask_overlay_enabled(enabled: number): void;
   _engine_set_custom_lut_colors(
     lowR: number,
     lowG: number,
@@ -359,6 +360,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   });
   notifyVolumeLoaded(msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
+  notifyVolumeLoadedForInference(msg.volumeId, msg.depth);
   scheduleAutoTierCheck();
   setLoading(false);
   // Visual polish pass: the empty-canvas hint has served its purpose
@@ -381,6 +383,7 @@ function engineApplyMaskSlice(msg: MaskSliceMessage): void {
     window.Module.HEAPU8.set(bytes, ptr);
     window.Module._engine_apply_mask_slice(numericId, msg.sliceIndex, msg.width, msg.height, ptr, bytes.byteLength);
   });
+  notifyMaskSliceApplied(msg.volumeId);
 }
 
 async function main() {

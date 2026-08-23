@@ -1581,6 +1581,11 @@ void WebGPUDevice::setMaskOverlayAlpha(float alpha) {
     markAccumulationDirty();
 }
 
+void WebGPUDevice::setMaskOverlayEnabled(bool enabled) {
+    maskOverlayEnabled_ = enabled;
+    markAccumulationDirty();
+}
+
 void WebGPUDevice::setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
     auto toByte = [](float value) -> uint8_t { return static_cast<uint8_t>(std::clamp(value, 0.0F, 1.0F) * 255.0F); };
     customLowColor_ = ColorRGB{toByte(lowR), toByte(lowG), toByte(lowB)};

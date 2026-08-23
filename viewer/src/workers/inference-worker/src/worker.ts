@@ -19,6 +19,48 @@ import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
 import { resolveModelPath } from "./modelSelection.js";
 import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
+/**
+ * Fetches a model file's bytes with progress reporting, instead of handing
+ * `ort.InferenceSession.create()` a URL and letting it fetch internally --
+ * ORT gives no way to observe that internal fetch's progress. `onProgress`
+ * receives `total <= 0` when the server didn't send a `Content-Length`
+ * (e.g. a dev server response without one), which the caller should treat
+ * as "size unknown" rather than a real zero-byte total.
+ */
+async function fetchModelBytes(url: string, onProgress: (loaded: number, total: number) => void): Promise<Uint8Array> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`model fetch failed: ${url} (${response.status})`);
+  }
+  const total = Number(response.headers.get("Content-Length") ?? 0);
+  if (!response.body) {
+    // No streamable body (e.g. a test environment's fetch polyfill) --
+    // still correct, just can't report incremental progress.
+    const buffer = await response.arrayBuffer();
+    onProgress(buffer.byteLength, buffer.byteLength);
+    return new Uint8Array(buffer);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress(loaded, total);
+  }
+
+  const bytes = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 interface InitMessage {
   type: "init";
   /**
@@ -228,12 +270,26 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       primaryOptions.externalData = [{ path: externalDataName, data: bytes }];
     }
 
+    // Reports download progress as a fraction in [0,1], or null when the
+    // server didn't send a Content-Length -- see fetchModelBytes's own
+    // comment. A fresh call each time (rather than accumulating across the
+    // primary/fallback attempts below) since a fallback re-downloads a
+    // different file from scratch, not a continuation of the first one.
+    const reportDownloadProgress = (loaded: number, total: number) => {
+      (self as unknown as Worker).postMessage({
+        type: "init-progress",
+        loaded,
+        total: total > 0 ? total : null,
+      });
+    };
+
     let resolvedModelPath = primaryModelPath;
     let gpuActive = gpuDetected;
     let usedFallback = false;
     try {
       adapter = new LungmaskAdapter(primaryModelPath);
-      session = await ort.InferenceSession.create(primaryModelPath, primaryOptions);
+      const modelBytes = await fetchModelBytes(primaryModelPath, reportDownloadProgress);
+      session = await ort.InferenceSession.create(modelBytes, primaryOptions);
       await validateSession(adapter, session);
     } catch (err) {
       // Only a modelBasePath (hardware-auto-selected) caller run against a
@@ -254,9 +310,10 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       gpuActive = false;
       resolvedModelPath = resolveModelPath(msg.modelBasePath, false);
       adapter = new LungmaskAdapter(resolvedModelPath);
+      const fallbackBytes = await fetchModelBytes(resolvedModelPath, reportDownloadProgress);
       // Force wasm-only for the retry -- webgpu just failed for this
       // session, so there's no reason to let ORT attempt it again here.
-      session = await ort.InferenceSession.create(resolvedModelPath, { executionProviders: ["wasm"] });
+      session = await ort.InferenceSession.create(fallbackBytes, { executionProviders: ["wasm"] });
       // Let this one throw for real if it fails too -- INT8/WASM is the
       // baseline this fallback exists to reach; nothing left below it.
       await validateSession(adapter, session);
