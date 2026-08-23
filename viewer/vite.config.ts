@@ -6,14 +6,19 @@ export default defineConfig({
     outDir: "../../dist",
     emptyOutDir: true,
   },
+  // Real-device testing via a Cloudflare Quick Tunnel (`cloudflared tunnel
+  // --url`) fronts either the preview server (`vite preview`) or the dev
+  // server (`vite`/`npm run dev`) with a random *.trycloudflare.com
+  // subdomain each run -- Vite's Host-header check rejects that by
+  // default (each subdomain would need its own allowlist entry, which a
+  // fresh tunnel invalidates immediately). A dot-prefixed entry matches
+  // the whole subdomain, covering every future tunnel run without needing
+  // to update this file again. Both `server` (dev) and `preview` need
+  // their own copy -- they're separate config sections, not shared.
+  server: {
+    allowedHosts: [".trycloudflare.com"],
+  },
   preview: {
-    // Real-device testing via a Cloudflare Quick Tunnel (`cloudflared tunnel
-    // --url`) fronts the preview server with a random *.trycloudflare.com
-    // subdomain each run -- Vite's Host-header check rejects that by
-    // default (each subdomain would need its own allowlist entry, which a
-    // fresh tunnel invalidates immediately). A dot-prefixed entry matches
-    // the whole subdomain, covering every future tunnel run without
-    // needing to update this file again.
     allowedHosts: [".trycloudflare.com"],
   },
   optimizeDeps: {

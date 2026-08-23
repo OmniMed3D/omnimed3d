@@ -44,7 +44,7 @@ public:
     void setViewMode(uint32_t mode) override;
     void setAxialSliceIndex(uint32_t index) override;
     void setQualityTier(uint32_t tier) override;
-    void setShadingEnabled(bool enabled) override;
+    void setShadingMode(uint32_t mode) override;
     void setExtinction(float extinction) override;
     void setDensityScale(float scale) override;
     void setThreshold(float threshold) override;
@@ -303,8 +303,9 @@ private:
     // WebGPUDevice.cpp. Default matches the previous hardcoded behavior
     // (Medium == the old fixed 512-step/diagonal-384 formula).
     uint32_t qualityTier_ = 1;
-    // Gradient-based Lambert shading toggle -- see setShadingEnabled().
-    bool shadingEnabled_ = true;
+    // Gradient-based Lambert shading mode (0=off, 1=on, 2=on-flat) -- see
+    // setShadingMode().
+    uint32_t shadingMode_ = 1;
     // Temporal-accumulation frame counter (jitter + accumulate while the
     // camera/params are static) -- reset to 0 by markAccumulationDirty(),
     // incremented once per renderFrame() call otherwise.

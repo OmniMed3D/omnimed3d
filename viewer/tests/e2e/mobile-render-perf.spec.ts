@@ -97,7 +97,9 @@ test("camera drag drops the engine's active quality tier and restores it on rele
     .toBe(2);
 });
 
-test("camera drag also forces shading and occlusion off, restoring both on release (issue #69)", async ({ page }) => {
+test("camera drag drops shading to its cheap flat mode and forces occlusion off, restoring both on release (issue #81)", async ({
+  page,
+}) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
@@ -132,6 +134,11 @@ test("camera drag also forces shading and occlusion off, restoring both on relea
   await page.mouse.move(centerX + 60, centerY + 30, { steps: 5 });
 
   const lastValue = (calls: number[]) => calls[calls.length - 1];
+  // 2 = shading mode "on-flat" (issue #81) -- drops the expensive
+  // per-step gradient sample during a drag without fully disabling the
+  // ambient/diffuse falloff itself, which caused a visible brightness
+  // pop the instant a drag started when shading was simply switched off
+  // (mode 0) instead.
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -139,7 +146,7 @@ test("camera drag also forces shading and occlusion off, restoring both on relea
         return w.__shadingCalls[w.__shadingCalls.length - 1];
       }),
     )
-    .toBe(0);
+    .toBe(2);
   await expect
     .poll(() =>
       page.evaluate(() => {

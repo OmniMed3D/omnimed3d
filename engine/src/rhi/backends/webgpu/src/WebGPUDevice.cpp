@@ -51,7 +51,7 @@ struct RaymarchUBO {
     glm::vec4 rayParams;      // x=stepSize, y=maxSteps, z=extinction, w unused
     glm::vec4 window;         // x=center, y=width, zw unused
     glm::vec4 maskParams;     // x=overlayEnabled, y=overlayAlpha, zw unused
-    glm::vec4 shadingParams;    // xyz=light direction (world, normalized), w=shading enabled (0/1)
+    glm::vec4 shadingParams;    // xyz=light direction (world, normalized), w=shading mode (0=off, 1=on, 2=on-flat -- issue #81)
     glm::vec4 jitterParams;     // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
     glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
@@ -149,7 +149,7 @@ constexpr std::array<QualityTier, 3> kQualityTiers{{
 constexpr uint32_t kDefaultQualityTier = 1;
 
 // Fixed world-space light direction for gradient-based Lambert shading
-// (setShadingEnabled()) -- a camera-independent key light (not exposed as
+// (setShadingMode()) -- a camera-independent key light (not exposed as
 // a setter this branch; ambient/diffuse strength are likewise fixed
 // constants in the shader itself). Chosen off-axis from the default
 // camera framing (frameCameraForVolume()'s 35deg yaw / 25deg pitch) so
@@ -982,7 +982,7 @@ void WebGPUDevice::renderFrame() {
         ubo.rayParams = glm::vec4{stepSize, maxSteps, extinction_, densityScale_};
         ubo.window = glm::vec4{windowCenter_, windowWidth_, 0.0F, 0.0F};
         ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, 0.6F, 0.0F, 0.0F};
-        ubo.shadingParams = glm::vec4{kLightDirection, shadingEnabled_ ? 1.0F : 0.0F};
+        ubo.shadingParams = glm::vec4{kLightDirection, static_cast<float>(shadingMode_)};
         ubo.jitterParams = glm::vec4{accumFrameIndex_, 1.0F, 0.0F, 0.0F};
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
@@ -1342,8 +1342,12 @@ void WebGPUDevice::setQualityTier(uint32_t tier) {
     markAccumulationDirty();
 }
 
-void WebGPUDevice::setShadingEnabled(bool enabled) {
-    shadingEnabled_ = enabled;
+void WebGPUDevice::setShadingMode(uint32_t mode) {
+    if (mode > 2) {
+        std::printf("WebGPUDevice::setShadingMode: invalid mode=%u (max 2), ignoring\n", mode);
+        return;
+    }
+    shadingMode_ = mode;
     markAccumulationDirty();
 }
 

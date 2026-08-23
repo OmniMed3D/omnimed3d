@@ -109,11 +109,14 @@ void engine_set_quality_tier(uint32_t tier) {
     g_device.setQualityTier(tier);
 }
 
-// Gradient-based Lambert shading toggle -- see
-// rhi::Device::setShadingEnabled's header comment.
+// Gradient-based Lambert shading mode: 0=off, 1=on, 2=on-flat -- see
+// rhi::Device::setShadingMode's header comment. Export name kept as
+// `_enabled` (not renamed to `_mode`) even though it now accepts a
+// tri-state value, to avoid an unrelated JS-side rename churning every
+// call site for what's still fundamentally the same control.
 EMSCRIPTEN_KEEPALIVE
-void engine_set_shading_enabled(uint32_t enabled) {
-    g_device.setShadingEnabled(enabled != 0);
+void engine_set_shading_enabled(uint32_t mode) {
+    g_device.setShadingMode(mode);
 }
 
 // TF detail controls -- see rhi::Device::setExtinction/setDensityScale/

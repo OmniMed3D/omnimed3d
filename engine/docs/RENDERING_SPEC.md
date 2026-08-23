@@ -21,12 +21,12 @@ Front-to-back raymarch through an R16Float HU 3D texture. The ray's traversal ra
 1. **Window/level normalization** — clamps raw HU into `[0,1]` as `n`, using `windowCenter`/`windowWidth`. (`engine_set_window_level`, `engine_set_colormap_preset`)
 2. **Pre-integrated transfer-function lookup** — samples a 256×256 2D LUT (binding 5) at `(frontN, backN)` to get this step segment's average color (`colorBar`) and average classification value (`sBar`). Compared to a single-point classification, this reduces thin high-contrast structures being missed between steps at low quality tiers (fewer/coarser steps). When `sf==sb` (consecutive steps' `n` values are nearly equal) it converges to the original single-point classification exactly. `sBar` is then scaled by `densityScale` (§1.4a, default `1.0` — no change) before it reaches absorption.
 3. **Gradient computation** — a forward-difference gradient of the *windowed* density `n` (not raw HU, so its magnitude stays in a bounded, window-relative range) is computed once per step, shared by shading's normal and gradient-opacity's magnitude below. Reuses this step's own already-sampled `n` as the center point (3 additional samples: +x/+y/+z) rather than re-sampling it and also sampling -x/-y/-z (central-difference, 6 samples) — changed 2026-08-22 after a real-device investigation found shading responsible for ~71% of this pass's per-step cost; the magnitude is scaled by `2.0` to preserve the original central-difference convention (and therefore `gradientOpacityStrength`'s existing feel) unchanged. Skipped entirely when neither shading nor gradient-opacity is active, to avoid the extra sampling cost.
-4. **Gradient-based Lambert shading** (optional, `engine_set_shading_enabled`) — the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.35) + diffuse(0.65)*max(N·L,0)*(1-occlusion*occlusionStrength)`. The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is also on) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
+4. **Gradient-based Lambert shading** (`engine_set_shading_enabled`, a 3-state mode as of issue #81: `0`=off, `1`=on (default), `2`=on-flat) — modes 0/1 behave as before: the gradient from step 3 is used as a pseudo-normal; its N·L term against a fixed world-space light direction (`normalize(0.4,-0.6,0.7)`) multiplies color as `ambient(0.55) + diffuse(0.45)*max(N·L,0)*(1-occlusion*occlusionStrength)` (ambient raised from `0.35`/diffuse lowered from `0.65`, sum unchanged at `1.0`, issue #81 — a fixed key light rarely faces a typical orbit-camera's visible surfaces, so most of a shaded frame sat near the low ambient floor rather than the diffuse ceiling, reading as too dark). Mode `2` ("on-flat") is used by the viewer during camera-drag interaction (`qualityControls.ts`): it applies the same formula but with a fixed representative diffuse term (`0.5`) instead of computing the real per-step gradient, skipping step 3's sampling cost entirely (`needsGradient` is false in this mode unless gradient-opacity also needs it) without the brightness jump that fully disabling shading caused (mode 0 skips the ambient/diffuse falloff itself, which most surfaces sat well below). Occlusion is also skipped in mode 2 (its own extra samples). The gradient is normalized per-axis by the volume's actual voxel spacing (`worldTexelSize`) so its direction isn't skewed on anisotropic volumes. **Directional Occlusion Shading** (optional, `engine_set_occlusion_enabled`, only has an effect when shading is on and not in flat mode) supplies the `occlusion` term: 3 short secondary density samples marching toward the light, averaged into an approximate self-occlusion factor — a cheap stand-in for a full self-shadow ray march.
 5. **Beer-Lambert absorption compositing** — `alpha = 1 - exp(-extinction * sBar * stepSize)` (`extinction`, `engine_set_extinction`, default `8.0`), composited front-to-back, early-terminating once `accum.a > 0.99`.
 6. **Threshold cutoff** (`engine_set_threshold`, default `0.0` = disabled) — if this step's `n` is below `threshold`, `alpha` is forced to `0` before compositing, letting background/noise be cut out independent of window/level.
 7. **Gradient-magnitude opacity modulation** (`engine_set_gradient_opacity_strength`, default `0.0` = no-op) — a scoped-down stand-in for a full 2D transfer function (see §1.4a's note on why). `alpha` is re-weighted by `lerp(1.0, saturate(gradientMagnitude / 2.0), strength)`, suppressing homogeneous-region contributions and emphasizing edges as `strength` increases toward `1.0`.
 8. **Mask overlay compositing** — the R8Uint mask texture is sampled via `Load` (nearest); a nonzero class additively composites a fixed highlight color (`(1.0, 0.15, 0.15)`) at alpha 0.6. (Mask on/off and alpha themselves have no UI/export yet — still hardcoded.)
-9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingEnabled`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
+9. **Background composite + jitter + temporal accumulation** — the final `accum` is composited over a configurable background color (`ubo.backgroundColor`, `engine_set_background_color`, default `(0.05,0.05,0.12)` — Dark/Black/Gray/White presets in the viewer's "Background" panel section) and always returned with alpha=1 (see §1.4). Every frame, the ray's starting offset is jittered per pixel via interleaved gradient noise; while the camera/parameters are static, a `WGPUBlendFactor_Constant` blend accumulates a running average into a persistent buffer to reduce banding. Each new frame's blend weight is `1/(accumFrameIndex+1)`, and `accumFrameIndex` is capped at 31 (so the weight never decays toward zero indefinitely). Accumulation resets (goes dirty) on: `setWindowLevel`, `setColormapPreset`, `setQualityTier`, `setShadingMode`, `setExtinction`, `setDensityScale`, `setThreshold`, `setClipBox`, `setGradientOpacityStrength`, `setOcclusionEnabled`, `setCustomColormap`, `orbitCamera`, `zoomCamera`, `resize`, `loadVolume`, `applyMaskSlice`.
 
 ### 1.3 2D Axial Slice rendering (`axial_slice.slang`)
 
@@ -430,4 +430,48 @@ of `CLAUDE.md`/build docs). Native `ctest` passes. Full
 screenshot-based tests confirm shading on/off still visibly changes the
 frame, i.e. shading still does something, not just that nothing broke.
 
-<!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation above, once real profiling access exists -->
+### 2026-08-23 — `fix/engine-shading-flat-interaction-mode`
+
+Follow-up to the previous entry's own interaction-adaptive mechanism
+(the one before that, `feat/viewer-interaction-adaptive-shading`,
+forced shading fully off during a camera drag). A real Android-device
+test caught what that entry's own "no user-visible functional change"
+claim missed for shading specifically: switching shading off outright
+during a drag caused a visible brightness pop the instant the drag
+started, since it skips the ambient/diffuse falloff itself (a
+multiplier of at most `1.0`, as little as the ambient floor) rather
+than approximating it. The same test session separately found the
+always-shaded default view "too dark".
+
+**Added:** `rhi::Device::setShadingMode`/`WebGPUDevice::setShadingMode`
+(renamed from `setShadingEnabled`, now `uint32_t` instead of `bool` --
+the WASM export `engine_set_shading_enabled` keeps its old name to
+avoid an unrelated JS-side rename, but now accepts `0`/`1`/`2`) — mode
+`2` ("on-flat") is the viewer's new interaction-drag state, described
+in §1.2 step 4 above.
+
+**Changed:** `kShadingAmbient`/`kShadingDiffuse` from `0.35`/`0.65` to
+`0.55`/`0.45` (sum unchanged at `1.0`), addressing the "too dark"
+finding directly and narrowing the gap between real shading and mode
+2's fixed approximation as a side effect (real per-surface values sit
+closer to the new, higher floor to begin with).
+
+**Deliberately left open:** mode 2's brightness still isn't an exact
+match for real shading (a single fixed diffuse term can't be, for every
+possible view) -- the pop is smaller now, not eliminated. Actually
+eliminating it means making real shading (mode 1) itself cheap enough
+to never need mode 2 at all, which is a separate, larger investment
+(precomputing the gradient at load time instead of sampling it per
+step) tracked as follow-up work, not part of this fix.
+
+**Verified:** shader compiles cleanly to both WGSL and SPIR-V (native
+`compile_shaders` target built explicitly, same as the previous entry).
+Full `viewer/tests/e2e/` suite (24 tests) passes, including an updated
+regression test asserting the engine's shading mode actually becomes
+`2` (not `0`) during a drag and restores to `1` on release. Manual
+real-device verification: iPhone 14 Pro and an Adreno 7xx Android
+phone both confirmed the default view is visibly brighter after the
+ambient change; the interaction pop is reduced but not fully gone,
+consistent with the "deliberately left open" note above.
+
+<!-- Next entry: precomputed gradient volume (compute pass), the follow-up noted above -- would let mode 1 (real per-pixel shading) run during interaction too, at which point mode 2 becomes unnecessary -->

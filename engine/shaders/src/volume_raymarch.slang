@@ -65,9 +65,22 @@ static const float3 kMaskHighlightColor = float3(1.0, 0.15, 0.15);
 // Gradient-shading constants (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
 // §4.3) -- fixed rather than UBO fields for this branch; kept close
 // together so their sum (a fully-lit voxel's brightness multiplier) is
-// easy to reason about at a glance.
-static const float kShadingAmbient = 0.35;
-static const float kShadingDiffuse = 0.65;
+// easy to reason about at a glance. Sum kept at 1.0 (unchanged) so a
+// fully-lit surface still maps to exactly the unshaded color -- only the
+// ambient/diffuse split moved.
+//
+// Ambient raised 0.35->0.55 (issue #81): the fixed world-space light
+// direction rarely faces a typical orbit-camera's visible surfaces
+// head-on, so most of the frame sits near the ambient floor rather than
+// the diffuse ceiling -- a real-device test found the default (fully
+// shaded) render "too dark" for exactly this reason. Also shrinks the
+// gap between real shading and shading's flat interaction-mode
+// approximation (kFlatShadingDiffuseTerm below): raising the floor a
+// dark surface can be brightened to interaction-mode's fixed diffuse
+// guess is a smaller jump than before, since real surfaces are so often
+// near that floor to begin with.
+static const float kShadingAmbient = 0.55;
+static const float kShadingDiffuse = 0.45;
 
 // Normalizes computeGradient()'s magnitude output (of windowed n, per mm)
 // into roughly [0,1] for gradientOpacityStrength (§6.3) -- an untuned
@@ -247,7 +260,10 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float windowWidth = ubo.window.y;
     const bool maskEnabled = ubo.maskParams.x > 0.5;
     const float maskAlpha = ubo.maskParams.y;
+    // 0=off, 1=on, 2=on-flat (issue #81 -- see kFlatShadingDiffuseTerm's
+    // own comment below for what "flat" means).
     const bool shadingEnabled = ubo.shadingParams.w > 0.5;
+    const bool shadingFlat = ubo.shadingParams.w > 1.5;
     const float3 lightDir = ubo.shadingParams.xyz;
     const bool occlusionEnabled = ubo.occlusionParams.x > 0.5;
     const float occlusionStrength = ubo.occlusionParams.y;
@@ -302,8 +318,12 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         prevN = n;
 
         // Computed once, shared by shading's N.L term and gradient-opacity
-        // modulation below -- skipped entirely when neither needs it.
-        bool needsGradient = shadingEnabled || gradientOpacityStrength > 0.0;
+        // modulation below -- skipped entirely when neither needs it. Not
+        // needed for shading specifically in flat mode (kFlatShadingDiffuseTerm
+        // below is a fixed constant, no gradient sample required), but
+        // gradient-opacity modulation is a separate feature that still
+        // needs it regardless of shading mode.
+        bool needsGradient = (shadingEnabled && !shadingFlat) || gradientOpacityStrength > 0.0;
         float3 normal = float3(0.0, 0.0, 0.0);
         float gradMagnitude = 0.0;
         if (needsGradient)
@@ -313,11 +333,29 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 
         if (shadingEnabled)
         {
-            float diffuseTerm = max(dot(normal, lightDir), 0.0);
+            // Flat mode (issue #81): skips computeGradient's sampling cost
+            // (the raymarch pass's dominant per-step cost, per a real-
+            // device GPU-timing investigation) by using a fixed
+            // representative diffuse term instead of the real N.L --
+            // deliberately not simply disabling shading (mode 0) here,
+            // since that skips the ambient/diffuse *falloff* itself,
+            // which multiplies color by at most 1.0 (fully lit) and as
+            // little as kShadingAmbient (0.35, unlit) -- turning shading
+            // off entirely made every surface jump to "fully lit"
+            // brightness the instant a drag started, a visible pop a
+            // real mobile test caught. 0.5 is not derived from anything
+            // physical, just a reasonable "average-looking" placeholder
+            // between the ambient floor and fully-lit ceiling -- revisit
+            // if a real drag still looks visibly different from an idle
+            // frame. Occlusion is also skipped in flat mode (its own
+            // extra samples), matching the same "skip what's expensive,
+            // approximate what's cheap to fake" reasoning.
+            const float kFlatShadingDiffuseTerm = 0.5;
+            float diffuseTerm = shadingFlat ? kFlatShadingDiffuseTerm : max(dot(normal, lightDir), 0.0);
             // Directional Occlusion Shading (§6.2) -- only meaningful
             // alongside shading, since it modulates the diffuse term.
             float occlusionFactor =
-                occlusionEnabled
+                (occlusionEnabled && !shadingFlat)
                     ? computeOcclusion(uvw, lightDir, worldTexelSize, stepSize * 2.0, windowCenter, windowWidth)
                     : 0.0;
             float lit = kShadingAmbient + kShadingDiffuse * diffuseTerm * (1.0 - occlusionFactor * occlusionStrength);

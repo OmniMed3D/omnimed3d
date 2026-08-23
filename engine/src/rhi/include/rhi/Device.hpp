@@ -145,12 +145,21 @@ public:
     // rejected (logged), leaving the current tier unchanged.
     virtual void setQualityTier(uint32_t tier) = 0;
 
-    // Toggles gradient-based Lambert shading (central-difference density
-    // gradient as a pseudo-normal) on the raymarch pass. Off gives the
-    // original flat density-only look; on adds depth/form cues from
-    // simulated lighting. Safe to call before any volume is loaded, like
-    // setQualityTier.
-    virtual void setShadingEnabled(bool enabled) = 0;
+    // Controls gradient-based Lambert shading on the raymarch pass.
+    // 0=off (original flat density-only look), 1=on (default -- adds
+    // depth/form cues from simulated lighting via a per-step forward-
+    // difference density gradient as a pseudo-normal), 2=on-flat (issue
+    // #81: the viewer's interaction-adaptive quality drops to this
+    // during a camera drag -- applies the same ambient/diffuse falloff
+    // as mode 1 but with a fixed representative diffuse term instead of
+    // computing the gradient, so a drag doesn't pay the gradient's
+    // sampling cost, the raymarch pass's dominant per-step cost -- but
+    // also doesn't cause the jarring brightness jump mode 0 does, since
+    // mode 0 skips the ambient/diffuse falloff entirely rather than
+    // approximating it). Any other value is rejected (logged), leaving
+    // the current mode unchanged. Safe to call before any volume is
+    // loaded, like setQualityTier.
+    virtual void setShadingMode(uint32_t mode) = 0;
 
     // Beer-Lambert absorption coefficient for the raymarch pass (was a
     // fixed constant before this control existed). Higher values make the
