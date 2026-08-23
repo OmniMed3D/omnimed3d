@@ -3,10 +3,10 @@
  * §5.3) -- two `<input type="color">` pickers driving
  * `engine_set_custom_lut_colors` directly and synchronously on every
  * `input` event (no queueing needed -- see cameraControls.ts's comment on
- * why). Unlike the 4 fixed presets, Custom doesn't change window/level and
+ * why). Unlike the 5 fixed presets, Custom doesn't change window/level and
  * has no `engine_set_colormap_preset` counterpart (that export only
- * accepts kColormapPresets' 0-3 range) -- windowLevelControls.ts's preset
- * click handler special-cases id 4 to just call setActivePreset() for the
+ * accepts kColormapPresets' 0-4 range) -- windowLevelControls.ts's preset
+ * click handler special-cases id 5 to just call setActivePreset() for the
  * visual state, while this file owns actually applying the colors.
  */
 
@@ -33,7 +33,7 @@ export function setupCustomColormapControls(): void {
       hexToUnitFloat(highInput!.value, 3),
       hexToUnitFloat(highInput!.value, 5),
     );
-    setActivePreset(4);
+    setActivePreset(5);
   }
 
   lowInput.addEventListener("input", applyCustomColors);

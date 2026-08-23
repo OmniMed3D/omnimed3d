@@ -201,17 +201,18 @@
           <button type="button" data-colormap-preset="1" data-tooltip-key="colormap-preset-1">Bone</button>
           <button type="button" data-colormap-preset="2" data-tooltip-key="colormap-preset-2">Soft Tissue</button>
           <button type="button" data-colormap-preset="3" data-tooltip-key="colormap-preset-3">Brain</button>
+          <button type="button" data-colormap-preset="4" data-tooltip-key="colormap-preset-4">Grayscale</button>
         </div>
-        <!-- §5.3 Custom preset: a 5th colormap, not one of
+        <!-- §5.3 Custom preset: a 6th colormap, not one of
              WebGPUDevice's fixed kColormapPresets indices -- the color
              pickers call engine_set_custom_lut_colors directly (not
-             engine_set_colormap_preset, which only accepts 0-3), so this
+             engine_set_colormap_preset, which only accepts 0-4), so this
              button is a visual-state indicator only, not a click target
              that itself changes anything (colorControls.ts). -->
         <div class="row preset-buttons">
           <button
             type="button"
-            data-colormap-preset="4"
+            data-colormap-preset="5"
             id="custom-preset-button"
             data-tooltip-key="custom-preset-button"
           >
@@ -277,6 +278,19 @@
         <div class="row checkbox-row">
           <label for="occlusion-enabled">Occlusion Shading</label>
           <input id="occlusion-enabled" type="checkbox" data-tooltip-key="occlusion-enabled" />
+        </div>
+        <div class="row">
+          <label for="mask-opacity">Mask Opacity</label>
+          <input id="mask-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="mask-opacity" />
+          <input
+            id="mask-opacity-value"
+            class="value"
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            aria-label="Mask Opacity value"
+          />
         </div>
       </div>
       <!-- §6.4 clip box: 3 axes, each a min/max pair over the loaded
