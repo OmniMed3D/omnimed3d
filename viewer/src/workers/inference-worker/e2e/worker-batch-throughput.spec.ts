@@ -26,6 +26,19 @@ const SLICE_COUNT = 8;
 test("a burst of hu-slice messages is meaningfully faster per-slice than sending them sequentially", async ({
   page,
 }) => {
+  // 3 trials, compared by sum rather than a single sequential/burst pair --
+  // a shared CI runner's per-call scheduling noise (GC pause, thermal
+  // throttle, noisy-neighbor VM contention) can occasionally be large
+  // enough to flip a single-sample comparison even when the underlying
+  // BATCH_WINDOW_MS/MAX_BATCH_SIZE speedup is real and working (observed
+  // directly: a macos-latest run where burst measured ~17% slower despite
+  // this project's own repeated local measurements showing burst ~15-20%
+  // faster). Summing across trials keeps the same "must be faster, not
+  // merely equal" assertion while diluting one noisy trial's influence on
+  // the outcome.
+  const TRIALS = 3;
+  test.setTimeout(60_000);
+
   await page.route("**/throughput-check_fp16.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_FP16 }));
   await page.route("**/throughput-check_int8.onnx", (route) => route.fulfill({ path: ONNX_MODEL_PATH_INT8 }));
 
@@ -47,24 +60,24 @@ test("a burst of hu-slice messages is meaningfully faster per-slice than sending
     });
   }, "/throughput-check");
 
-  const { sequentialMs, burstMs } = await page.evaluate(
-    ({ floats, width, height, sliceCount }) => {
+  const { sequentialTrialsMs, burstTrialsMs } = await page.evaluate(
+    async ({ floats, width, height, sliceCount, trials }) => {
       const w = window.__workerHarness!.worker;
       const data = Float32Array.from(floats);
 
-      function runSequential(): Promise<number> {
+      function runSequential(volumeId: string): Promise<number> {
         return new Promise((resolve) => {
           const t0 = performance.now();
           let received = 0;
           function sendNext() {
             const buf = data.slice().buffer;
             w.postMessage(
-              { type: "hu-slice", volumeId: "seq", sliceIndex: received, width, height, data: buf },
+              { type: "hu-slice", volumeId, sliceIndex: received, width, height, data: buf },
               [buf],
             );
           }
           w.addEventListener("message", function onMsg(e: MessageEvent) {
-            if (e.data.type === "mask-slice" && e.data.volumeId === "seq") {
+            if (e.data.type === "mask-slice" && e.data.volumeId === volumeId) {
               received++;
               if (received >= sliceCount) {
                 w.removeEventListener("message", onMsg);
@@ -78,12 +91,12 @@ test("a burst of hu-slice messages is meaningfully faster per-slice than sending
         });
       }
 
-      function runBurst(): Promise<number> {
+      function runBurst(volumeId: string): Promise<number> {
         return new Promise((resolve) => {
           const t0 = performance.now();
           let received = 0;
           w.addEventListener("message", function onMsg(e: MessageEvent) {
-            if (e.data.type === "mask-slice" && e.data.volumeId === "burst") {
+            if (e.data.type === "mask-slice" && e.data.volumeId === volumeId) {
               received++;
               if (received >= sliceCount) {
                 w.removeEventListener("message", onMsg);
@@ -93,26 +106,41 @@ test("a burst of hu-slice messages is meaningfully faster per-slice than sending
           });
           for (let i = 0; i < sliceCount; i++) {
             const buf = data.slice().buffer;
-            w.postMessage({ type: "hu-slice", volumeId: "burst", sliceIndex: i, width, height, data: buf }, [buf]);
+            w.postMessage({ type: "hu-slice", volumeId, sliceIndex: i, width, height, data: buf }, [buf]);
           }
         });
       }
 
-      return runSequential().then(async (sequentialMs) => {
-        const burstMs = await runBurst();
-        return { sequentialMs, burstMs };
-      });
+      // volumeId includes the trial index -- each trial's listeners must
+      // only ever see that trial's own mask-slice responses, not a
+      // previous trial's stragglers racing in late.
+      const sequentialTrialsMs: number[] = [];
+      const burstTrialsMs: number[] = [];
+      for (let trial = 0; trial < trials; trial++) {
+        sequentialTrialsMs.push(await runSequential(`seq-${trial}`));
+        burstTrialsMs.push(await runBurst(`burst-${trial}`));
+      }
+      return { sequentialTrialsMs, burstTrialsMs };
     },
-    { floats: sliceFloats, width: SLICE_WIDTH, height: SLICE_HEIGHT, sliceCount: SLICE_COUNT },
+    { floats: sliceFloats, width: SLICE_WIDTH, height: SLICE_HEIGHT, sliceCount: SLICE_COUNT, trials: TRIALS },
   );
 
+  const sequentialTotalMs = sequentialTrialsMs.reduce((a: number, b: number) => a + b, 0);
+  const burstTotalMs = burstTrialsMs.reduce((a: number, b: number) => a + b, 0);
+
   console.log(
-    `sequential: ${sequentialMs.toFixed(1)}ms (${(sequentialMs / SLICE_COUNT).toFixed(1)}ms/slice), ` +
-      `burst: ${burstMs.toFixed(1)}ms (${(burstMs / SLICE_COUNT).toFixed(1)}ms/slice)`,
+    `sequential per trial (ms): ${sequentialTrialsMs.map((ms: number) => ms.toFixed(1)).join(", ")} ` +
+      `(total ${sequentialTotalMs.toFixed(1)}ms)`,
+  );
+  console.log(
+    `burst per trial (ms): ${burstTrialsMs.map((ms: number) => ms.toFixed(1)).join(", ")} ` +
+      `(total ${burstTotalMs.toFixed(1)}ms)`,
   );
 
   // Not a tight bound -- real-browser timing has run-to-run noise (this
   // project's own repeated finding) -- just confirms the burst path is
-  // genuinely faster overall, not merely equal or worse.
-  expect(burstMs).toBeLessThan(sequentialMs);
+  // genuinely faster overall, not merely equal or worse. Compared as a
+  // sum across TRIALS runs rather than a single pair, see the comment
+  // above TRIALS for why.
+  expect(burstTotalMs).toBeLessThan(sequentialTotalMs);
 });
