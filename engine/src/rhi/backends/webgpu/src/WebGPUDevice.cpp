@@ -1247,13 +1247,22 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
         std::printf("WebGPUDevice::loadVolume: device not ready, ignoring\n");
         return;
     }
-    lowMemoryMode_ = lowMemoryMode;
     size_t const expected = static_cast<size_t>(width) * height * depth * sizeof(uint16_t);
     if (byteLength != expected) {
         std::printf("WebGPUDevice::loadVolume: byteLength %zu != expected %zu, ignoring\n", byteLength,
                      expected);
         return;
     }
+    // Only committed once the load is confirmed valid -- setting this
+    // before the check above would let a rejected (malformed) load's
+    // lowMemoryMode value silently apply to the *previous*, still-active
+    // volume's already-created gradient texture on the next frame (e.g. a
+    // rejected lowMemoryMode=true would flip fragmentMain to
+    // computeGradient() while the old, still-baked full gradient texture
+    // sits unused, or a rejected lowMemoryMode=false would flip it to
+    // sample the old 1x1x1 dummy as if it were a real baked texture --
+    // both wrong for a load that never actually happened).
+    lowMemoryMode_ = lowMemoryMode;
 
     // A new volume load invalidates any mask texture from the previous
     // volume -- old mask data no longer applies (PRD #5.3.2).
@@ -1317,6 +1326,13 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     gradientDesc.usage = lowMemoryMode_ ? WGPUTextureUsage_TextureBinding
                                          : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
     gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
+    // Reports the *actual* chosen extent (gradientDesc.size), not just an
+    // echo of the lowMemoryMode input -- a test asserting on this line
+    // catches a regression where the branch above silently stops honoring
+    // the flag (e.g. always allocating full-size), which a pixel-only
+    // comparison of the two modes' rendered output would not.
+    std::printf("WebGPUDevice::gradientTexture: %ux%ux%u\n", gradientDesc.size.width,
+                 gradientDesc.size.height, gradientDesc.size.depthOrArrayLayers);
 
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = volumeTexture_;
@@ -1384,6 +1400,9 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // shader falls back to computeGradient() instead of sampling it).
     if (!lowMemoryMode_) {
         bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
+        std::printf("WebGPUDevice::gradientTexture: baked\n");
+    } else {
+        std::printf("WebGPUDevice::gradientTexture: bake skipped (low-memory mode)\n");
     }
 
     currentVolumeId_ = volumeId;
