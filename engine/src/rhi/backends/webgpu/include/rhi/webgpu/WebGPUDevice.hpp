@@ -33,7 +33,7 @@ public:
     void renderFrame() override;
     void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                      uint32_t width, uint32_t height, uint32_t depth,
-                     float spacingX, float spacingY, float spacingZ) override;
+                     float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) override;
     void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
                          uint32_t width, uint32_t height,
                          void const* data, size_t byteLength) override;
@@ -229,6 +229,11 @@ private:
     uint32_t volumeWidth_ = 0;
     uint32_t volumeHeight_ = 0;
     uint32_t volumeDepth_ = 0;
+    // Set per loadVolume() call (mobile OOM mitigation) -- true skips
+    // baking gradientTexture_ (a full-volume RGBA16Float texture, 4x
+    // volumeTexture_'s own size) in favor of an on-the-fly per-step
+    // gradient in the raymarch shader. See loadVolume()'s own comment.
+    bool lowMemoryMode_ = false;
 
     core::RenderGraph renderGraph_;
 

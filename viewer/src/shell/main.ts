@@ -55,6 +55,7 @@ interface EngineModule {
     spacingX: number,
     spacingY: number,
     spacingZ: number,
+    lowMemoryMode: number,
   ): void;
   _engine_apply_mask_slice(
     volumeId: number,
@@ -356,6 +357,10 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
       msg.spacingX,
       msg.spacingY,
       msg.spacingZ,
+      // TODO(mobile OOM mitigation, C-3): wire up navigator.deviceMemory +
+      // iOS UA tiering here once that lands -- hardcoded to full mode (0)
+      // for now so Option A can be verified standalone.
+      0,
     );
   });
   notifyVolumeLoaded(msg.depth);

@@ -57,7 +57,7 @@ struct RaymarchUBO {
     glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
-    glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
+    glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1), w unused
     glm::vec4 backgroundColor;  // xyz=RGB, w unused -- see setBackgroundColor()
 };
 
@@ -1134,7 +1134,7 @@ void WebGPUDevice::renderFrame() {
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
         ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
-        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, 0.0F, 0.0F};
+        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, lowMemoryMode_ ? 1.0F : 0.0F, 0.0F};
         ubo.backgroundColor = glm::vec4{backgroundColor_, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
@@ -1242,11 +1242,12 @@ void WebGPUDevice::renderFrame() {
 
 void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                                uint32_t width, uint32_t height, uint32_t depth,
-                               float spacingX, float spacingY, float spacingZ) {
+                               float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) {
     if (!ready_) {
         std::printf("WebGPUDevice::loadVolume: device not ready, ignoring\n");
         return;
     }
+    lowMemoryMode_ = lowMemoryMode;
     size_t const expected = static_cast<size_t>(width) * height * depth * sizeof(uint16_t);
     if (byteLength != expected) {
         std::printf("WebGPUDevice::loadVolume: byteLength %zu != expected %zu, ignoring\n", byteLength,
@@ -1295,13 +1296,26 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // below once volumeTextureView_ exists. StorageBinding for the
     // compute pass's write-only access, TextureBinding for the raymarch
     // fragment shader's later trilinear read.
+    //
+    // Mobile OOM mitigation: in low-memory mode this texture would be the
+    // single largest allocation this function makes (RGBA16Float, 4x
+    // volumeTexture_'s own size, since it has 4x the bytes-per-texel) for
+    // a benefit (cheaper per-step shading) that matters far less than
+    // staying under a memory ceiling. A 1x1x1 placeholder keeps binding
+    // 6's bind-group-layout slot satisfied (validation only checks sample
+    // type/dimension, not extent) without the bake pass ever running --
+    // fragmentMain falls back to computeGradient() instead of sampling
+    // this texture when tfParams.z signals low-memory mode (see
+    // renderFrame()'s UBO population). No StorageBinding usage needed
+    // here since the bake pass that would need it is skipped below.
     WGPUTextureDescriptor gradientDesc{};
     gradientDesc.dimension = WGPUTextureDimension_3D;
-    gradientDesc.size = WGPUExtent3D{width, height, depth};
+    gradientDesc.size = lowMemoryMode_ ? WGPUExtent3D{1, 1, 1} : WGPUExtent3D{width, height, depth};
     gradientDesc.format = WGPUTextureFormat_RGBA16Float;
     gradientDesc.mipLevelCount = 1;
     gradientDesc.sampleCount = 1;
-    gradientDesc.usage = WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding;
+    gradientDesc.usage = lowMemoryMode_ ? WGPUTextureUsage_TextureBinding
+                                         : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
     gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
 
     WGPUTexelCopyTextureInfo dst{};
@@ -1365,7 +1379,12 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // Bakes gradientTexture_ from the just-written volumeTexture_ (issue
     // #81's own follow-up) -- must run after both texture views above
     // exist, before rebuildBindGroup() references gradientTextureView_.
-    bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
+    // Skipped in low-memory mode: gradientTexture_ is a 1x1x1 placeholder
+    // there, and dispatching a bake against it would be meaningless (the
+    // shader falls back to computeGradient() instead of sampling it).
+    if (!lowMemoryMode_) {
+        bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
+    }
 
     currentVolumeId_ = volumeId;
     hasVolume_ = true;
@@ -1385,7 +1404,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // leftover pixels from whatever was loaded (or not) before.
     markAccumulationDirty();
 
-    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded\n", volumeId, width, height, depth);
+    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded lowMemoryMode=%d\n", volumeId, width, height,
+                 depth, static_cast<int>(lowMemoryMode_));
 }
 
 void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
