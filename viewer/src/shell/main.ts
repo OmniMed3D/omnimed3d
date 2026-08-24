@@ -38,7 +38,8 @@ import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
 import { notifyMaskSliceApplied, notifyVolumeLoadedForInference, setupInferenceControls } from "./inferenceControls.js";
 import { setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
-import { setupStatsOverlay } from "./statsOverlay.js";
+import { setupLowMemoryModeControl, shouldUseLowMemoryMode } from "./deviceTier.js";
+import { notifyLowMemoryMode, setupStatsOverlay } from "./statsOverlay.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -345,6 +346,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
     return;
   }
   const bytes = new Uint8Array(msg.data);
+  const lowMemoryMode = shouldUseLowMemoryMode();
   withWasmBuffer(bytes.byteLength, (ptr) => {
     window.Module.HEAPU8.set(bytes, ptr);
     window.Module._engine_load_volume(
@@ -357,12 +359,10 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
       msg.spacingX,
       msg.spacingY,
       msg.spacingZ,
-      // TODO(mobile OOM mitigation, C-3): wire up navigator.deviceMemory +
-      // iOS UA tiering here once that lands -- hardcoded to full mode (0)
-      // for now so Option A can be verified standalone.
-      0,
+      lowMemoryMode ? 1 : 0,
     );
   });
+  notifyLowMemoryMode(lowMemoryMode);
   notifyVolumeLoaded(msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
   notifyVolumeLoadedForInference(msg.volumeId, msg.depth);
@@ -497,6 +497,7 @@ async function main() {
   setupWindowLevelControls();
   setupViewControls();
   setupQualityControls();
+  setupLowMemoryModeControl();
   setupTfDetailControls();
   setupClipControls();
   setupCustomColormapControls();
