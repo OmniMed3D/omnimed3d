@@ -2,7 +2,7 @@
 
 | Field  | Value                                                    |
 | ------ | --------------------------------------------------------- |
-| Status | Deferred — not a real decision yet, placeholder only       |
+| Status | Partially resolved 2026-08-24 (WASM/WebGPU CI build — see below); native Vulkan/Docker question below remains deferred |
 | Date   | 2026-08-11                                                 |
 
 ## Context
@@ -51,6 +51,33 @@ exist, this should become a real proposal in the repo-root `docs/adr/`
 
 ## Decision
 
-None yet. Revisit once `infra/`/CI exist and open this as a proposal in the
-repo-root `docs/adr/`, with `ai-pipeline`/`infra` (@hyuniverse) in the loop
-since it affects shared CI, not just `engine/`.
+**WASM/WebGPU CI build (2026-08-24, resolved):** `.github/workflows/test.yml`'s
+`e2e-viewer` job builds the Engine's WASM module directly on a
+GitHub-hosted `macos-latest` runner -- emsdk (pinned `4.0.10`, matching
+`CLAUDE.md` §7's local instructions) and `slangc` (pinned `v2026.16`,
+see ADR-0002) are both installed directly on the runner (git-clone +
+`emsdk install`/`activate` for the former, a direct GitHub-release
+download for the latter), not via the `emscripten/emsdk` Docker image
+this ADR's own analysis favored. Reasons this diverged from that
+analysis: (1) the target here is WebGPU e2e tests, which need real
+GPU/Metal access on a macOS runner -- Docker containers on
+GitHub-hosted macOS runners have much more limited support than on
+Linux runners, and this project's own local macOS WASM build already
+uses direct emsdk installation (`engine/scripts/emsdk-shell.sh`), not
+Docker, so the CI job mirrors that rather than introducing a second,
+divergent toolchain-provisioning strategy; (2) `emsdk install`/`activate`
+plus a `slangc` download are each simple, scriptable, and now verified
+end-to-end (rebuilt from a fully clean `build_wasm/` with a freshly
+installed emsdk and freshly downloaded `slangc`, matching a real CI
+checkout, before this was committed) -- the Docker image's main
+advantage (toolchain reproducibility) isn't a gap either approach
+leaves open. This decision is scoped narrowly to *this* job's WASM
+build; it does not settle the native Vulkan/`tests/parity/`
+Linux-runner question below, which stays deferred.
+
+**Native Vulkan / `tests/parity/` CI (still deferred):** None yet.
+Revisit once that work actually starts, and open it as its own proposal
+in the repo-root `docs/adr/`, with `ai-pipeline`/`infra` (@hyuniverse) in
+the loop since a Docker-based Linux CI strategy (lavapipe software
+Vulkan, per the analysis above) would affect shared CI, not just
+`engine/`.

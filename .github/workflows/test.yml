@@ -29,13 +29,15 @@
 #     trigger instead of running on every PR, since a fixed model/runner
 #     doesn't give fresh signal on every single PR the way a regression
 #     test does, and this repo expects a high PR volume for a while.
-# WebGPU e2e (Playwright): the 4 inference-worker/e2e/ files below run on
+# WebGPU e2e (Playwright): the 4 inference-worker/e2e/ files run on
 # macos-latest -- spike-webgpu-macos-runner.yml confirmed (2026-08-23) that
-# runner exposes a real WebGPU adapter. viewer/tests/e2e/ (Engine-owned) is
-# still left out entirely -- same macOS-only constraint, but that suite's
-# CI runner strategy needs Engine track agreement, not just AI track's own
-# call. See playwright.config.ts's own comments in each of those two dirs
-# for the underlying macOS-only flag issue.
+# runner exposes a real WebGPU adapter. viewer/tests/e2e/ (Engine-owned,
+# e2e-viewer job below) now runs on the same runner -- Engine track's own
+# call on wiring its build into CI, not AI track's. That job additionally
+# has to build the Engine's own WASM module from source first (Emscripten
+# + slangc, neither of which macos-latest ships with), which
+# e2e-inference-worker doesn't need since it only consumes prebuilt models,
+# not something this repo compiles itself.
 
 name: Test
 
@@ -134,3 +136,96 @@ jobs:
           e2e/worker-warmup.spec.ts
           e2e/worker-batch-throughput.spec.ts
           e2e/worker-batch-static-shape-fallback.spec.ts
+
+  e2e-viewer:
+    name: E2E (Playwright, viewer/tests/e2e, Engine WASM + real WebGPU)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # test-data/lidc_idri/ (the "Load Demo CT" fixture,
+          # demo-ct-loader.spec.ts and others) is Git LFS -- same
+          # pointer-file trap as unit-tests/e2e-inference-worker above.
+          lfs: true
+
+      # Pinned to the exact version engine/CLAUDE.md's local build
+      # instructions use (§7) -- emsdk has no OS package-manager install,
+      # only its own versioned installer, so this is the same
+      # clone-install-activate sequence a fresh dev machine runs, just on
+      # a CI runner instead. Cached across runs since re-downloading and
+      # re-installing the whole SDK on every PR would otherwise dominate
+      # this job's runtime -- keyed on the version so bumping it here
+      # naturally invalidates the cache instead of silently reusing a
+      # stale install.
+      - name: Cache emsdk
+        id: emsdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-4.0.10-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install emsdk
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+          cd ~/emsdk
+          ./emsdk install 4.0.10
+
+      - name: Activate emsdk
+        run: |
+          cd ~/emsdk
+          ./emsdk activate 4.0.10
+
+      # slangc (ADR-0002's shader cross-compilation toolchain) has no
+      # package-manager formula (checked: no Homebrew formula exists) and
+      # engine/docs/adr/0002 itself flags "needs a documented install path
+      # and version pin" as still-open -- this pins one explicitly rather
+      # than leaving CI to depend on whatever happened to be on a given
+      # runner. macos-aarch64 matches GitHub-hosted macos-latest runners
+      # (Apple Silicon). Not cached (same reasoning as Chromium below --
+      # a single small binary download, not worth the cache-restore
+      # overhead relative to just refetching it).
+      - name: Install slangc
+        run: |
+          curl -sL -o /tmp/slang.tar.gz "https://github.com/shader-slang/slang/releases/download/v2026.16/slang-2026.16-macos-aarch64.tar.gz"
+          mkdir -p /tmp/slang
+          tar -xzf /tmp/slang.tar.gz -C /tmp/slang
+          chmod +x /tmp/slang/bin/slangc
+          echo "/tmp/slang/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build Engine WASM module
+        working-directory: engine
+        run: |
+          ./scripts/emsdk-shell.sh "cmake --preset wasm-macos" ~/emsdk
+          ./scripts/emsdk-shell.sh "cmake --build build_wasm" ~/emsdk
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: Sync Engine WASM build and demo CT into the viewer
+        working-directory: viewer
+        run: |
+          npm run sync-engine-wasm
+          npm run sync-demo-ct
+
+      - name: Install Chromium browser binary
+        working-directory: viewer
+        run: npx playwright install chromium
+
+      # --grep-invert "@manual" excludes cpu-throttle-4k.manual.spec.ts (a
+      # wall-clock/CDP-throttled measurement, not a pass/fail regression
+      # check -- see that file's own header comment for why a plain
+      # bare-glob or filename-based exclusion doesn't work here).
+      - name: viewer e2e tests (WebGPU, real GPU hardware)
+        working-directory: viewer
+        run: npx playwright test tests/e2e --grep-invert "@manual" --reporter=list
