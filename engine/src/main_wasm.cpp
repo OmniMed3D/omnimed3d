@@ -41,9 +41,10 @@ int engine_is_ready() {
 }
 
 EMSCRIPTEN_KEEPALIVE
-void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width,
-                         uint32_t height, uint32_t depth, float spacingX, float spacingY, float spacingZ) {
-    g_device.loadVolume(volumeId, data, byteLength, width, height, depth, spacingX, spacingY, spacingZ);
+void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width, uint32_t height,
+                         uint32_t depth, float spacingX, float spacingY, float spacingZ, uint32_t lowMemoryMode) {
+    g_device.loadVolume(volumeId, data, byteLength, width, height, depth, spacingX, spacingY, spacingZ,
+                         lowMemoryMode != 0);
 }
 
 EMSCRIPTEN_KEEPALIVE

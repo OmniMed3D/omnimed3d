@@ -27,7 +27,7 @@ struct RaymarchUBO
     float4 clipMin;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
     float4 clipMax;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
     float4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
-    float4 tfParams;         // x=threshold, y=gradient-opacity strength, zw unused
+    float4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1), w unused
     float4 backgroundColor;  // xyz=RGB, w unused -- see kBackgroundColor's former header comment below
 };
 
@@ -52,7 +52,10 @@ struct RaymarchUBO
 // step's density sample uses, for a gradient field as spatially
 // continuous as the density field it's derived from. See
 // fragmentMain's own comment on why this replaced a per-step
-// computeGradient() call.
+// computeGradient() call. When the host loaded the volume in low-memory
+// mode (mobile OOM mitigation, `tfParams.z`), this texture is a 1x1x1
+// dummy (WebGPUDevice never baked it) and fragmentMain falls back to
+// computeGradient() below instead of sampling it.
 [[vk::binding(6, 0)]] Texture3D<float4> gradientTex;
 
 // Mask overlay highlight -- one fixed color for this MVP (PRD P0 scope: one
@@ -147,6 +150,33 @@ float sampleN(float3 uvw, float windowCenter, float windowWidth)
     return clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
 }
 
+// On-the-fly forward-difference gradient (mobile OOM mitigation,
+// `tfParams.z`) -- the per-step alternative to sampling gradientTex,
+// restored from before issue #81's gradient-volume precompute (see
+// gradientTex's own comment above). Costs 3 extra volumeTex samples per
+// step needing it (~+1.2ms/frame measured) in exchange for not needing
+// gradientTex's full-volume-sized RGBA16Float texture at all -- worth it
+// specifically when that texture's memory (4x the HU volume's own size)
+// is what's pushing a memory-constrained device toward OOM, not when
+// frame time is the bottleneck.
+float3 computeGradient(float3 uvw, float3 texelUvw, float3 worldTexelSize, float windowCenter, float windowWidth,
+                        float centerN, out float outMagnitude)
+{
+    float dx = sampleN(uvw + float3(texelUvw.x, 0.0, 0.0), windowCenter, windowWidth) - centerN;
+    float dy = sampleN(uvw + float3(0.0, texelUvw.y, 0.0), windowCenter, windowWidth) - centerN;
+    float dz = sampleN(uvw + float3(0.0, 0.0, texelUvw.z), windowCenter, windowWidth) - centerN;
+    float3 gradWorld = 2.0 * float3(dx, dy, dz) / worldTexelSize;
+    outMagnitude = length(gradWorld);
+    if (outMagnitude < 1e-8)
+    {
+        // Flat/uniform region: no well-defined gradient direction. A zero
+        // vector makes the caller's N.L term evaluate to 0 (ambient-only
+        // shading there) rather than risking a normalize(0) NaN.
+        return float3(0.0, 0.0, 0.0);
+    }
+    return -gradWorld / outMagnitude;
+}
+
 // Directional Occlusion Shading (§6.2) -- a handful of short secondary
 // density samples marching from uvw toward the light, averaged into an
 // approximate self-occlusion factor in [0,1]. Far cheaper than a full
@@ -229,6 +259,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float occlusionStrength = ubo.occlusionParams.y;
     const float threshold = ubo.tfParams.x;
     const float gradientOpacityStrength = ubo.tfParams.y;
+    const bool lowMemoryMode = ubo.tfParams.z > 0.5;
     const float3 boxSize = ubo.aabbMax.xyz - ubo.aabbMin.xyz;
 
     uint maskW, maskH, maskD;
@@ -307,9 +338,18 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         float gradMagnitude = 0.0;
         if (needsGradient)
         {
-            float3 gradWorld = gradientTex.SampleLevel(linearSampler, uvw, 0.0).xyz / windowWidth;
-            gradMagnitude = length(gradWorld);
-            normal = gradMagnitude < 1e-8 ? float3(0.0, 0.0, 0.0) : -gradWorld / gradMagnitude;
+            if (lowMemoryMode)
+            {
+                float outMagnitude;
+                normal = computeGradient(uvw, texelUvw, worldTexelSize, windowCenter, windowWidth, n, outMagnitude);
+                gradMagnitude = outMagnitude;
+            }
+            else
+            {
+                float3 gradWorld = gradientTex.SampleLevel(linearSampler, uvw, 0.0).xyz / windowWidth;
+                gradMagnitude = length(gradWorld);
+                normal = gradMagnitude < 1e-8 ? float3(0.0, 0.0, 0.0) : -gradWorld / gradMagnitude;
+            }
         }
 
         if (shadingEnabled)

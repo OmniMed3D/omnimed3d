@@ -192,7 +192,7 @@
             for (var i = 0; i < volumeView.length; i++) {
                 volumeView[i] = i & 0xffff; // arbitrary pattern, not real HU data
             }
-            Module._engine_load_volume(volumeId, volumePtr, volumeBytes, width, height, depth, 1.0, 1.0, 1.0);
+            Module._engine_load_volume(volumeId, volumePtr, volumeBytes, width, height, depth, 1.0, 1.0, 1.0, 0);
             Module._free(volumePtr);
 
             var sliceBytes = width * height; // uint8 class indices

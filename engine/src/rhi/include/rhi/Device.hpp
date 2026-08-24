@@ -71,9 +71,15 @@ public:
     // volumeId is an opaque per-load identifier minted by the caller (the
     // future viewer/-owned orchestration layer, PRD #5.3.2) -- applyMaskSlice
     // uses it to reject stale slices from a previous, already-replaced volume.
+    // lowMemoryMode trades ~1.2ms/frame of extra shading cost for skipping
+    // the precomputed gradient volume's memory (a full-volume RGBA16Float
+    // texture, 4x the HU volume's own size) -- intended for memory-
+    // constrained devices (mobile OOM mitigation), decided once per load
+    // by the caller (this Device has no way to see device memory/UA info
+    // itself, which is JS/Shell-only information).
     virtual void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                              uint32_t width, uint32_t height, uint32_t depth,
-                             float spacingX, float spacingY, float spacingZ) = 0;
+                             float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) = 0;
 
     // Writes one Z-slice into the mask texture (uint8 class indices, PRD
     // #5.3.1) for the given volume. No-ops (with a logged reason) if
