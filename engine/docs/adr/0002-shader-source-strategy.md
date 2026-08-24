@@ -51,7 +51,15 @@ this decision (`CLAUDE.md` §4).
 - The `slangc` toolchain needs a documented install path and version pin,
   recorded in `CLAUDE.md` §7 (build commands) once `engine/CMakeLists.txt`
   exists — that CMake/build skeleton work is the next engine-core task this
-  ADR unblocks.
+  ADR unblocks. **Partially resolved 2026-08-24:** `.github/workflows/test.yml`'s
+  `e2e-viewer` job pins `v2026.16` (`slang-2026.16-macos-aarch64.tar.gz`,
+  downloaded directly -- no package-manager formula exists, checked) for
+  CI's own build. Local dev machines are not guaranteed to match this --
+  this session's own dev machine has an older, non-tagged dev build
+  (`2025.11-12-gc5295eae2`) installed ad hoc at `/usr/local/bin/slangc`,
+  not `v2026.16` -- so the "documented install path and version pin for
+  local dev" half of this consequence is still open; CI now has one,
+  local `CLAUDE.md` §7 instructions do not yet.
 - Every future shader-facing struct (UBO layouts, push constants, vertex
   inputs) is written once in Slang, not duplicated per backend — the
   RHI-abstraction-leak pattern in `CLAUDE.md` §8 ("UBO-related sizes

@@ -17,7 +17,7 @@
     "build": "vite build",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --grep-invert @manual",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
