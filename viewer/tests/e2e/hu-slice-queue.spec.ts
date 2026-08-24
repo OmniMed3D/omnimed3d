@@ -32,11 +32,22 @@ test("hu-slice messages sent before the model finishes loading are queued and st
   // same way setupInferenceControls() does (addEventListener alongside
   // main.ts's own onmessage, not replacing it) -- proves slices queued
   // before "init-complete" actually made it through the pipeline and back,
-  // not just that no error was thrown.
+  // not just that no error was thrown. Also records "init-complete" itself
+  // directly, rather than waiting on the button's own label text -- the
+  // button now doubles as a progress gauge (buttonGauge.ts) and jumps
+  // straight from "Downloading model..." to "Segmenting... (N/133)" once
+  // slices are already queued (this test's exact scenario), so it may
+  // never actually display "Segmentation model loaded" at all -- that's
+  // the new, correct behavior, not something this synchronization
+  // checkpoint should depend on.
   await page.evaluate(() => {
-    (window as unknown as { __maskSlices: RecordedMaskSlice[] }).__maskSlices = [];
+    (window as unknown as { __maskSlices: RecordedMaskSlice[]; __initComplete: boolean }).__maskSlices = [];
+    (window as unknown as { __initComplete: boolean }).__initComplete = false;
     window.omnimed3dTestHooks.inferenceWorker.addEventListener("message", (event: MessageEvent) => {
       const msg = event.data as { type: string; sliceIndex?: number; data?: ArrayBuffer };
+      if (msg.type === "init-complete") {
+        (window as unknown as { __initComplete: boolean }).__initComplete = true;
+      }
       if (msg.type === "mask-slice" && msg.data) {
         const bytes = new Uint8Array(msg.data);
         let nonBackground = 0;
@@ -58,7 +69,11 @@ test("hu-slice messages sent before the model finishes loading are queued and st
   await expect(page.locator("#load-demo-ct")).toHaveText("Demo CT loaded", { timeout: 60000 });
 
   await page.locator("#load-demo-model").click();
-  await expect(page.locator("#load-demo-model")).toHaveText("Segmentation model loaded", { timeout: 60000 });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __initComplete: boolean }).__initComplete), {
+      timeout: 60000,
+    })
+    .toBe(true);
 
   const getMaskSlices = () =>
     page.evaluate(() => (window as unknown as { __maskSlices: RecordedMaskSlice[] }).__maskSlices);
