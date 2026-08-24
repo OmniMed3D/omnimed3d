@@ -70,6 +70,33 @@ function buildSphereVolumeBase64(): string {
   return Buffer.from(hu.buffer).toString("base64");
 }
 
+// Asserting on rendered pixels alone can't tell "the fallback shades
+// correctly" apart from "lowMemoryMode was silently ignored and both
+// loads allocated/baked the real full-size texture" -- a pixel-only
+// comparison would pass either way, leaving the actual OOM mitigation
+// (does low-memory mode really skip the 266MB texture and its bake?)
+// unverified. These two engine-side log lines report the *actual*
+// C++-side branch taken (real chosen extent, real bake-or-skip), not an
+// echo of the input flag, so asserting on them catches a regression
+// where the branching logic itself silently stops honoring the flag.
+// Deliberately NOT prefixed "WebGPUDevice::loadVolume:" -- several other
+// e2e specs loosely search console lines for that exact substring
+// (`.find((line) => /WebGPUDevice::loadVolume/.test(line))`, then parse
+// `volumeId=` out of whatever they find first) and broke when an earlier
+// version of these markers used that prefix, since `.find()` picked up
+// this line instead of the real "volumeId=... loaded" one.
+function expectedGradientMarkers(lowMemoryMode: 0 | 1): { extent: RegExp; bake: RegExp } {
+  return lowMemoryMode === 1
+    ? {
+        extent: /WebGPUDevice::gradientTexture: 1x1x1/,
+        bake: /WebGPUDevice::gradientTexture: bake skipped \(low-memory mode\)/,
+      }
+    : {
+        extent: new RegExp(`WebGPUDevice::gradientTexture: ${VOLUME_SIZE}x${VOLUME_SIZE}x${VOLUME_SIZE}`),
+        bake: /WebGPUDevice::gradientTexture: baked/,
+      };
+}
+
 async function loadSphereVolume(
   page: import("@playwright/test").Page,
   volumeId: number,
@@ -93,6 +120,16 @@ async function loadSphereVolume(
     await expect
       .poll(() => consoleLines.some((line) => new RegExp(`WebGPUDevice::loadVolume: volumeId=${volumeId} `).test(line)))
       .toBe(true);
+
+    const { extent, bake } = expectedGradientMarkers(lowMemoryMode);
+    expect(
+      consoleLines.some((line) => extent.test(line)),
+      `expected a "${extent}" log line for volumeId=${volumeId} (lowMemoryMode=${lowMemoryMode}); got: ${consoleLines.join("; ")}`,
+    ).toBe(true);
+    expect(
+      consoleLines.some((line) => bake.test(line)),
+      `expected a "${bake}" log line for volumeId=${volumeId} (lowMemoryMode=${lowMemoryMode}); got: ${consoleLines.join("; ")}`,
+    ).toBe(true);
   } finally {
     page.off("console", listener);
   }
