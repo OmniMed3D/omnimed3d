@@ -214,6 +214,32 @@ canvas {
   line-height: 1.4;
 }
 
+/* Non-blocking, no backdrop -- routine/expected state, not an error
+   (unlike #device-lost-banner above), so it stays out of the way rather
+   than demanding attention. Top-center so it doesn't collide with
+   #control-panel's right-docked position or #uncaptured-error-toast's
+   bottom-right corner. */
+#render-pause-banner:not([hidden]) {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+}
+
+#render-pause-banner p {
+  margin: 0;
+  padding: 8px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 /* Issue #40: these are normal-flow (position:static) debug elements --
    without an explicit position they'd paint *below* the now-fixed
    canvas regardless of DOM order (CSS stacking always ranks positioned

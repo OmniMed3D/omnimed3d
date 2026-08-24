@@ -190,6 +190,18 @@ function scheduleBatchFlush(): void {
     if (batch.length > 0) {
       inferenceQueue = inferenceQueue
         .then(async () => {
+          // Mobile OOM mitigation: tells the Shell to pause rendering for
+          // the duration of this batch, so it doesn't compete with
+          // inference for the same GPU. One flush cycle (this .then()
+          // body) is the pause/resume unit, not per-slice -- paired with
+          // the "inference-ended" post in .finally() below, which fires
+          // on both success and failure so a batch error can't leave
+          // rendering paused forever. inferenceQueue's own sequential
+          // chaining means a back-to-back flush's "inference-started"
+          // can't fire until this one's .finally() has already run, so
+          // there's no window where rendering incorrectly resumes while
+          // a later flush is still actually in flight.
+          (self as unknown as Worker).postMessage({ type: "inference-started" });
           if (!adapter || !session) {
             throw new Error("Inference Worker received a slice before 'init'");
           }
@@ -229,6 +241,9 @@ function scheduleBatchFlush(): void {
             batch.map((r) => r.sliceIndex),
             err,
           );
+        })
+        .finally(() => {
+          (self as unknown as Worker).postMessage({ type: "inference-ended" });
         });
     }
     // More accumulated during this window than MAX_BATCH_SIZE (or arrived

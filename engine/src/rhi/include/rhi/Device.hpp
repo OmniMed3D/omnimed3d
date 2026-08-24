@@ -104,6 +104,18 @@ public:
                              uint32_t width, uint32_t height, uint32_t depth,
                              float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) = 0;
 
+    // Releases the currently loaded volume's GPU-resident textures
+    // (volume/gradient/mask) without discarding any other device state.
+    // Safe to call with no volume loaded (no-op). loadVolume() remains the
+    // only way to get a volume back -- this does not retain the volume's
+    // source bytes itself; the caller (Shell) must hold onto those if it
+    // wants to reload later. Mobile OOM mitigation (Option D): the Shell
+    // uses this to free ~100MB of resident GPU memory for the duration of
+    // an AI inference run, which real-device testing showed is enough,
+    // combined with the Inference Worker's own memory, to exceed iOS
+    // WebKit's per-tab memory ceiling when both are held at once.
+    virtual void unloadVolume() = 0;
+
     // Writes one Z-slice into the mask texture (uint8 class indices, PRD
     // #5.3.1) for the given volume. No-ops (with a logged reason) if
     // volumeId doesn't match the currently loaded volume, or if
@@ -284,6 +296,18 @@ public:
     // initialize()'s async setup has completed, matching loadVolume's own
     // tolerance for being called at any time.
     virtual void resize(uint32_t width, uint32_t height) = 0;
+
+    // Mobile OOM mitigation: a full early-return from renderFrame() while
+    // true -- no encoder, no GPU submission at all -- so the GPU is
+    // genuinely free for concurrent work (e.g. AI inference) during the
+    // paused window, not just cheaper (a partial "still composite the
+    // existing accumulation buffer" pause would still submit GPU work
+    // every frame and defeat that purpose). The canvas keeps showing its
+    // last-presented frame underneath whatever UI the caller shows during
+    // the pause. Deliberately does not reset temporal accumulation state
+    // (unlike setQualityTier() and friends) -- resuming continues
+    // accumulating from where it left off, with no visual reset/flash.
+    virtual void setRenderPaused(bool paused) = 0;
 
     // Debug/perf overlay support (baseline browser-performance measurement --
     // see engine/tests/wasm_smoke/shell.html's stats panel). Both are cheap,

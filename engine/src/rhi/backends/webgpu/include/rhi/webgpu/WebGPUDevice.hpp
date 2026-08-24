@@ -34,6 +34,7 @@ public:
     void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                      uint32_t width, uint32_t height, uint32_t depth,
                      float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) override;
+    void unloadVolume() override;
     void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
                          uint32_t width, uint32_t height,
                          void const* data, size_t byteLength) override;
@@ -56,6 +57,7 @@ public:
     void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG, float highB) override;
     void setBackgroundColor(float r, float g, float b) override;
     void resize(uint32_t width, uint32_t height) override;
+    void setRenderPaused(bool paused) override;
 
     FrameStatsSnapshot getFrameStats() const override;
     HardwareInfo getHardwareInfo() const override;
@@ -159,6 +161,12 @@ private:
     void writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor);
     void rebuildBindGroup();
 
+    // Releases volumeTexture_/maskTexture_/gradientTexture_ and their views
+    // (all null-guarded), used both by loadVolume() (replace-before-create)
+    // and unloadVolume() (Option D mobile OOM mitigation) -- extracted so
+    // the two call sites can't drift apart.
+    void releaseVolumeResources();
+
     // One-time creation of the gradient-bake compute pipeline (issue #81's
     // own follow-up) -- called once from createPipeline(), analogous to
     // createCompositePipeline(). Its own 3-entry bind group layout (HU
@@ -239,6 +247,16 @@ private:
     std::string deviceLossMessage_;
     bool hasUncapturedError_ = false;
     std::string uncapturedErrorMessage_;
+
+    // Mobile OOM mitigation -- set via setRenderPaused(), checked in
+    // renderFrame()'s top guard alongside ready_/deviceLost_. Frees the
+    // GPU for concurrent AI inference during the paused window (Shell
+    // pauses while the Inference Worker is actively running a batch).
+    // Deliberately never touched by markAccumulationDirty() or any
+    // setter that calls it -- pausing/resuming must not reset
+    // accumFrameIndex_, or resuming would show a visible brightness
+    // flash for no visual reason (see setRenderPaused()'s own comment).
+    bool pauseRendering_ = false;
 
     // Backing-store pixel dimensions of the render surface (issue #40) --
     // replaces the previous fixed 640x480 constants. Defaulted to a
