@@ -833,4 +833,58 @@ from degenerate shading, passing even when badly broken; the sphere
 redesign fixed that. Full `viewer/tests/e2e/` suite (30 specs) run to
 completion, all passing.
 
+### 2026-08-25 — WebGPU device-lost/uncaptured-error handling (mobile OOM mitigation, Option B)
+
+A real GPU-side failure (device lost, or an uncaptured validation/OOM
+error) previously failed completely silently -- no
+`deviceLostCallbackInfo`/`uncapturedErrorCallbackInfo` was registered
+anywhere, so the canvas would just freeze with no explanation. This
+doesn't prevent the mobile OOM crash itself (that's Option A/C-3's job)
+-- it's the adjacent, catchable failure mode: Dawn hitting its own
+internal allocation failure or a real device loss while the tab process
+survives, as opposed to the OS-level jetsam kill that started this
+investigation (which is JS-uncatchable by definition).
+
+Both callbacks registered on the same `WGPUDeviceDescriptor` used for
+`wgpuAdapterRequestDevice()` (`onAdapterRequested()`), confirmed against
+the actual vendored `webgpu.h` -- `deviceLostCallbackInfo`/
+`uncapturedErrorCallbackInfo` are fields directly on that descriptor in
+the CallbackInfo-based Dawn API this engine already targets, not a
+separate post-creation setter call. `onDeviceLost()` sets `deviceLost_`
+permanently and maps the raw `WGPUDeviceLostReason` to a small
+engine-owned `DeviceLossReason` enum (`Device.hpp`) rather than leaking
+Dawn's own type across the interface, matching `HardwareInfo`/
+`GpuTimingSnapshot`'s existing backend-agnostic-getter pattern.
+`onUncapturedError()` is tracked separately and does **not** set
+`deviceLost_` -- an uncaptured error doesn't necessarily mean the whole
+device is gone. `renderFrame()`'s existing `!ready_` guard extends to
+`!ready_ || deviceLost_`, since `device_`/`queue_` are stale handles
+once lost.
+
+Shell side (`viewer/src/shell/deviceLostBanner.ts`): polls
+`getDeviceLossState()` on a plain `setInterval` (not statsOverlay.ts's
+rAF loop, which only runs while that debug panel is visible). Device
+loss shows a full-viewport reload banner -- deliberately no
+auto-recovery attempt, since re-initializing would need re-requesting
+the adapter/device, recreating every pipeline/texture, and
+re-uploading volume/mask data the Shell doesn't keep cached JS-side
+once handed to WASM. An uncaptured error shows a lighter, dismissible
+corner toast instead.
+
+**Verified:** `wasm-macos` rebuilds cleanly; native `ctest` unaffected.
+New `viewer/tests/e2e/device-lost-handling.spec.ts`, triggered via a
+new WASM-debug-only `engine_debug_simulate_device_lost()` export that
+runs the exact same `onDeviceLost()` code path a real Dawn-fired
+callback would -- chosen over reaching into Emscripten's internal
+WebGPU handle table (`WebGPU.mgrDevice`) for a real
+`GPUDevice.destroy()` call, since that's undocumented/version-fragile
+internals; the tradeoff is that this test verifies the Shell's
+reaction and the `renderFrame()`/getter code paths, not that Dawn's
+own callback-registration wiring is correct (that half is verified by
+matching the real vendored header exactly, and by successful
+compilation against it). Both new assertions verified via real
+mutation tests (deleting `banner.hidden = false`) confirming they
+actually fail. Full `viewer/tests/e2e/` suite (40 specs) run to
+completion, all passing.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

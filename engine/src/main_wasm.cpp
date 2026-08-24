@@ -256,4 +256,49 @@ float engine_get_gpu_axial_ms() {
     return g_device.getGpuTiming().axialMs;
 }
 
+// Mobile OOM mitigation -- see rhi::Device::getDeviceLossState's header
+// comment. Poll from JS the same way as the GPU stats getters above.
+EMSCRIPTEN_KEEPALIVE
+uint32_t engine_get_device_lost() {
+    return g_device.getDeviceLossState().deviceLost ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t engine_get_device_lost_reason() {
+    return static_cast<uint32_t>(g_device.getDeviceLossState().reason);
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_device_lost_message() {
+    static std::string s;
+    s = g_device.getDeviceLossState().message;
+    return s.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t engine_get_uncaptured_error() {
+    return g_device.getDeviceLossState().hasUncapturedError ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* engine_get_uncaptured_error_message() {
+    static std::string s;
+    s = g_device.getDeviceLossState().uncapturedErrorMessage;
+    return s.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_clear_uncaptured_error() {
+    g_device.clearUncapturedError();
+}
+
+// WASM-debug-only -- see WebGPUDevice::debugSimulateDeviceLost's header
+// comment for why this triggers the same code path a real Dawn-fired
+// device-lost callback would, rather than an e2e test reaching into
+// Emscripten's internal WebGPU handle table for a real device.destroy().
+EMSCRIPTEN_KEEPALIVE
+void engine_debug_simulate_device_lost() {
+    g_device.debugSimulateDeviceLost();
+}
+
 }  // extern "C"

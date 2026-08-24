@@ -40,6 +40,7 @@ import { setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
 import { setupLowMemoryModeControl, shouldUseLowMemoryMode } from "./deviceTier.js";
 import { notifyLowMemoryMode, setupStatsOverlay } from "./statsOverlay.js";
+import { setupDeviceLostBanner } from "./deviceLostBanner.js";
 
 interface EngineModule {
   _malloc(size: number): number;
@@ -108,6 +109,19 @@ interface EngineModule {
   _engine_get_gpu_raymarch_ms(): number;
   _engine_get_gpu_composite_ms(): number;
   _engine_get_gpu_axial_ms(): number;
+  // Mobile OOM mitigation -- see rhi::Device::getDeviceLossState's
+  // header comment.
+  _engine_get_device_lost(): number;
+  _engine_get_device_lost_reason(): number;
+  _engine_get_device_lost_message(): number;
+  _engine_get_uncaptured_error(): number;
+  _engine_get_uncaptured_error_message(): number;
+  _engine_clear_uncaptured_error(): void;
+  // WASM-debug-only -- see WebGPUDevice::debugSimulateDeviceLost's
+  // header comment. Declared here (not just cast-through in the e2e
+  // test that uses it) since it's a real, always-compiled-in export,
+  // not something stripped from production builds.
+  _engine_debug_simulate_device_lost(): void;
   UTF8ToString(ptr: number): string;
 }
 
@@ -509,6 +523,7 @@ async function main() {
   setupDemoCtControls(loadVolumeFromBuffers, showLoadError);
   setupTooltips();
   setupStatsOverlay(debugMode);
+  setupDeviceLostBanner();
 
   document.getElementById("shell-status")!.textContent = "shell: ready for input";
   // Visual polish pass: shown only once there's actually something to

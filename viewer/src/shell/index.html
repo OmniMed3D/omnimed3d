@@ -462,6 +462,26 @@
       </div>
     </div>
 
+    <!-- Mobile OOM mitigation (deviceLostBanner.ts) -- hidden by default,
+         shown by JS when the WASM engine's getDeviceLossState() reports
+         a real, unrecoverable device loss. Full-viewport by design (not
+         a dismissible toast like the uncaptured-error one below) --
+         rendering has genuinely stopped for good at that point, so
+         hiding this without reloading would leave a frozen, silently
+         broken page. -->
+    <div id="device-lost-banner" hidden>
+      <p id="device-lost-banner-message">Rendering stopped unexpectedly.</p>
+      <button type="button" id="device-lost-banner-reload" class="upload-btn">Reload</button>
+    </div>
+
+    <!-- A WebGPU uncaptured error is a narrower, non-terminal signal
+         (rhi::DeviceLossSnapshot's header comment) -- surfaced as a
+         lighter, dismissible toast rather than the full banner above. -->
+    <div id="uncaptured-error-toast" hidden>
+      <p id="uncaptured-error-toast-message"></p>
+      <button type="button" id="uncaptured-error-toast-dismiss" class="upload-btn secondary">Dismiss</button>
+    </div>
+
     <script type="text/javascript">
       // Classic (non-MODULARIZE) Emscripten output for the rendering engine
       // -- Module must exist as a global before wasm_smoke.js loads, same

@@ -38,6 +38,14 @@ void logStringView(char const* prefix, WGPUStringView message) {
     }
 }
 
+// Mobile OOM mitigation -- onDeviceLost()/onUncapturedError() need to
+// retain the message past the callback's own lifetime (for
+// getDeviceLossState()'s later poll), unlike logStringView() above's
+// fire-and-forget console print.
+std::string stringViewToStdString(WGPUStringView view) {
+    return (view.data && view.length > 0) ? std::string(view.data, view.length) : std::string();
+}
+
 // Mirrors RaymarchUBO in engine/shaders/src/volume_raymarch.slang field for
 // field -- every field is a vec4/mat4 specifically to avoid std140 padding
 // surprises (CLAUDE.md #8 "UBO-related sizes scattered across 4 places will
@@ -280,7 +288,54 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
         deviceDesc.requiredFeatureCount = 1;
         deviceDesc.requiredFeatures = requiredFeatures;
     }
+    // Mobile OOM mitigation (rhi::Device::getDeviceLossState) -- registers
+    // both callbacks on this same descriptor rather than a separate
+    // post-creation setter call, since WGPUDeviceDescriptor is where
+    // Dawn's newer CallbackInfo-based API expects them. AllowSpontaneous
+    // is safe here for the same reason as callbackInfo.mode above (no
+    // ASYNCIFY in this engine).
+    deviceDesc.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
+    deviceDesc.deviceLostCallbackInfo.callback = &WebGPUDevice::onDeviceLost;
+    deviceDesc.deviceLostCallbackInfo.userdata1 = self;
+    deviceDesc.uncapturedErrorCallbackInfo.callback = &WebGPUDevice::onUncapturedError;
+    deviceDesc.uncapturedErrorCallbackInfo.userdata1 = self;
     wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
+}
+
+void WebGPUDevice::onDeviceLost(WGPUDevice const* /*device*/, WGPUDeviceLostReason reason, WGPUStringView message,
+                                 void* userdata1, void* /*userdata2*/) {
+    auto* self = static_cast<WebGPUDevice*>(userdata1);
+    logStringView("WebGPUDevice: device lost", message);
+    self->deviceLost_ = true;
+    switch (reason) {
+        case WGPUDeviceLostReason_Destroyed:
+            self->deviceLossReason_ = DeviceLossReason::Destroyed;
+            break;
+        case WGPUDeviceLostReason_FailedCreation:
+            self->deviceLossReason_ = DeviceLossReason::FailedCreation;
+            break;
+        default:
+            self->deviceLossReason_ = DeviceLossReason::Unknown;
+            break;
+    }
+    self->deviceLossMessage_ = stringViewToStdString(message);
+}
+
+void WebGPUDevice::onUncapturedError(WGPUDevice const* /*device*/, WGPUErrorType /*type*/, WGPUStringView message,
+                                      void* userdata1, void* /*userdata2*/) {
+    auto* self = static_cast<WebGPUDevice*>(userdata1);
+    logStringView("WebGPUDevice: uncaptured error", message);
+    // Deliberately does NOT set deviceLost_ -- an uncaptured error does
+    // not necessarily mean the whole device is gone (see
+    // rhi::DeviceLossSnapshot's header comment).
+    self->hasUncapturedError_ = true;
+    self->uncapturedErrorMessage_ = stringViewToStdString(message);
+}
+
+void WebGPUDevice::debugSimulateDeviceLost() {
+    static char const kMessage[] = "simulated for e2e testing (engine_debug_simulate_device_lost)";
+    onDeviceLost(nullptr, WGPUDeviceLostReason_Unknown, WGPUStringView{kMessage, sizeof(kMessage) - 1}, this,
+                 nullptr);
 }
 
 void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
@@ -984,7 +1039,10 @@ void WebGPUDevice::rebuildBindGroup() {
 }
 
 void WebGPUDevice::renderFrame() {
-    if (!ready_) {
+    // deviceLost_ (mobile OOM mitigation) alongside !ready_ -- once the
+    // device is lost, device_/queue_ are stale handles; any further
+    // wgpuQueueSubmit/etc. through them would be undefined behavior.
+    if (!ready_ || deviceLost_) {
         return;
     }
 
@@ -1691,6 +1749,17 @@ HardwareInfo WebGPUDevice::getHardwareInfo() const {
 
 GpuTimingSnapshot WebGPUDevice::getGpuTiming() const {
     return GpuTimingSnapshot{timestampQuerySupported_, gpuRaymarchMs_, gpuCompositeMs_, gpuAxialMs_};
+}
+
+DeviceLossSnapshot WebGPUDevice::getDeviceLossState() const {
+    return DeviceLossSnapshot{
+        deviceLost_, deviceLossReason_, deviceLossMessage_, hasUncapturedError_, uncapturedErrorMessage_,
+    };
+}
+
+void WebGPUDevice::clearUncapturedError() {
+    hasUncapturedError_ = false;
+    uncapturedErrorMessage_.clear();
 }
 
 void WebGPUDevice::beginTimestampReadback(uint32_t queryCount) {
