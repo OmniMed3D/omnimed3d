@@ -722,4 +722,60 @@ in this environment for the same no-WebGPU-adapter reason as the
 previous two entries -- real browser/e2e and manual mobile
 re-verification still owed before merge.
 
+### 2026-08-24 — REQ-C03 first parity test: known-answer mask geometry
+
+First code under REQ-C03 ("cross-checking AI inference output against
+rendering output for known-answer synthetic volumes" -- see
+`claude.md` §6, corrected there from an earlier, wrong
+Vulkan-vs-WebGPU-backend-diff framing). Scoped to what's testable
+without the AI track's inference output: given a known-answer mask
+tensor matching the REQ-C01 shape, does the render output place it at
+the geometrically correct location.
+
+Investigated `WebGPUDevice::applyMaskSlice` first to see what a native
+CTest could exercise: it's a direct per-slice overwrite with no
+coordinate transform at all (the mask must already match the volume's
+width/height exactly), so there's nothing in the C++ layer for a
+coordinate-flip bug to hide in -- the only place such a bug could live
+is the raymarch/axial fragment shader's own texture-coordinate math,
+which requires a real GPU. The WebGPU backend only builds under
+`EMSCRIPTEN` (no native Vulkan `Device` implementation exists), so this
+had to be a Playwright e2e test, not `engine/tests/parity/` CTest.
+
+`viewer/tests/e2e/mask-geometry-parity.spec.ts`: loads a synthetic
+64x64x1 HU=0 volume (uniform HU means the all-zero float16 bit pattern
+works directly, no conversion code needed) and a known-answer mask
+(class 1 in the top-left quadrant only, 0 elsewhere) via
+`_engine_load_volume`/`_engine_apply_mask_slice` directly (same
+direct-injection technique `shell-mask-integration.spec.ts` uses),
+switches to the 2D axial slice view, and checks four quadrant
+screenshots: the masked quadrant must differ from all three others, and
+the three unmasked quadrants must be mutually identical (catches a
+misplaced highlight landing in any wrong quadrant, not just the
+"looks different somewhere" case a single before/after diff would
+under-specify). Volume and viewport are both forced square so
+`axial_slice.slang`'s "contain" letterbox fit (`fitParams`) resolves to
+an identity, keeping the screen-pixel-to-UV mapping undistorted.
+Deliberately mis-placed the known-answer mask (top-right instead of
+top-left) to confirm the test actually fails when it should, before
+trusting the passing result.
+
+One dead end worth recording: a `page.evaluate`-side
+`drawImage(sourceCanvas, ...)` + `getImageData` pixel readback always
+returned fully transparent (0,0,0,0) against this WebGPU-backed canvas
+(confirmed via a throwaway debug script, cause not pinned down) --
+switched to `page.screenshot({clip})`, the same real-render capture
+`mask-opacity-controls.spec.ts` already relies on.
+
+**Verified:** full `viewer/tests/e2e/` suite (29 specs) run to
+completion -- all pass except one `control-tooltips.spec.ts` case that
+fails only under full-suite serial load and passes cleanly on its own,
+consistent with WebGPU-adapter contention across many real-GPU tests in
+one run, not a regression from this change.
+
+Native-CTest half of REQ-C03 (once a native Vulkan `Device` exists) and
+the joint AI-track half (real inference output, error-tolerance
+criteria) remain open -- see `docs/current/TESTS_PARITY_TODO_2026-08-24.md`
+(local/gitignored).
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->
