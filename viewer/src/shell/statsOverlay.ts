@@ -163,3 +163,18 @@ export function setupStatsOverlay(startVisible = false): void {
     );
   });
 }
+
+// Low-memory mode (mobile OOM mitigation, deviceTier.ts) is static
+// per-volume-load state, not something to poll every frame like the
+// tick()-driven stats above -- called directly from main.ts's
+// engineLoadVolume() whenever a volume finishes loading, independent of
+// whether this panel is currently visible (mirrors viewControls.ts's
+// notifyVolumeLoaded()'s always-write-the-DOM-regardless pattern).
+export function notifyLowMemoryMode(active: boolean): void {
+  const valueEl = document.getElementById("stat-low-memory-value");
+  if (!valueEl) {
+    console.error("statsOverlay: #stat-low-memory-value not found in the DOM");
+    return;
+  }
+  valueEl.textContent = active ? "ON" : "OFF";
+}
