@@ -19,6 +19,21 @@ import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
 import { resolveModelPath } from "./modelSelection.js";
 import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
+// DIAGNOSTIC IN PROGRESS (2026-08-26): numThreads=1 fixed an earlier
+// session-creation hang (matching MOBILE_OOM_DIAGNOSTIC_2026-08-25.md row
+// 4), but at batch=1 it made each real inference call slow enough (growing
+// to 7-10s) that the gap between consecutive "inference-started" events
+// exceeded Shell's 750ms reload-debounce -- causing ~25 unload/reload
+// cycles across one 133-slice run instead of 1, which also wipes
+// previously-applied mask data each time (Engine's unloadVolume() releases
+// the mask texture along with the volume/gradient ones). Testing whether
+// numThreads=4 is now safe to create a session with: the original hang was
+// observed with WebGPU attempted first (["webgpu","wasm"]) under COOP/COEP;
+// this session is now created WASM-only from the start (FORCE_WASM_ONLY
+// below), a different code path that may not hit the same hang. If session
+// creation still hangs, revert to 1 immediately.
+ort.env.wasm.numThreads = 4;
+
 /**
  * Fetches a model file's bytes with progress reporting, instead of handing
  * `ort.InferenceSession.create()` a URL and letting it fetch internally --
@@ -120,17 +135,44 @@ let session: ort.InferenceSession | undefined;
  * `navigator.gpu.requestAdapter()` succeeding, per Issue #35's
  * `gpuDetected` probe, doesn't guarantee `session.run()` itself works --
  * a Dawn/driver quirk could still make the first real inference fail).
- * Runs the adapter's own preprocess()/infer() on a throwaway all-zero
- * slice -- deliberately reuses the real code path (not a hand-rolled
- * shaped tensor) so this stays adapter-agnostic; `cropAndResize`'s
- * "no body-mask region found" fallback (full-frame bbox) already handles
- * an all-zero input without throwing, confirmed by reading
+ *
+ * Runs a full `MAX_BATCH_SIZE`-sized batch (not a single slice) through the
+ * real `runBatch()` path, deliberately reusing the real code path rather
+ * than a hand-rolled shaped tensor -- see MOBILE_OOM_DIAGNOSTIC_2026-08-25.md
+ * (`engine/docs/`): the crash it investigated always hit on the *first*
+ * real `session.run()` after `init`, regardless of quantization/EP/thread
+ * count, and never on later slices in the same session. Untested hypothesis
+ * this is meant to probe: WASM linear memory only grows, never shrinks, so
+ * whatever one-time `memory.grow()` a session's first batch-sized forward
+ * pass needs was previously deferred until the user's actual first
+ * inference click -- exactly when the Engine's GPU volume textures are
+ * already resident. Forcing that growth here, during `init`, moves it
+ * earlier; it may or may not be sufficient on its own (Engine's own
+ * `unloadVolume()`-during-inference fix addresses the same window from the
+ * other side) but doesn't require any Engine-side coordination to test.
+ * `cropAndResize`'s "no body-mask region found" fallback (full-frame bbox)
+ * already handles an all-zero input without throwing, confirmed by reading
  * preprocess.ts directly rather than assumed.
+ *
+ * DIAGNOSTIC IN PROGRESS (2026-08-26): a real-device retest at
+ * MAX_BATCH_SIZE (8) crashed on "Load Segmentation Model" alone -- no
+ * volume ever loaded, so Engine's GPU textures were never resident. That's
+ * a new symptom the original diagnostic never saw (model load always
+ * succeeded there), so it's being bisected downward independently of
+ * `MAX_BATCH_SIZE` via `VALIDATE_PROBE_BATCH_SIZE` before reconciling the
+ * two. Currently at 4 (bisecting down from 8); revert to `MAX_BATCH_SIZE`
+ * once a real no-crash/crash boundary is found on the real device.
  */
+const VALIDATE_PROBE_BATCH_SIZE = 2;
+
 async function validateSession(candidate: SegmentationAdapter, candidateSession: ort.InferenceSession): Promise<void> {
   const probeSlice: HuSlice = { data: new Float32Array(64 * 64), width: 64, height: 64 };
-  const { tensor } = candidate.preprocess(probeSlice);
-  await candidate.infer(candidateSession, tensor);
+  const probeRequests: SliceRequest[] = Array.from({ length: VALIDATE_PROBE_BATCH_SIZE }, (_, i) => ({
+    volumeId: "__validate-session-probe__",
+    sliceIndex: i,
+    slice: probeSlice,
+  }));
+  await runBatch(candidate, candidateSession, probeRequests);
 }
 
 // Serializes hu-slice processing so at most one session.run() is ever in
@@ -176,11 +218,33 @@ let inferenceQueue: Promise<void> = Promise.resolve();
 // of paying it per slice, which is enough to bring INT8-on-WebGPU under
 // the 500ms/slice target for the first time (was the one model/EP gap
 // Issue #35 left open).
-const MAX_BATCH_SIZE = 8;
+// DIAGNOSTIC IN PROGRESS (2026-08-26): batch=8 crashed on the very first
+// real production batch. batch=2 got through ~60+ successful batches
+// (Engine's unloadVolume/reload cycling correctly each time) before a
+// catchable onnxruntime-web WebGPU buffer-download error, whose existing
+// per-slice fallback then crashed for real on retry -- pointing at a
+// cumulative resource leak across many session.run()+unload/reload cycles
+// rather than a single first-call peak. batch=1 tests whether the leak is
+// still present per-call (would still eventually fail, just later) or was
+// specific to something about pairing 2 slices per call. Revert to 8 once
+// resolved.
+const MAX_BATCH_SIZE = 1;
 const BATCH_WINDOW_MS = 20;
 
 let pendingBatch: SliceRequest[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+// DIAGNOSTIC IN PROGRESS (2026-08-26): real-device logs show
+// inference-started/runBatch cycles continuing indefinitely after all
+// real hu-slice messages (confirmed exactly 133, matching the volume) have
+// been received and flushed -- with no "flushing batch" log preceding
+// them, which the current code has no path to produce. Suspect the
+// browser console is collapsing visually-identical repeated log lines
+// (same sliceIndex, same text) so a real duplicate/re-send isn't visible
+// as a duplicate. Monotonic counters on the logs below make every line
+// text-distinct so nothing can collapse. Revert once resolved.
+let huSliceCounter = 0;
+let flushCounter = 0;
 
 function scheduleBatchFlush(): void {
   if (flushTimer !== undefined) return;
@@ -188,6 +252,12 @@ function scheduleBatchFlush(): void {
     flushTimer = undefined;
     const batch = pendingBatch.splice(0, MAX_BATCH_SIZE);
     if (batch.length > 0) {
+      flushCounter += 1;
+      const thisFlush = flushCounter;
+      console.log(
+        "[AI-DIAG] #" + thisFlush + " scheduleBatchFlush: flushing batch",
+        batch.map((r) => r.sliceIndex),
+      );
       inferenceQueue = inferenceQueue
         .then(async () => {
           // Mobile OOM mitigation: tells the Shell to pause rendering for
@@ -201,13 +271,16 @@ function scheduleBatchFlush(): void {
           // can't fire until this one's .finally() has already run, so
           // there's no window where rendering incorrectly resumes while
           // a later flush is still actually in flight.
+          console.log("[AI-DIAG] #" + thisFlush + " inference-started posted");
           (self as unknown as Worker).postMessage({ type: "inference-started" });
           if (!adapter || !session) {
             throw new Error("Inference Worker received a slice before 'init'");
           }
           let results: MaskSliceMessage[];
           try {
+            const runStart = performance.now();
             results = await runBatch(adapter, session, batch);
+            console.log("[AI-DIAG] runBatch resolved in", (performance.now() - runStart).toFixed(0), "ms");
           } catch (batchErr) {
             // Some models have a statically-fixed batch=1 input shape
             // rather than a dynamic batch axis (confirmed: the dummy
@@ -243,6 +316,7 @@ function scheduleBatchFlush(): void {
           );
         })
         .finally(() => {
+          console.log("[AI-DIAG] #" + thisFlush + " inference-ended posted");
           (self as unknown as Worker).postMessage({ type: "inference-ended" });
         });
     }
@@ -257,17 +331,33 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   const msg = event.data;
 
   if (msg.type === "init") {
+    console.log("[AI-DIAG] init received", { modelPath: msg.modelPath, modelBasePath: msg.modelBasePath });
     // Cheap capability probe (no session/model involved) -- Issue #35's
     // hardware-based model selection below, and also informs which EP this
     // session will actually prefer (see executionProviders just below).
     const gpuDetected = !!(await navigator.gpu?.requestAdapter());
+    console.log("[AI-DIAG] gpuDetected =", gpuDetected);
+
+    // DIAGNOSTIC IN PROGRESS (2026-08-26): real-device crash trace pointed
+    // at onnxruntime-web's WebGPU buffer manager (buffer_manager.cc,
+    // mapAsync failure) -- and batch size alone didn't produce a reliable
+    // safe/unsafe boundary (a clean-restart batch=1 run crashed earlier,
+    // call #11, than a batch=2 run in an already-warm session). Testing
+    // whether avoiding the WebGPU EP entirely (both model selection and
+    // execution provider) sidesteps that code path altogether. Leaves
+    // `gpuDetected` itself untouched (still accurately reported/logged) --
+    // only what gets acted on for model choice and EP list is forced.
+    // Revert (drop the `&& false`, restore ["webgpu", "wasm"]) once
+    // resolved.
+    const FORCE_WASM_ONLY = true;
 
     const primaryModelPath = msg.modelBasePath
-      ? resolveModelPath(msg.modelBasePath, gpuDetected)
+      ? resolveModelPath(msg.modelBasePath, gpuDetected && !FORCE_WASM_ONLY)
       : msg.modelPath;
     if (!primaryModelPath) {
       throw new Error("Inference Worker 'init' message needs either modelPath or modelBasePath");
     }
+    console.log("[AI-DIAG] primaryModelPath =", primaryModelPath, "FORCE_WASM_ONLY =", FORCE_WASM_ONLY);
 
     // WebGPU first, WASM as fallback -- not a replacement (Issue #35). ORT
     // assigns each graph node to the first EP in this list that supports
@@ -275,7 +365,9 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // so an op WebGPU can't run (e.g. some quantized INT8 ops, see
     // docs/verification/inference-worker.md §8) still runs correctly on
     // WASM instead of failing the whole session.
-    const primaryOptions: ort.InferenceSession.SessionOptions = { executionProviders: ["webgpu", "wasm"] };
+    const primaryOptions: ort.InferenceSession.SessionOptions = {
+      executionProviders: FORCE_WASM_ONLY ? ["wasm"] : ["webgpu", "wasm"],
+    };
     if (msg.externalDataPath) {
       const bytes = new Uint8Array(await (await fetch(msg.externalDataPath)).arrayBuffer());
       // The embedded external-data reference inside the ONNX graph is the
@@ -298,15 +390,47 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       });
     };
 
+    // DIAGNOSTIC IN PROGRESS (2026-08-26): reuses the same init-progress
+    // channel inferenceControls.ts (Engine-owned) already renders as
+    // "Downloading model... X%" -- no new message type, no Engine-side
+    // change needed. Real device testing got stuck at "100%" with no
+    // crash, which is ambiguous between "hung inside
+    // ort.InferenceSession.create() itself" (matches
+    // MOBILE_OOM_DIAGNOSTIC_2026-08-25.md row 4's "session.create() hangs
+    // indefinitely after the model reaches 100% downloaded" verbatim, and
+    // would have nothing to do with today's batch-size bisection) and
+    // "hung inside validateSession()'s probe batch" (would implicate the
+    // bisection instead). These two checkpoints disambiguate which one.
+    // Remove once resolved.
+    const postCheckpoint = (loaded: number) => {
+      (self as unknown as Worker).postMessage({ type: "init-progress", loaded, total: 3 });
+    };
+
     let resolvedModelPath = primaryModelPath;
-    let gpuActive = gpuDetected;
+    // FORCE_WASM_ONLY overrides which path actually runs (see above), so
+    // the status text needs to reflect that too -- otherwise the Shell
+    // shows "FP16, WebGPU" (from the real, unforced gpuDetected) while the
+    // session underneath is actually running INT8/WASM, which is exactly
+    // backwards for confirming this diagnostic override is in effect.
+    let gpuActive = gpuDetected && !FORCE_WASM_ONLY;
     let usedFallback = false;
     try {
       adapter = new LungmaskAdapter(primaryModelPath);
+      console.log("[AI-DIAG] fetchModelBytes: starting", primaryModelPath);
       const modelBytes = await fetchModelBytes(primaryModelPath, reportDownloadProgress);
+      console.log("[AI-DIAG] fetchModelBytes: done, bytes =", modelBytes.byteLength);
+      console.log("[AI-DIAG] InferenceSession.create: starting", primaryOptions);
+      const createStart = performance.now();
       session = await ort.InferenceSession.create(modelBytes, primaryOptions);
+      console.log("[AI-DIAG] InferenceSession.create: resolved in", (performance.now() - createStart).toFixed(0), "ms");
+      postCheckpoint(1); // session.create() resolved
+      console.log("[AI-DIAG] validateSession: starting, probe batch =", VALIDATE_PROBE_BATCH_SIZE);
+      const validateStart = performance.now();
       await validateSession(adapter, session);
+      console.log("[AI-DIAG] validateSession: resolved in", (performance.now() - validateStart).toFixed(0), "ms");
+      postCheckpoint(2); // validateSession()'s probe batch resolved
     } catch (err) {
+      console.error("[AI-DIAG] init: primary path threw", err);
       // Only a modelBasePath (hardware-auto-selected) caller run against a
       // detected GPU has a fallback target worth retrying with -- an
       // explicit modelPath caller (e.g. shell-mask-integration.spec.ts's
@@ -326,12 +450,15 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       resolvedModelPath = resolveModelPath(msg.modelBasePath, false);
       adapter = new LungmaskAdapter(resolvedModelPath);
       const fallbackBytes = await fetchModelBytes(resolvedModelPath, reportDownloadProgress);
+      console.log("[AI-DIAG] fallback InferenceSession.create: starting (wasm-only)");
       // Force wasm-only for the retry -- webgpu just failed for this
       // session, so there's no reason to let ORT attempt it again here.
       session = await ort.InferenceSession.create(fallbackBytes, { executionProviders: ["wasm"] });
+      console.log("[AI-DIAG] fallback InferenceSession.create: resolved");
       // Let this one throw for real if it fails too -- INT8/WASM is the
       // baseline this fallback exists to reach; nothing left below it.
       await validateSession(adapter, session);
+      console.log("[AI-DIAG] fallback validateSession: resolved");
     }
 
     // Callers have no other way to know the (async) session load finished
@@ -346,6 +473,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // determines which model is running; usedFallback distinguishes that
     // case from "no GPU was ever detected" for anything that wants to
     // surface the difference.
+    console.log("[AI-DIAG] init-complete: sending", { resolvedModelPath, gpuActive, usedFallback });
     (self as unknown as Worker).postMessage({
       type: "init-complete",
       modelPath: resolvedModelPath,
@@ -356,6 +484,11 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
   }
 
   if (msg.type === "hu-slice") {
+    huSliceCounter += 1;
+    console.log("[AI-DIAG] #" + huSliceCounter + " hu-slice received", {
+      volumeId: msg.volumeId,
+      sliceIndex: msg.sliceIndex,
+    });
     const { volumeId, sliceIndex, width, height, data } = msg;
     pendingBatch.push({ volumeId, sliceIndex, slice: { data: new Float32Array(data), width, height } });
     scheduleBatchFlush();
