@@ -142,6 +142,11 @@ test("Low-Memory Mode checkbox starts synced with the auto-detected default", as
   await stubDeviceMemory(page, 8);
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // Rendering (which holds this checkbox) is a collapsed <details>
+  // section by default, nested inside the outer "Advanced Mode" <details>
+  // -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#rendering-toggle").click();
   await expect(page.locator("#low-memory-mode-enabled")).not.toBeChecked();
 });
 
@@ -154,6 +159,11 @@ test("checking the Low-Memory Mode checkbox overrides deviceMemory for the next 
   // per deviceTier.ts's shouldUseLowMemoryMode()) should decide this.
   await stubDeviceMemory(page, 8);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page, "?lowMemory=0", async (p) => {
+    // Rendering (which holds this checkbox) is a collapsed <details>
+    // section by default, nested inside the outer "Advanced Mode"
+    // <details> -- see index.html.
+    await p.locator("#advanced-mode-toggle").click();
+    await p.locator("#rendering-toggle").click();
     await expect(p.locator("#low-memory-mode-enabled")).not.toBeChecked();
     await p.locator("#low-memory-mode-enabled").check();
   });

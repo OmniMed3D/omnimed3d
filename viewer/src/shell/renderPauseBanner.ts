@@ -15,6 +15,13 @@
  * per batch-flush cycle (not per slice -- scheduleBatchFlush() can
  * self-reschedule for back-to-back flushes, so one flush cycle is the
  * pause/resume unit).
+ *
+ * main.ts only calls notifyInferenceStarted() when the current volume was
+ * loaded in low-memory mode -- on a full-memory device there's no GPU
+ * contention worth trading the ability to keep viewing the CT during
+ * segmentation for. notifyInferenceEnded() itself stays gate-free and
+ * relies on the `paused` guard below (a no-op when not currently paused),
+ * so this module doesn't need to duplicate that condition.
  */
 
 let paused = false;

@@ -33,6 +33,11 @@ test("keyboard focus shows the same tooltip as hover", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
+  // TF Detail is a collapsed <details> section by default, nested inside
+  // the outer "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#tf-detail-toggle").click();
+
   const tooltip = page.locator("#control-tooltip");
   await page.locator("#threshold").focus();
   await expect(tooltip).toBeVisible();
@@ -57,9 +62,12 @@ test("tooltips near the panel's top and bottom edges stay within the viewport", 
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
 
-  // Near the bottom of the panel (Reset Clip is the last control) -- may
-  // require scrolling the panel into view first since #control-panel
-  // scrolls internally.
+  // Near the bottom of the panel -- may require scrolling the panel into
+  // view first since #control-panel scrolls internally. Clip is a
+  // collapsed <details> section by default, nested inside the outer
+  // "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#clip-toggle").click();
   await page.locator("#clip-reset").scrollIntoViewIfNeeded();
   await page.locator("#clip-reset").hover();
   await expect(tooltip).toBeVisible();

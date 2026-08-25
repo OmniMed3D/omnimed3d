@@ -1165,4 +1165,294 @@ not just corrected -- see that entry's own "Removed" addendum for why
 (a confirmed progress-gauge regression on top of the no-memory-benefit
 finding).
 
+### 2026-08-25 — gate render-pause-during-inference to low-memory mode; control-panel progressive disclosure (user request, same day)
+
+Refined C-2's pause (above) had shipped unconditional -- every AI
+inference batch paused rendering, on every device, regardless of
+whether that device actually needed the GPU-contention relief it exists
+for. On a full-memory device there's no contention problem to relieve,
+and pausing only cost the user the ability to keep viewing the CT while
+segmentation ran. `viewer/src/shell/main.ts` now tracks
+`currentVolumeLowMemoryMode` (set in `engineLoadVolume()` alongside the
+existing `lowMemoryMode`/`downsampleFactor` computation) and only calls
+`notifyInferenceStarted()` when it's true; `notifyInferenceEnded()`
+stays unconditional, since `renderPauseBanner.ts`'s own `paused` guard
+already makes it a no-op when nothing is actually paused -- this also
+means a low-memory-mode change mid-batch can never leave rendering
+stuck paused (the alternative, gating both ends on the live checkbox
+value, could). `viewer/tests/e2e/render-pause-during-inference.spec.ts`
+gained a sibling test (`?lowMemory=0`) asserting the wrapped
+`_engine_set_render_paused` never fires, alongside the existing
+`?lowMemory=1` case now made explicit; the fix's own mechanism is what
+makes the negative case meaningful (both tests failed before this
+change, for opposite reasons: the always-on version broke the new
+`?lowMemory=0` assertion, not the other way around).
+
+Separately (same request): the control panel had grown to 9 sections,
+most not needed for routine CT viewing. `viewer/src/shell/index.html`
+marks Segmentation/Rendering/TF Detail/Clip/Background/Debug
+`.advanced-section` (Volume/View/Window & Level stay always visible);
+new `viewer/src/shell/advancedSettings.ts`'s
+`setupAdvancedSettingsControl()` toggles a `.show-advanced` class on
+`#control-panel` from a new "Advanced Settings" checkbox, and
+`style.css`'s `#control-panel:not(.show-advanced) .advanced-section`
+rule hides them by default -- same class-toggle pattern as
+`panelDrag.ts`'s whole-panel `.collapsed`, deliberately independent of
+it (collapse and disclosure are orthogonal panel states). Within
+Rendering, the Downsample Factor row is a further, narrower case of the
+same idea: it only affects anything when Low-Memory Mode is also on
+(see the previous entry), so `deviceTier.ts`'s
+`setupLowMemoryModeControl()` now shows/hides `#downsample-factor-row`
+in lockstep with that checkbox instead of leaving it visible-but-inert.
+
+**Verified:** `vite build` and `prettier --check` clean. Seven existing
+e2e specs interact with controls now hidden by default
+(`clinical-shading-controls`, `control-tooltips`, `device-tier-low-memory`,
+`hu-slice-queue`, `mask-opacity-controls`, `mobile-render-perf`,
+`rendering-quality-controls`) -- each updated to check
+`#advanced-settings-enabled` before its first interaction with an
+affected control. Full `viewer/tests/e2e/` suite (43 specs, including
+the two new render-pause cases) run serially to completion, all
+passing; an earlier parallel (4-worker) run showed one unrelated flake
+in `control-tooltips.spec.ts`'s keyboard-focus test that reproduced
+neither in isolation nor serially, consistent with headless-Chromium
+WebGPU-adapter contention across concurrent workers rather than a
+regression from this change.
+
+**Superseded (2026-08-26, next day):** the global "Advanced Settings"
+checkbox above didn't survive contact with actual use -- user feedback
+wanted Segmentation and Clip promoted back to always-visible (grouped
+alongside Volume/View/Window & Level, moved up in DOM order to sit
+together), and wanted the remaining sections (Rendering, TF Detail,
+Background, Debug) individually disclosed rather than mass-toggled
+together. `advancedSettings.ts` and its `.show-advanced` class are
+deleted outright; each of those four sections is now a native
+`<details>`/`<summary>` -- collapsed (title-only) by default, no JS at
+all, since the browser already owns expand/collapse via `<details>`'s
+own `open` attribute. `style.css`'s `summary.section-label` rule adds
+the chevron (reusing the existing `.chevron` element/rotation pattern
+from `panelDrag.ts`'s collapse toggle) and hides the native disclosure
+marker; `details:not([open]) > summary.section-label .chevron` flips it
+per-section instead of one shared `aria-expanded` state. Each summary
+got a stable id (`#rendering-toggle`, `#tf-detail-toggle`,
+`#background-toggle`, `#debug-toggle`) for the e2e suite to click
+directly, replacing the seven specs' `#advanced-settings-enabled`
+checks from the previous entry with per-section expansion (or removed
+entirely for the two specs that only touched Segmentation/Clip, now
+always visible). Separately, added `#debug-section-spacer` (12px, bumped
+to `12px + env(safe-area-inset-bottom)` at the existing 640px breakpoint)
+after the Debug section's Show Stats checkbox -- user report of that
+checkbox sitting too close to a mobile browser's own bottom chrome for
+comfortable tapping; a dedicated spacer rather than tuning
+`#control-panel`'s own bottom padding, which every other section's
+bottom edge also depends on.
+
+**Verified:** `vite build` and `prettier --check` clean. Full
+`viewer/tests/e2e/` suite (43 specs) run serially to completion, all
+passing. Spacer height and the `640px` media-query branch confirmed via
+a throwaway Playwright script reading `getComputedStyle` directly
+(`12px` at desktop width, still `12px` at a simulated 390px-wide mobile
+viewport since headless Chromium's `env(safe-area-inset-bottom)`
+evaluates to `0px` with no real device notch to report -- the CSS
+mechanism itself was confirmed wired via `panel.scrollHeight` accounting
+for the spacer, not by asserting a nonzero safe-area value that this
+environment can't produce).
+
+**Follow-up (2026-08-26, same day):** two more rounds of the same user
+feedback. Clip is now also a collapsed `<details>` section (same
+`#clip-toggle` id pattern as the other four), converted in place rather
+than moved -- it stays positioned right before Rendering, immediately
+after the always-visible Volume/Segmentation/View/Window & Level group.
+`clinical-shading-controls.spec.ts`'s clip-box test and
+`control-tooltips.spec.ts`'s edge-tooltip test both gained a
+`#clip-toggle` click before their existing `#clip-reset` interactions
+(the clip-slider `page.evaluate()`/`getElementById` calls elsewhere in
+the clip-box test needed no change -- direct DOM access isn't gated by
+visibility the way a Locator action is).
+
+Separately, `#debug-section-spacer` moved: it was nested inside Debug's
+own `<details>`, which meant it (like the rest of Debug's content)
+disappeared whenever Debug was collapsed -- its default state, and
+exactly when the extra clearance was needed. It's now a sibling
+`<div>` immediately after Debug's `</details>`, unconditionally
+rendered regardless of that section's open/closed state.
+
+**Verified:** `vite build` and `prettier --check` clean. Full
+`viewer/tests/e2e/` suite (43 specs) run serially to completion, all
+passing. Both fixes re-confirmed via a throwaway Playwright script: the
+spacer's `boundingBox()` still returns a real 12px-tall box with Debug
+collapsed (previously it wouldn't have existed in the DOM's rendered
+box tree at all), and Clip's `<details>.open` reads `true` after
+clicking `#clip-toggle`, with the chevron visibly flipped in a
+screenshot crop of the header.
+
+**Follow-up (2026-08-26, same day again):** one more disclosure level
+added, plus a background-transparency tweak, both user feedback after
+seeing the five stacked title rows (Clip/Rendering/TF Detail/Background/
+Debug) above. Everything below Window & Level -- all five of those
+`<details>` sections -- now nests inside one more outer `<details>`,
+`#advanced-mode-toggle` ("Advanced Mode"), also collapsed by default.
+Collapsed, the panel shows one title row instead of five; open, the five
+inner sections behave exactly as before (still individually collapsed,
+still independently toggleable) -- Advanced Mode adds a disclosure
+level, it doesn't replace the per-section one from the previous entry.
+Still zero JS: nested `<details>` elements track their `open` state independently
+in the browser, same mechanism as the single level before. Every e2e
+spec that clicks a now-doubly-nested section's toggle
+(`clinical-shading-controls`, `control-tooltips`, `device-tier-low-memory`,
+`mask-opacity-controls`, `mobile-render-perf`, `rendering-quality-controls`)
+gained a `#advanced-mode-toggle` click ahead of its existing per-section
+click -- a `<details>` hides all its non-`<summary>` descendants
+(including nested `<details>` wholesale) while closed, so the inner
+toggle isn't even reachable until the outer one opens.
+
+`#debug-section-spacer` needed no change -- it was already a sibling of
+the (now further-nested) Debug `<details>`'s *outer* container from the
+previous entry's fix, i.e. a sibling of the new Advanced Mode wrapper
+itself, so it still renders unconditionally regardless of either
+disclosure level's state.
+
+Separately: `--panel-bg`'s 0.92 alpha felt too opaque for `#control-panel`
+specifically. Rather than lowering the shared token (used by
+`--panel-bg`'s other consumers too -- `#engine-error`, the device-lost/
+uncaptured-error banners, `#stats-overlay`, which stay at 0.92 since
+they're alert/debug surfaces that want to stay clearly legible over
+whatever's rendering behind them), added a new `--panel-bg-translucent:
+rgba(14, 20, 19, 0.8)` token used only by `#control-panel`'s own
+`background`. The existing `backdrop-filter: blur(10px)` on that same
+rule keeps it readable at the lower alpha over a busy render.
+
+**Verified:** `vite build` and `prettier --check` clean. Full
+`viewer/tests/e2e/` suite (43 specs) run serially to completion, all
+passing. Confirmed via a throwaway Playwright script:
+`getComputedStyle(#control-panel).backgroundColor` reads
+`rgba(14, 20, 19, 0.8)`; a fresh page load screenshot shows only
+Volume/Segmentation/View/Window & Level plus a single "Advanced Mode"
+row, and clicking it reveals the five inner sections (still individually
+collapsed) with the outer chevron flipped to its open orientation.
+
+### 2026-08-26 — Low-Memory Mode inference notice (user request, same day)
+
+Clicking "Load Segmentation Model" while Low-Memory Mode is on used to
+give no indication that anything was different from full mode -- but
+refined C-2 (above) pauses rendering for the duration of every inference
+batch in that mode, and the volume/mask textures are downsampled too, so
+the whole flow reads noticeably slower and, without an explanation,
+"stuck" to a first-time user. `inferenceControls.ts`'s button click
+handler now checks `shouldUseLowMemoryMode()` (deviceTier.ts -- the same
+live signal the checkbox/auto-detection/`?lowMemory=` URL override all
+already feed) and, if true, writes a one-line notice into
+`#demo-model-status` alongside the existing "Downloading model..."
+gauge label. Not gated on `currentVolumeLowMemoryMode` (main.ts, the
+mode the *currently loaded* volume actually used, which is what gates
+refined C-2's render-pause) -- deliberately: the button can be clicked
+before any volume is loaded at all, so there may be no "currently loaded
+volume" yet to check, and the notice's job is to set the user's
+expectation for this session's general behavior, not to describe one
+specific already-loaded volume's exact GPU-texture size. Overwritten by
+the existing `init-complete` handler once the model actually finishes
+loading, same as this status line has always worked -- no new
+clear/reset logic needed.
+
+**Verified:** `vite build` and `prettier --check` clean. New
+`viewer/tests/e2e/inference-low-memory-notice.spec.ts` (2 specs) drives
+the real button click under `?lowMemory=1` and `?lowMemory=0` and
+asserts on `#demo-model-status`'s actual text, not the underlying flag
+directly (device-tier-low-memory.spec.ts already covers the flag itself
+-- this covers the wiring from flag to UI). Full `viewer/tests/e2e/`
+suite (45 specs, including the two new ones) run serially to completion,
+all passing. Also confirmed with a screenshot of the real notice
+rendered under the "Downloading model..." gauge.
+
+### 2026-08-26 — Reload Volume button; concrete quality-tier step counts (user request, same day)
+
+Two more items from the same feedback pass. First: Low-Memory Mode and
+Downsample Factor (deviceTier.ts) are both load-time-only settings --
+toggling either with a volume already on screen previously had no way
+to actually re-apply short of re-picking the same file(s) from a native
+dialog (tedious), or, for Demo CT, no way at all (`demoCtControls.ts`
+permanently disables its own button on success -- confirmed by reading
+the code, not assumed; the two failure paths already re-enable it, but
+success never did).
+
+New `viewer/src/shell/reloadVolumeControl.ts` deliberately doesn't
+retain the volume's raw bytes to fix this (that would undercut
+Low-Memory Mode's own point -- see deviceTier.ts's header comment on why
+the Shell doesn't already cache a duplicate copy JS-side). Instead each
+loader registers a cheap closure via `setReloadAction()` describing how
+to redo *itself*: `main.ts`'s `loadVolumeFromFiles()` re-reads from the
+original `File[]` handles (the File API is disk/blob-backed, not an
+in-memory copy -- re-calling `.arrayBuffer()` on the same `File` is
+cheap), and `demoCtControls.ts`'s registered action just re-runs its own
+`fetch()` sequence, which was always going to be a fresh network
+round-trip anyway. Both are "re-do the same work," not "replay cached
+bytes," so this doesn't reintroduce the memory tradeoff Option D's own
+retention mechanism was flagged for (and later fully removed). New
+`#reload-volume` button in the Rendering section, right after Downsample
+Factor -- disabled until a volume has actually loaded once.
+
+Second, smaller item: the Low/Medium/High quality-tier tooltips said
+only "fewer/balanced/more ray-march steps," no numbers. The real values
+(`engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp:186-190`,
+`kQualityTiers`) are 192/384/768 steps across the volume's AABB diagonal
+(256/512/1024 max, each tier exactly doubling the previous one) --
+`tooltipManager.ts`'s three `quality-tier-*` entries now say so directly.
+
+**Verified:** `vite build` and `prettier --check` clean. New
+`viewer/tests/e2e/reload-volume-control.spec.ts` (2 specs): one drives a
+real file-input load, confirms `#reload-volume` is disabled beforehand
+and enabled after, changes Low-Memory Mode, clicks Reload, and asserts
+the wrapped `_engine_load_volume`'s `downsampleFactor` argument sequence
+is exactly `[1, 4]` -- proving the reload genuinely re-triggered a load
+with the *new* setting, not a no-op. The other drives a real Demo CT
+load (confirming `#load-demo-ct` really does stay permanently disabled,
+per the investigation above) then confirms Reload Volume still works
+from that state, via a real second `_engine_load_volume` call. Full
+`viewer/tests/e2e/` suite (47 specs, including these two) run serially
+to completion, all passing. Both the button's enabled state and the
+tooltip's new text also confirmed visually via screenshot.
+
+### 2026-08-26 — fix zero row-gap inside every `<details>` section (user report, same day)
+
+User report: text inside "Advanced Mode" sat too close together in
+places. Root cause, found via a throwaway `getBoundingClientRect()`
+script rather than assumed from the CSS spec: Chrome wraps every
+non-`<summary>` child of a `<details>` element in an internal
+anonymous box, exposed to CSS as the `::details-content` pseudo-element
+(real -- `CSS.supports("selector(::details-content)")` confirms it).
+`.panel-section`'s `display: flex; flex-direction: column; gap: 8px`
+(style.css) was declared on `.panel-section` itself, which for a `<div>`
+section (Volume/Segmentation/View/Window & Level) *is* the direct flex
+parent of its rows -- but for a `<details>` section (Clip/Rendering/TF
+Detail/Background/Debug, and the outer "Advanced Mode" wrapper itself,
+all from the two 2026-08-26 progressive-disclosure entries above), the
+actual rows live one level deeper inside that anonymous
+`::details-content` box, which defaults to plain block layout with no
+gap at all. Measured before the fix: 8px between two rows in the
+`<div>` case, exactly 0px between the same markup pattern in every
+`<details>` case -- not a subtle difference, rows were touching.
+`.panel-section::details-content { display: flex; flex-direction:
+column; gap: 8px }` repeats the declaration on the pseudo-element
+itself; a no-op for `<div>` sections (the selector only matches
+`<details>`), and degrades gracefully (falls back to the pre-fix 0px
+gap, not a hard failure) on a Chrome build old enough not to support the
+pseudo-element at all.
+
+**Verified:** `vite build` and `prettier --check` clean. New
+`viewer/tests/e2e/accordion-row-spacing.spec.ts` asserts an 8px gap in
+both a `<div>` section (Window & Level, the never-broken baseline -- so
+a regression that breaks the fix for *both* kinds of section still
+fails this test, not just a `<details>`-only regression) and a
+`<details>` section (Rendering, the actually-affected case). Full
+`viewer/tests/e2e/` suite (48 specs, including this one) run serially to
+completion; a since-cleared machine-load spike (`load average` ~4 on
+this 8-core dev machine, unrelated Chrome/inference activity from a long
+session, not a code path this change touches) made
+`hu-slice-queue.spec.ts`'s real-ONNX-inference test miss its 90s budget
+on the same run -- that test's own button gauge showed real, genuine
+segmentation progress (24/133 slices) rather than the dropped-message
+symptom it actually exists to catch, and this change has zero code-path
+overlap with inference throughput, so it's logged here as environmental,
+not re-litigated as a regression.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

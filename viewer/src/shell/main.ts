@@ -46,6 +46,7 @@ import {
 } from "./deviceTier.js";
 import { notifyLowMemoryMode, setupStatsOverlay } from "./statsOverlay.js";
 import { setupDeviceLostBanner } from "./deviceLostBanner.js";
+import { setReloadAction, setupReloadVolumeControl } from "./reloadVolumeControl.js";
 import { notifyInferenceEnded, notifyInferenceStarted } from "./renderPauseBanner.js";
 
 interface EngineModule {
@@ -220,6 +221,14 @@ let nextNumericVolumeId = 1;
 const volumeIdMap = new Map<string, number>();
 let currentVolumeId: string | null = null;
 
+// Whether the currently-loaded volume was loaded in low-memory mode --
+// gates render-pause-during-inference (see inferenceWorker.onmessage
+// below and renderPauseBanner.ts): only low-memory devices benefit from
+// giving inference exclusive GPU access, and on a full-memory device
+// pausing rendering costs the user the ability to keep viewing the CT
+// while segmentation runs, for no corresponding benefit.
+let currentVolumeLowMemoryMode = false;
+
 // Assigned once in main() -- module-scope (not a main()-local) so
 // loadVolumeFromFiles can reach the same Worker instance
 // omnimed3dTestHooks/the message-routing handlers below use, rather than
@@ -332,6 +341,15 @@ export async function loadVolumeFromBuffers(buffers: ArrayBuffer[]): Promise<str
  * (e.g. one file per axial slice).
  */
 export async function loadVolumeFromFiles(files: File[]): Promise<string> {
+  // Registered before the load itself so "Reload Volume" (reloadVolumeControl.ts)
+  // redoes this same file selection -- re-reading from the original `File`
+  // handles (disk/blob-backed) rather than a retained in-memory copy, see
+  // that module's header comment for why that distinction matters here.
+  setReloadAction(() => {
+    loadVolumeFromFiles(files).catch((error: unknown) => {
+      console.error("main: reload (from files) failed", error);
+    });
+  });
   const buffers = await Promise.all(files.map((file) => file.arrayBuffer()));
   return loadVolumeFromBuffers(buffers);
 }
@@ -370,6 +388,14 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   }
   const lowMemoryMode = shouldUseLowMemoryMode();
   const downsampleFactor = lowMemoryMode ? getDownsampleFactor() : 1;
+  // Render-pause-during-inference (renderPauseBanner.ts) only makes sense
+  // as a GPU-contention tradeoff on the memory-constrained devices this was
+  // built for -- on a full-memory device, letting the CT keep rendering
+  // while inference runs is strictly better UX, so the gate below tracks
+  // *this loaded volume's* mode rather than re-reading shouldUseLowMemoryMode()
+  // live (the checkbox doesn't retroactively resize an already-loaded
+  // volume's textures either -- see deviceTier.ts's own comment).
+  currentVolumeLowMemoryMode = lowMemoryMode;
   const bytes = new Uint8Array(msg.data);
   withWasmBuffer(bytes.byteLength, (ptr) => {
     window.Module.HEAPU8.set(bytes, ptr);
@@ -501,7 +527,14 @@ async function main() {
     } else if (msg.type === "mask-slice") {
       engineApplyMaskSlice(msg as MaskSliceMessage);
     } else if (msg.type === "inference-started") {
-      notifyInferenceStarted();
+      // Gated to low-memory mode -- see currentVolumeLowMemoryMode's own
+      // comment. notifyInferenceEnded() below stays unconditional (it's
+      // already a no-op unless actually paused, per renderPauseBanner.ts's
+      // idempotency guard) so a mode change mid-batch can never leave
+      // rendering stuck paused.
+      if (currentVolumeLowMemoryMode) {
+        notifyInferenceStarted();
+      }
     } else if (msg.type === "inference-ended") {
       notifyInferenceEnded();
     }
@@ -527,6 +560,7 @@ async function main() {
   setupQualityControls();
   setupLowMemoryModeControl();
   setupDownsampleFactorControl();
+  setupReloadVolumeControl();
   setupTfDetailControls();
   setupClipControls();
   setupCustomColormapControls();
@@ -535,7 +569,7 @@ async function main() {
   setupPanelCollapse(debugMode);
   setupPanelDrag("stats-overlay", "stats-overlay-drag-handle");
   setupInferenceControls(inferenceWorker);
-  setupDemoCtControls(loadVolumeFromBuffers, showLoadError);
+  setupDemoCtControls(loadVolumeFromBuffers, showLoadError, setReloadAction);
   setupTooltips();
   setupStatsOverlay(debugMode);
   setupDeviceLostBanner();

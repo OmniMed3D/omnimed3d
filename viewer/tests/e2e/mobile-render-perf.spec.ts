@@ -54,6 +54,10 @@ test("canvas backing resolution is capped, not proportional to a high devicePixe
 test("camera drag drops the engine's active quality tier and restores it on release (issue #69)", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // Rendering is a collapsed <details> section by default, nested inside
+  // the outer "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#rendering-toggle").click();
 
   // Wrap the real WASM export rather than the UI button state -- the
   // button/active-tier styling deliberately keeps showing the user's own
@@ -109,6 +113,10 @@ test("camera drag forces occlusion off (restoring on release) but leaves shading
   // still drops during a drag.
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // TF Detail is a collapsed <details> section by default, nested inside
+  // the outer "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#tf-detail-toggle").click();
 
   // Occlusion defaults off -- turn it on first so "restored to 1 after
   // the drag" is unambiguous evidence of a real restore, not just both

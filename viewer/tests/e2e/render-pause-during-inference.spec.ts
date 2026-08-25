@@ -7,7 +7,14 @@ import { expect, test } from "@playwright/test";
  * "inference-started"/"inference-ended" messages (worker.ts's
  * scheduleBatchFlush()) should pause/resume the Engine's rendering via
  * `_engine_set_render_paused`, so rendering and AI inference don't
- * compete for the same GPU.
+ * compete for the same GPU -- but only on the memory-constrained devices
+ * this was built for. On a full-memory device, pausing would cost the
+ * user the ability to keep viewing the CT during segmentation for no
+ * corresponding benefit, so main.ts gates the pause on whether the
+ * current volume was loaded in low-memory mode (see main.ts's
+ * `currentVolumeLowMemoryMode` and renderPauseBanner.ts's own comment).
+ * Both scenarios are covered below via the `?lowMemory=1`/`?lowMemory=0`
+ * diagnostic override (device-tier-low-memory.spec.ts's own pattern).
  *
  * Drives the REAL message protocol end-to-end (real Parse Worker, real
  * Inference Worker, the dummy plumbing-only ONNX model
@@ -24,7 +31,9 @@ import { expect, test } from "@playwright/test";
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
 const dummyOnnxPath = fileURLToPath(new URL("../fixtures/dummy-lungmask.onnx", import.meta.url));
 
-test("a real hu-slice inference pauses rendering, then resumes once the mask arrives", async ({ page }) => {
+test("in low-memory mode, a real hu-slice inference pauses rendering, then resumes once the mask arrives", async ({
+  page,
+}) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
   async function waitForLine(pattern: RegExp, timeoutMs = 20000): Promise<void> {
@@ -33,7 +42,7 @@ test("a real hu-slice inference pauses rendering, then resumes once the mask arr
 
   await page.route("**/dummy-lungmask.onnx", (route) => route.fulfill({ path: dummyOnnxPath }));
 
-  await page.goto("/");
+  await page.goto("/?lowMemory=1");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.evaluate(() => {
@@ -73,5 +82,55 @@ test("a real hu-slice inference pauses rendering, then resumes once the mask arr
 
   const pauseCalls = await page.evaluate(() => (window as unknown as { __pauseCalls: number[] }).__pauseCalls);
   expect(pauseCalls).toEqual([1, 0]);
+  await expect(page.locator("#render-pause-banner")).toBeHidden();
+});
+
+test("outside low-memory mode, a real hu-slice inference does not pause rendering", async ({ page }) => {
+  const consoleLines: string[] = [];
+  page.on("console", (msg) => consoleLines.push(msg.text()));
+  async function waitForLine(pattern: RegExp, timeoutMs = 20000): Promise<void> {
+    await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
+  }
+
+  await page.route("**/dummy-lungmask.onnx", (route) => route.fulfill({ path: dummyOnnxPath }));
+
+  await page.goto("/?lowMemory=0");
+  await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+
+  await page.evaluate(() => {
+    (window as unknown as { __pauseCalls: number[] }).__pauseCalls = [];
+    const real = window.Module._engine_set_render_paused.bind(window.Module);
+    window.Module._engine_set_render_paused = (paused: number) => {
+      (window as unknown as { __pauseCalls: number[] }).__pauseCalls.push(paused);
+      return real(paused);
+    };
+  });
+
+  const volumeId = await page.evaluate(() => {
+    return new Promise<string>((resolve) => {
+      window.omnimed3dTestHooks.inferenceWorker.addEventListener("message", function ack(e: MessageEvent) {
+        if (e.data.type === "init-complete") {
+          window.omnimed3dTestHooks.inferenceWorker.removeEventListener("message", ack);
+          resolve(window.omnimed3dTestHooks.startNewVolume());
+        }
+      });
+      window.omnimed3dTestHooks.inferenceWorker.postMessage({ type: "init", modelPath: "/dummy-lungmask.onnx" });
+    });
+  });
+
+  const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
+  await page.evaluate(
+    ({ base64, id }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      const files = [bytes.buffer];
+      window.omnimed3dTestHooks.parseWorker.postMessage({ type: "parse-series", volumeId: id, files }, files);
+    },
+    { base64: ctSmallBase64, id: volumeId },
+  );
+  await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
+  await waitForLine(/WebGPUDevice::applyMaskSlice: volumeId=\d+ slice=0 applied/);
+
+  const pauseCalls = await page.evaluate(() => (window as unknown as { __pauseCalls: number[] }).__pauseCalls);
+  expect(pauseCalls).toEqual([]);
   await expect(page.locator("#render-pause-banner")).toBeHidden();
 });
