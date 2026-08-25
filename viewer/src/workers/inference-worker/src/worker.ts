@@ -9,13 +9,23 @@
  * below is this worker's own provisional assumption for a single HU slice,
  * not a confirmed cross-track contract.
  */
-// "onnxruntime-web" (the default subpath) resolves to a bundle that only
-// registers the wasm/webgl backends -- the webgpu backend is a separate
-// subpath (see package.json's `exports["./webgpu"]`), so it has to be
-// imported explicitly to get WebGPU support at all (Issue #35).
-import * as ort from "onnxruntime-web/webgpu";
+// Type-only -- "onnxruntime-web" and "onnxruntime-web/webgpu" are the same
+// package's two entry bundles and export identical types, so this covers
+// both without committing to either at compile time. Which one actually
+// loads at runtime is decided per `init` message inside the handler below
+// (dynamic `import()`, not this), since it depends on isWebKitForced()/
+// gpuDetected -- values only known once a message arrives. "onnxruntime-web"
+// (the default subpath) resolves to a bundle that only registers the
+// wasm/webgl backends; the webgpu (JSEP) backend is a separate subpath
+// (see package.json's `exports["./webgpu"]`), needed to get WebGPU support
+// at all (Issue #35) -- but merely loading that JSEP-variant WASM binary
+// carries the WebKit JIT bug (microsoft/onnxruntime#26827) regardless of
+// whether WebGPU ends up used, so a WebKit session must never import it,
+// full stop (see environment.ts).
+import type * as ort from "onnxruntime-web";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
+import { isIOS, isWebKitForced } from "./environment.js";
 import { resolveEffectiveGpuDetected, resolveModelPath, type DebugForce } from "./modelSelection.js";
 import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
@@ -186,7 +196,7 @@ let inferenceQueue: Promise<void> = Promise.resolve();
 // before flushing, and a lone slice (no burst) still only waits one short
 // window, not indefinitely.
 //
-// MAX_BATCH_SIZE=8 chosen from measurement (test/batch-latency-benchmark.test.ts,
+// 8 chosen from desktop/Android measurement (test/batch-latency-benchmark.test.ts,
 // e2e/batch-latency-browser.spec.ts; see docs/verification/inference-worker.md
 // §10), not guessed -- most model/EP combinations plateau by batch size
 // 4-8 (modest ~10-20% gain), but INT8-on-WebGPU keeps improving through 8
@@ -196,11 +206,34 @@ let inferenceQueue: Promise<void> = Promise.resolve();
 // of paying it per slice, which is enough to bring INT8-on-WebGPU under
 // the 500ms/slice target for the first time (was the one model/EP gap
 // Issue #35 left open).
-const MAX_BATCH_SIZE = 8;
+//
+// iOS gets 4 instead, from real-iPhone-14-Pro measurement
+// (docs/ai-track-decisions.md, 2026-08-26): 8 reliably crashed (even
+// right after init-complete, before any volume was loaded), 4 was the
+// only size that completed a full run. Deliberately isIOS(), not
+// isWebKitForced() -- a later real desktop-Safari run (once an unrelated
+// Engine WebGPU-surface bug blocking Safari entirely was fixed) completed
+// fine at 8, so capping desktop Safari at 4 too on the assumption that
+// "same JS engine family" implies "same batch ceiling" would cost real
+// throughput for a risk direct testing didn't confirm -- see
+// environment.ts's isIOS() comment.
+const MAX_BATCH_SIZE = isIOS(navigator.userAgent) ? 4 : 8;
 const BATCH_WINDOW_MS = 20;
 
 let pendingBatch: SliceRequest[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+// TEMP DIAGNOSTIC (remove once the real-device iOS Safari white-screen/OOM
+// crash investigation is done) -- Safari's OOM kill isn't a catchable JS
+// error, so the only way to see how far a run got before it happened is a
+// log trail captured via Web Inspector's "Preserve Log" (which survives
+// the auto-reload). A monotonic counter plus each flush's slice range is
+// enough to tell "died between batch N and N+1" without needing per-
+// preprocess/infer timing (that was for the WebKit JIT-stall
+// investigation, ADR-0003 -- this is a different question: how much
+// cumulative work happened before memory ran out, not how long one call
+// took).
+let flushCounter = 0;
 
 function scheduleBatchFlush(): void {
   if (flushTimer !== undefined) return;
@@ -208,6 +241,9 @@ function scheduleBatchFlush(): void {
     flushTimer = undefined;
     const batch = pendingBatch.splice(0, MAX_BATCH_SIZE);
     if (batch.length > 0) {
+      const thisFlush = ++flushCounter;
+      const sliceRange = `${batch[0]!.sliceIndex}-${batch[batch.length - 1]!.sliceIndex}`;
+      console.log(`[AI-DIAG] #${thisFlush} starting batch[${sliceRange}] (${batch.length} slices)`);
       inferenceQueue = inferenceQueue
         .then(async () => {
           // Mobile OOM mitigation: tells the Shell to pause rendering for
@@ -254,9 +290,11 @@ function scheduleBatchFlush(): void {
           for (const result of results) {
             (self as unknown as Worker).postMessage(result, [result.data.buffer]);
           }
+          console.log(`[AI-DIAG] #${thisFlush} finished batch[${sliceRange}]`);
         })
         .catch((err: unknown) => {
           console.error(
+            `[AI-DIAG] #${thisFlush} failed batch[${sliceRange}]`,
             "Inference Worker: failed to process batch",
             batch.map((r) => r.sliceIndex),
             err,
@@ -281,10 +319,26 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // hardware-based model selection below, and also informs which EP this
     // session will actually prefer (see executionProviders just below).
     const gpuDetected = !!(await navigator.gpu?.requestAdapter());
+    // WebKit (iOS, any browser; or desktop macOS Safari) never gets a
+    // WebGPU session regardless of gpuDetected -- see environment.ts and
+    // resolveEffectiveGpuDetected's own comment for why this isn't a
+    // capability check.
+    const webKitForced = isWebKitForced(navigator.userAgent);
     // See InitMessage.debugForce -- replaces the real probe result outright
     // when set, for both model selection just below and the EP list right
     // after it.
-    const effectiveGpuDetected = resolveEffectiveGpuDetected(msg.debugForce, gpuDetected);
+    const effectiveGpuDetected = resolveEffectiveGpuDetected(msg.debugForce, gpuDetected, webKitForced);
+    // Which entry bundle loads is decided here, once, from the same
+    // effectiveGpuDetected value everything else below uses -- never the
+    // JSEP ("/webgpu") bundle for a WebKit session, full stop (see the
+    // import comment at the top of this file). The fallback-from-WebGPU-
+    // failure retry further down reuses this same module rather than
+    // re-importing: it only ever runs when effectiveGpuDetected started
+    // true (i.e. never for a WebKit session, which starts false), so
+    // there's nothing WebKit-unsafe about that reuse.
+    const ortModule = effectiveGpuDetected
+      ? await import("onnxruntime-web/webgpu")
+      : await import("onnxruntime-web");
 
     const primaryModelPath = msg.modelBasePath
       ? resolveModelPath(msg.modelBasePath, effectiveGpuDetected)
@@ -334,7 +388,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     try {
       adapter = new LungmaskAdapter(primaryModelPath);
       const modelBytes = await fetchModelBytes(primaryModelPath, reportDownloadProgress);
-      session = await ort.InferenceSession.create(modelBytes, primaryOptions);
+      session = await ortModule.InferenceSession.create(modelBytes, primaryOptions);
       await validateSession(adapter, session);
     } catch (err) {
       // Only a modelBasePath (hardware-auto-selected) caller run against an
@@ -360,7 +414,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       const fallbackBytes = await fetchModelBytes(resolvedModelPath, reportDownloadProgress);
       // Force wasm-only for the retry -- webgpu just failed for this
       // session, so there's no reason to let ORT attempt it again here.
-      session = await ort.InferenceSession.create(fallbackBytes, { executionProviders: ["wasm"] });
+      session = await ortModule.InferenceSession.create(fallbackBytes, { executionProviders: ["wasm"] });
       // Let this one throw for real if it fails too -- INT8/WASM is the
       // baseline this fallback exists to reach; nothing left below it.
       await validateSession(adapter, session);

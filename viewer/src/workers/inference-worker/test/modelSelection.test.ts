@@ -12,18 +12,25 @@ describe("resolveModelPath", () => {
 });
 
 describe("resolveEffectiveGpuDetected", () => {
-  it("passes the real probe result through when no debug override is set", () => {
-    expect(resolveEffectiveGpuDetected(undefined, true)).toBe(true);
-    expect(resolveEffectiveGpuDetected(undefined, false)).toBe(false);
+  it("passes the real probe result through when no debug override and not WebKit", () => {
+    expect(resolveEffectiveGpuDetected(undefined, true, false)).toBe(true);
+    expect(resolveEffectiveGpuDetected(undefined, false, false)).toBe(false);
   });
 
-  it("forces true for gpu-fp16 regardless of the real probe result", () => {
-    expect(resolveEffectiveGpuDetected("gpu-fp16", false)).toBe(true);
-    expect(resolveEffectiveGpuDetected("gpu-fp16", true)).toBe(true);
+  it("forces false when WebKit, regardless of a real adapter being detected", () => {
+    expect(resolveEffectiveGpuDetected(undefined, true, true)).toBe(false);
+    expect(resolveEffectiveGpuDetected(undefined, false, true)).toBe(false);
   });
 
-  it("forces false for wasm-int8 regardless of the real probe result", () => {
-    expect(resolveEffectiveGpuDetected("wasm-int8", true)).toBe(false);
-    expect(resolveEffectiveGpuDetected("wasm-int8", false)).toBe(false);
+  it("forces true for gpu-fp16 regardless of the real probe result or WebKit", () => {
+    expect(resolveEffectiveGpuDetected("gpu-fp16", false, false)).toBe(true);
+    expect(resolveEffectiveGpuDetected("gpu-fp16", true, false)).toBe(true);
+    expect(resolveEffectiveGpuDetected("gpu-fp16", false, true)).toBe(true);
+  });
+
+  it("forces false for wasm-int8 regardless of the real probe result or WebKit", () => {
+    expect(resolveEffectiveGpuDetected("wasm-int8", true, false)).toBe(false);
+    expect(resolveEffectiveGpuDetected("wasm-int8", false, false)).toBe(false);
+    expect(resolveEffectiveGpuDetected("wasm-int8", true, true)).toBe(false);
   });
 });

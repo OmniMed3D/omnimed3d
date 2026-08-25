@@ -22,15 +22,23 @@ export function resolveModelPath(basePath: string, hasGpu: boolean): string {
 export type DebugForce = "wasm-int8" | "gpu-fp16";
 
 /**
- * Resolves the effective "was a WebGPU adapter detected" boolean that
- * model/EP selection should use: the real probe result, unless a debug
- * override replaces it outright. Pure so it's unit-testable without a
- * real `navigator.gpu` or postMessage.
+ * Resolves the effective "should this session use WebGPU" boolean that
+ * model/EP/import selection should use. Precedence: a debug override (if
+ * set) wins outright -- including on a real WebKit device, since forcing
+ * "gpu-fp16" there on purpose (to reproduce the crash/slowdown for
+ * verification) is a legitimate use of the override. Otherwise, WebKit
+ * (see environment.ts's isWebKitForced()) always means no WebGPU,
+ * regardless of whether a real adapter was detected -- the bug this
+ * exists to avoid isn't a capability gap, so a WebKit device with a
+ * working WebGPU adapter still needs to be routed away from it. Pure so
+ * it's unit-testable without a real `navigator.gpu`/`navigator.userAgent`
+ * or postMessage.
  */
 export function resolveEffectiveGpuDetected(
   debugForce: DebugForce | undefined,
   gpuDetected: boolean,
+  isWebKitForced: boolean,
 ): boolean {
-  if (debugForce === undefined) return gpuDetected;
-  return debugForce === "gpu-fp16";
+  if (debugForce !== undefined) return debugForce === "gpu-fp16";
+  return gpuDetected && !isWebKitForced;
 }
