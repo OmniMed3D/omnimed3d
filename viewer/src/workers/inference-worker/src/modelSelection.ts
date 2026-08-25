@@ -12,3 +12,25 @@
 export function resolveModelPath(basePath: string, hasGpu: boolean): string {
   return `${basePath}${hasGpu ? "_fp16" : "_int8"}.onnx`;
 }
+
+/** Debug-only override of which inference path to use, bypassing the real
+ * `navigator.gpu` probe -- lets a caller (Shell's `?aiForce=` URL param,
+ * see worker.ts's `InitMessage.debugForce`) reproduce either path without
+ * needing hardware that actually matches it, e.g. simulating the
+ * WASM-only path used to work around the iOS/WebKit onnxruntime-web bug
+ * on a desktop that has a working WebGPU adapter. */
+export type DebugForce = "wasm-int8" | "gpu-fp16";
+
+/**
+ * Resolves the effective "was a WebGPU adapter detected" boolean that
+ * model/EP selection should use: the real probe result, unless a debug
+ * override replaces it outright. Pure so it's unit-testable without a
+ * real `navigator.gpu` or postMessage.
+ */
+export function resolveEffectiveGpuDetected(
+  debugForce: DebugForce | undefined,
+  gpuDetected: boolean,
+): boolean {
+  if (debugForce === undefined) return gpuDetected;
+  return debugForce === "gpu-fp16";
+}

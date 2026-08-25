@@ -16,7 +16,7 @@
 import * as ort from "onnxruntime-web/webgpu";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
-import { resolveModelPath } from "./modelSelection.js";
+import { resolveEffectiveGpuDetected, resolveModelPath, type DebugForce } from "./modelSelection.js";
 import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
 /**
@@ -97,6 +97,26 @@ interface InitMessage {
    * `externalData` (below) works in both environments.
    */
   externalDataPath?: string;
+  /**
+   * Debug-only override: forces this session onto one specific inference
+   * path regardless of what `navigator.gpu` actually reports. Not a
+   * production control -- for reproducing either path on hardware that
+   * doesn't naturally exercise it (e.g. simulating the iOS/WebKit
+   * WASM-only workaround on a desktop with a working GPU, so the Engine
+   * track can debug against it without a real iPhone). Intended source:
+   * Shell reading a `?aiForce=wasm-int8|gpu-fp16` URL param and passing
+   * it straight through on `init` -- that Shell-side wiring is not part
+   * of this change, so for now this is reachable via a direct
+   * `postMessage` (e.g. bench/workerHarness.ts) until the Shell change
+   * lands.
+   * - "wasm-int8": INT8 model, `executionProviders: ["wasm"]` only --
+   *   WebGPU is never attempted, even if an adapter is available.
+   * - "gpu-fp16": FP16 model, `executionProviders: ["webgpu", "wasm"]` --
+   *   attempted even if no adapter is available (session creation will
+   *   fail and fall through to the existing INT8/WASM fallback below,
+   *   same as an unforced session would).
+   */
+  debugForce?: DebugForce;
 }
 
 interface HuSliceMessage {
@@ -261,9 +281,13 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // hardware-based model selection below, and also informs which EP this
     // session will actually prefer (see executionProviders just below).
     const gpuDetected = !!(await navigator.gpu?.requestAdapter());
+    // See InitMessage.debugForce -- replaces the real probe result outright
+    // when set, for both model selection just below and the EP list right
+    // after it.
+    const effectiveGpuDetected = resolveEffectiveGpuDetected(msg.debugForce, gpuDetected);
 
     const primaryModelPath = msg.modelBasePath
-      ? resolveModelPath(msg.modelBasePath, gpuDetected)
+      ? resolveModelPath(msg.modelBasePath, effectiveGpuDetected)
       : msg.modelPath;
     if (!primaryModelPath) {
       throw new Error("Inference Worker 'init' message needs either modelPath or modelBasePath");
@@ -274,8 +298,14 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // it, falling back to the next one per-node rather than all-or-nothing,
     // so an op WebGPU can't run (e.g. some quantized INT8 ops, see
     // docs/verification/inference-worker.md §8) still runs correctly on
-    // WASM instead of failing the whole session.
-    const primaryOptions: ort.InferenceSession.SessionOptions = { executionProviders: ["webgpu", "wasm"] };
+    // WASM instead of failing the whole session. Omitting "webgpu" entirely
+    // when effectiveGpuDetected is false (rather than always listing it)
+    // matters for debugForce: "wasm-int8" needs WebGPU to never be
+    // attempted at all, not just deprioritized, to actually reproduce the
+    // iOS workaround's EP list on hardware that does have a real adapter.
+    const primaryOptions: ort.InferenceSession.SessionOptions = {
+      executionProviders: effectiveGpuDetected ? ["webgpu", "wasm"] : ["wasm"],
+    };
     if (msg.externalDataPath) {
       const bytes = new Uint8Array(await (await fetch(msg.externalDataPath)).arrayBuffer());
       // The embedded external-data reference inside the ONNX graph is the
@@ -299,7 +329,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     };
 
     let resolvedModelPath = primaryModelPath;
-    let gpuActive = gpuDetected;
+    let gpuActive = effectiveGpuDetected;
     let usedFallback = false;
     try {
       adapter = new LungmaskAdapter(primaryModelPath);
@@ -307,18 +337,20 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       session = await ort.InferenceSession.create(modelBytes, primaryOptions);
       await validateSession(adapter, session);
     } catch (err) {
-      // Only a modelBasePath (hardware-auto-selected) caller run against a
-      // detected GPU has a fallback target worth retrying with -- an
-      // explicit modelPath caller (e.g. shell-mask-integration.spec.ts's
-      // dummy plumbing model) asked for one exact file and has nothing
-      // else to fall back to, and a caller that already got gpuDetected
-      // false is already on the INT8/WASM baseline this fallback exists to
-      // reach, so there's nowhere further to fall back to either.
-      if (!msg.modelBasePath || !gpuDetected) {
+      // Only a modelBasePath (hardware-auto-selected) caller run against an
+      // (effectively) detected GPU has a fallback target worth retrying
+      // with -- an explicit modelPath caller (e.g.
+      // shell-mask-integration.spec.ts's dummy plumbing model) asked for
+      // one exact file and has nothing else to fall back to, and a caller
+      // that's already on effectiveGpuDetected=false (including a
+      // debugForce: "wasm-int8" caller) is already on the INT8/WASM
+      // baseline this fallback exists to reach, so there's nowhere further
+      // to fall back to either.
+      if (!msg.modelBasePath || !effectiveGpuDetected) {
         throw err;
       }
       console.error(
-        "Inference Worker: primary session (gpuDetected=true) failed, falling back to INT8/WASM",
+        "Inference Worker: primary session (effectiveGpuDetected=true) failed, falling back to INT8/WASM",
         err,
       );
       usedFallback = true;
@@ -345,12 +377,15 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // though a GPU adapter really was detected) since that's what actually
     // determines which model is running; usedFallback distinguishes that
     // case from "no GPU was ever detected" for anything that wants to
-    // surface the difference.
+    // surface the difference. debugForce is echoed back (not just read)
+    // so a tester can visually confirm from the ack alone that the
+    // override was actually received and applied, not silently ignored.
     (self as unknown as Worker).postMessage({
       type: "init-complete",
       modelPath: resolvedModelPath,
       gpuDetected: gpuActive,
       usedFallback,
+      debugForce: msg.debugForce ?? null,
     });
     return;
   }

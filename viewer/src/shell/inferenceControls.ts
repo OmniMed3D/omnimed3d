@@ -38,6 +38,21 @@ import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
 
 const MODEL_BASE_PATH = "/models/lungmask_r231";
 
+/**
+ * Debug-only override (?aiForce=wasm-int8 or ?aiForce=gpu-fp16 on the
+ * URL), same pattern as deviceTier.ts's ?lowMemory=<0|1> -- lets a tester
+ * reproduce either inference path without needing hardware that actually
+ * exercises it (e.g. simulating the iOS/WebKit WASM-only workaround on a
+ * desktop with a working WebGPU adapter, so the mask/reload-debounce work
+ * can be checked against it without a real iPhone). Not a production
+ * control -- no UI affordance for it, URL param only. See worker.ts's
+ * InitMessage.debugForce for what each value forces.
+ */
+function debugForceFromUrl(): "wasm-int8" | "gpu-fp16" | undefined {
+  const value = new URLSearchParams(location.search).get("aiForce");
+  return value === "wasm-int8" || value === "gpu-fp16" ? value : undefined;
+}
+
 let gaugeButton: HTMLButtonElement | null = null;
 let modelLoaded = false;
 
@@ -116,6 +131,7 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
         total?: number | null;
         gpuDetected?: boolean;
         usedFallback?: boolean;
+        debugForce?: "wasm-int8" | "gpu-fp16" | null;
       }>,
     ) => {
       if (event.data.type === "init-progress") {
@@ -139,7 +155,8 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
         // saying so explicitly, since otherwise this looks identical to "no
         // GPU was ever available" even though something failed underneath.
         const note = event.data.usedFallback ? " (WebGPU failed, fell back automatically)" : "";
-        status.textContent = `lungmask R231 (${variant}) active${note} -- real lung segmentation, not a placeholder.`;
+        const debugNote = event.data.debugForce ? ` [debug-forced: ${event.data.debugForce}]` : "";
+        status.textContent = `lungmask R231 (${variant}) active${note}${debugNote} -- real lung segmentation, not a placeholder.`;
         renderGauge();
       }
     },
@@ -149,6 +166,11 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
     button.disabled = true;
     setGaugeLabel(button, "Downloading model...");
     setGaugeProgress(button, 0);
-    inferenceWorker.postMessage({ type: "init", modelBasePath: MODEL_BASE_PATH });
+    const debugForce = debugForceFromUrl();
+    inferenceWorker.postMessage({
+      type: "init",
+      modelBasePath: MODEL_BASE_PATH,
+      ...(debugForce ? { debugForce } : {}),
+    });
   });
 }
