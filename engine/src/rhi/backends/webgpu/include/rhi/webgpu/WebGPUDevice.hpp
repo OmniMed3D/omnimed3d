@@ -60,6 +60,19 @@ public:
     FrameStatsSnapshot getFrameStats() const override;
     HardwareInfo getHardwareInfo() const override;
     GpuTimingSnapshot getGpuTiming() const override;
+    DeviceLossSnapshot getDeviceLossState() const override;
+    void clearUncapturedError() override;
+
+    // Not part of the rhi::Device interface -- exposing a live GPUDevice
+    // handle to JS purely to call the real device.destroy() from a test
+    // would mean reaching into Emscripten's internal WebGPU handle table
+    // (WebGPU.mgrDevice), which is undocumented/version-fragile. Instead,
+    // an e2e test can trigger the exact same onDeviceLost() code path a
+    // real Dawn-fired callback would (same reason/message plumbing,
+    // same renderFrame() guard, same getDeviceLossState() result) --
+    // WASM-debug-only, not part of the abstract Device interface since a
+    // future native Vulkan backend has no equivalent notion of this.
+    void debugSimulateDeviceLost();
 
 private:
     // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
@@ -72,6 +85,17 @@ private:
                                     WGPUStringView message, void* userdata1, void* userdata2);
     static void onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
                                    WGPUStringView message, void* userdata1, void* userdata2);
+
+    // Mobile OOM mitigation -- registered on deviceDesc in
+    // onAdapterRequested(), fired by Dawn itself (not something this
+    // engine calls). Signatures match WGPUDeviceLostCallback/
+    // WGPUUncapturedErrorCallback in the emdawnwebgpu port's webgpu.h
+    // exactly, same "confirmed by reading the actual header" standard as
+    // onAdapterRequested/onDeviceRequested above.
+    static void onDeviceLost(WGPUDevice const* device, WGPUDeviceLostReason reason, WGPUStringView message,
+                              void* userdata1, void* userdata2);
+    static void onUncapturedError(WGPUDevice const* device, WGPUErrorType type, WGPUStringView message,
+                                   void* userdata1, void* userdata2);
 
     // GPU-side per-pass timing (WebGPU `timestamp-query`, optional feature
     // -- see rhi::Device::getGpuTiming's header comment). Query set has 4
@@ -203,6 +227,18 @@ private:
     WGPUQueue queue_ = nullptr;
     WGPUSurface surface_ = nullptr;
     bool ready_ = false;
+
+    // Mobile OOM mitigation (see rhi::Device::getDeviceLossState's header
+    // comment) -- deviceLost_ is checked in renderFrame()'s top guard
+    // alongside ready_, since device_/queue_ are stale handles once it's
+    // true. Set only by onDeviceLost()/onUncapturedError(), which Dawn
+    // itself fires (WGPUCallbackMode_AllowSpontaneous), not something
+    // this class calls directly.
+    bool deviceLost_ = false;
+    DeviceLossReason deviceLossReason_ = DeviceLossReason::None;
+    std::string deviceLossMessage_;
+    bool hasUncapturedError_ = false;
+    std::string uncapturedErrorMessage_;
 
     // Backing-store pixel dimensions of the render surface (issue #40) --
     // replaces the previous fixed 640x480 constants. Defaulted to a

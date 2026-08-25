@@ -156,6 +156,64 @@ canvas {
   line-height: 1.5;
 }
 
+/* Mobile OOM mitigation (deviceLostBanner.ts) -- a full-viewport dim
+   backdrop + centered card, deliberately more visually blocking than
+   #engine-error above: rendering has genuinely stopped for good at this
+   point (deviceLost is permanent, per rhi::DeviceLossSnapshot's header
+   comment), not a load-time failure a control retry can fix. */
+#device-lost-banner:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(10, 12, 16, 0.85);
+  text-align: center;
+}
+
+#device-lost-banner-message {
+  max-width: 420px;
+  margin: 0;
+  padding: 16px 20px;
+  background: var(--panel-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Lighter, corner-docked, non-blocking -- an uncaptured error doesn't
+   necessarily mean the whole device is gone (see index.html's own
+   comment), so this stays dismissible without covering the canvas. */
+#uncaptured-error-toast:not([hidden]) {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 360px;
+  padding: 12px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+}
+
+#uncaptured-error-toast-message {
+  margin: 0;
+  flex: 1;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 /* Issue #40: these are normal-flow (position:static) debug elements --
    without an explicit position they'd paint *below* the now-fixed
    canvas regardless of DOM order (CSS stacking always ranks positioned

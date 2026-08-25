@@ -43,6 +43,29 @@ struct GpuTimingSnapshot {
     float axialMs = 0.0F;
 };
 
+// Backend-agnostic reason for a lost WGPUDevice -- mirrors the shape of
+// WGPUDeviceLostReason without leaking that raw Dawn/WebGPU enum across
+// this interface (same "backend-agnostic getter" reasoning as
+// HardwareInfo above). A future native Vulkan Device would map its own
+// device-loss signals (VK_ERROR_DEVICE_LOST) onto this same enum.
+enum class DeviceLossReason { None, Unknown, Destroyed, FailedCreation };
+
+// Mobile OOM mitigation: a real WebGPU device-lost or uncaptured-error
+// event, surfaced for the Shell to react to (e.g. a "reload the page"
+// banner) instead of failing silently. Device loss and an uncaptured
+// error are separate, independent facts -- an uncaptured error does not
+// necessarily mean the whole device is gone (the WebGPU spec allows an
+// app to keep using a device after some uncaptured errors), so this
+// struct tracks them as two unrelated fields rather than one combined
+// state.
+struct DeviceLossSnapshot {
+    bool deviceLost = false;
+    DeviceLossReason reason = DeviceLossReason::None;
+    std::string message;
+    bool hasUncapturedError = false;
+    std::string uncapturedErrorMessage;
+};
+
 // Minimal backend-agnostic seam -- intentionally not a full RHI yet (no
 // general Buffer/Pipeline/BindGroup, and loadVolume/applyMaskSlice below
 // are named for exactly what they do rather than routed through a generic
@@ -269,6 +292,18 @@ public:
     virtual FrameStatsSnapshot getFrameStats() const = 0;
     virtual HardwareInfo getHardwareInfo() const = 0;
     virtual GpuTimingSnapshot getGpuTiming() const = 0;
+
+    // Mobile OOM mitigation: cheap, side-effect-free snapshot of whether
+    // the GPU device has been lost or has a pending uncaptured error --
+    // same polling pattern as getFrameStats()/getHardwareInfo() above (no
+    // EM_ASM/JS-push callback mechanism exists anywhere in this engine,
+    // so a getter fits the established idiom rather than introducing one
+    // just for this). Once deviceLost is true, it stays true forever
+    // (the device handle is genuinely dead); clearUncapturedError() lets
+    // the Shell dismiss an uncaptured-error toast without needing to
+    // reload, since that half is not necessarily terminal.
+    virtual DeviceLossSnapshot getDeviceLossState() const = 0;
+    virtual void clearUncapturedError() = 0;
 };
 
 }  // namespace omnimed3d::rhi
