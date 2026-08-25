@@ -1039,10 +1039,15 @@ void WebGPUDevice::rebuildBindGroup() {
 }
 
 void WebGPUDevice::renderFrame() {
-    // deviceLost_ (mobile OOM mitigation) alongside !ready_ -- once the
-    // device is lost, device_/queue_ are stale handles; any further
-    // wgpuQueueSubmit/etc. through them would be undefined behavior.
-    if (!ready_ || deviceLost_) {
+    // deviceLost_/pauseRendering_ (mobile OOM mitigation) alongside
+    // !ready_ -- deviceLost_ because device_/queue_ are stale handles
+    // once the device is lost (any further wgpuQueueSubmit/etc. through
+    // them would be undefined behavior); pauseRendering_ because a full
+    // early return (no encoder, no submission at all) is what actually
+    // frees the GPU for concurrent AI inference during the paused window
+    // (setRenderPaused's own header comment on why a partial pause
+    // wouldn't).
+    if (!ready_ || deviceLost_ || pauseRendering_) {
         return;
     }
 
@@ -1324,30 +1329,7 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     // A new volume load invalidates any mask texture from the previous
     // volume -- old mask data no longer applies (PRD #5.3.2).
-    if (volumeTextureView_) {
-        wgpuTextureViewRelease(volumeTextureView_);
-        volumeTextureView_ = nullptr;
-    }
-    if (maskTextureView_) {
-        wgpuTextureViewRelease(maskTextureView_);
-        maskTextureView_ = nullptr;
-    }
-    if (maskTexture_) {
-        wgpuTextureRelease(maskTexture_);
-        maskTexture_ = nullptr;
-    }
-    if (volumeTexture_) {
-        wgpuTextureRelease(volumeTexture_);
-        volumeTexture_ = nullptr;
-    }
-    if (gradientTextureView_) {
-        wgpuTextureViewRelease(gradientTextureView_);
-        gradientTextureView_ = nullptr;
-    }
-    if (gradientTexture_) {
-        wgpuTextureRelease(gradientTexture_);
-        gradientTexture_ = nullptr;
-    }
+    releaseVolumeResources();
 
     WGPUTextureDescriptor desc{};
     desc.dimension = WGPUTextureDimension_3D;
@@ -1483,6 +1465,57 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded lowMemoryMode=%d\n", volumeId, width, height,
                  depth, static_cast<int>(lowMemoryMode_));
+}
+
+void WebGPUDevice::releaseVolumeResources() {
+    if (volumeTextureView_) {
+        wgpuTextureViewRelease(volumeTextureView_);
+        volumeTextureView_ = nullptr;
+    }
+    if (maskTextureView_) {
+        wgpuTextureViewRelease(maskTextureView_);
+        maskTextureView_ = nullptr;
+    }
+    if (maskTexture_) {
+        wgpuTextureRelease(maskTexture_);
+        maskTexture_ = nullptr;
+    }
+    if (volumeTexture_) {
+        wgpuTextureRelease(volumeTexture_);
+        volumeTexture_ = nullptr;
+    }
+    if (gradientTextureView_) {
+        wgpuTextureViewRelease(gradientTextureView_);
+        gradientTextureView_ = nullptr;
+    }
+    if (gradientTexture_) {
+        wgpuTextureRelease(gradientTexture_);
+        gradientTexture_ = nullptr;
+    }
+}
+
+// Mobile OOM mitigation (Option D): frees the GPU-resident volume/gradient/
+// mask textures for the duration of an AI inference run -- see
+// rhi::Device::unloadVolume's header comment for why. Also releases
+// bindGroup_ (same pattern rebuildBindGroup() already uses) so nothing
+// holds a bind group referencing the now-freed texture views, even though
+// renderFrame()'s draw branches already gate on hasVolume_ and would never
+// touch it in that state -- belt-and-suspenders, not the only safety net.
+void WebGPUDevice::unloadVolume() {
+    if (!hasVolume_) {
+        return;
+    }
+    releaseVolumeResources();
+    if (bindGroup_) {
+        wgpuBindGroupRelease(bindGroup_);
+        bindGroup_ = nullptr;
+    }
+    hasVolume_ = false;
+    currentVolumeId_ = 0;
+    volumeWidth_ = 0;
+    volumeHeight_ = 0;
+    volumeDepth_ = 0;
+    std::printf("WebGPUDevice::unloadVolume: released\n");
 }
 
 void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
@@ -1733,6 +1766,13 @@ void WebGPUDevice::resize(uint32_t width, uint32_t height) {
     }
     updateCameraMatrices();
     markAccumulationDirty();
+}
+
+void WebGPUDevice::setRenderPaused(bool paused) {
+    // Deliberately a bare setter -- no markAccumulationDirty() call, so
+    // resuming continues accumulating from where it left off (Device.hpp's
+    // own header comment on why).
+    pauseRendering_ = paused;
 }
 
 FrameStatsSnapshot WebGPUDevice::getFrameStats() const {

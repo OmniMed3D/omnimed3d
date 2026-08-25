@@ -887,4 +887,144 @@ mutation tests (deleting `banner.hidden = false`) confirming they
 actually fail. Full `viewer/tests/e2e/` suite (40 specs) run to
 completion, all passing.
 
+### 2026-08-25 — pause rendering during AI inference (mobile OOM mitigation, refined C-2)
+
+Completes the mobile OOM mitigation plan's last piece: rendering and AI
+inference previously ran fully concurrently, competing for the same GPU
+command queue. Doesn't reduce memory footprint (Option A/C-3's job,
+already shipped) -- removes GPU compute/queue contention between the two
+workloads, and the transient (staging-buffer-ish) GPU memory pressure
+rendering itself adds on top of inference's own, specifically during the
+exact concurrent-load window the original crash happened in. A
+complementary, defense-in-depth measure, not the primary fix.
+
+New `rhi::Device::setRenderPaused(bool)` -- a bare setter, deliberately
+never routed through `markAccumulationDirty()` (unlike `setQualityTier()`
+and similar setters), so pausing/resuming doesn't reset temporal
+accumulation and resuming shows no visual flash. `renderFrame()`'s guard
+extends to `!ready_ || deviceLost_ || pauseRendering_` -- a full early
+return (no encoder, no submission at all), which is what actually frees
+the GPU for concurrent inference; a partial "still composite the
+existing accumulation buffer" pause would still submit GPU work every
+frame and defeat the point.
+
+Shell side: `viewer/src/shell/renderPauseBanner.ts` calls
+`engine_set_render_paused` and shows/hides a small, non-blocking
+top-center banner ("Rendering paused while AI analysis runs..."),
+driven by two new Inference Worker messages
+(`viewer/src/workers/inference-worker/src/worker.ts`'s
+`scheduleBatchFlush()`): `"inference-started"` posted right before a
+batch's `runBatch`/`runSlice` call, `"inference-ended"` posted from a
+`.finally()` so it fires on both success and failure -- a batch error
+can't leave rendering paused forever. One flush cycle is the
+pause/resume unit, not per-slice; `inferenceQueue`'s own sequential
+chaining means a back-to-back flush's own "started" can't fire until
+the previous flush's `.finally()` has already run, so there's no window
+where rendering incorrectly resumes while a later flush is still
+actually in flight.
+
+**Verified:** `wasm-macos` rebuilds cleanly; native `ctest` unaffected.
+New `viewer/tests/e2e/render-pause-during-inference.spec.ts` drives the
+real message protocol end-to-end (real Parse Worker, real Inference
+Worker, the dummy plumbing-only ONNX model
+`shell-mask-integration.spec.ts` already uses) and asserts the wrapped
+`_engine_set_render_paused` call sequence is exactly `[1, 0]` --
+verified via a real mutation test (deleting the `"inference-started"`
+post in `worker.ts`) that this actually fails, not just passes
+vacuously. Full `viewer/tests/e2e/` suite (41 specs) and the
+inference-worker's own fixture-free unit suite (29 tests) plus its own
+e2e suite (5 specs, including the previously-flaky
+`worker-batch-throughput.spec.ts`, now stable after a separate fix)
+all run to completion, all passing.
+
+### 2026-08-25 — unload/reload Engine volume textures during AI inference (mobile OOM mitigation, Option D)
+
+Real-device follow-up to Option A/B/C-3/refined-C-2 above: an iPhone 14
+Pro + Chrome still crashed (silent white-screen reload, no catchable
+error, no device-lost event, no iOS crash report) with all four already
+active. A dedicated real-device diagnostic session (no remote debugger
+available -- a temporary `localStorage` checkpoint trail surviving the
+crash, plus isolated single-variable retests) found the actual
+mechanism: **cumulative** memory, not any single GPU/ONNX-side variable
+tried (low-memory mode, INT8 quantization, execution provider, WASM
+threading, cross-origin-isolation headers -- the last of these was
+independently a real, necessary fix, see `viewer/vite.config.ts`, but
+not sufficient alone). The Engine's resident GPU volume/gradient/mask
+textures (~100MB even in Option A's low-memory mode) plus the Inference
+Worker's ONNX Runtime session/activations, together, exceed iOS
+WebKit's per-tab memory ceiling -- neither alone crashes, concurrent
+residency does. Refined C-2 above pauses rendering but never frees
+those textures, so it never touched this.
+
+Confirmed via two isolated real-device tests before writing any of the
+real fix: (1) skipping the Engine's GPU texture upload entirely let a
+real segmentation run complete with zero crashes; (2) same, but
+*retaining* the volume's raw ~66MB bytes in the Shell's plain JS heap
+(not GPU-resident) during that same run, also no crash -- proving iOS
+WebKit's GPU process and the page's own JS-heap process draw from
+meaningfully separate budgets, so moving bytes off the GPU-resident
+texture pool relieves the ceiling even though the same byte count still
+exists somewhere.
+
+New `rhi::Device::unloadVolume()` releases `volumeTexture_`/
+`gradientTexture_`/`maskTexture_` and their views (the same null-guarded
+release logic `loadVolume()` already ran before recreating them,
+extracted into a shared `releaseVolumeResources()` private helper so the
+two call sites can't drift apart) plus `bindGroup_`, and resets
+`hasVolume_`/`currentVolumeId_`/volume dimensions to their unloaded
+state. `loadVolume()` remains the only way to get a volume back. No
+`RenderGraph` changes needed -- its `"volume"`/`"mask"` tracking is a
+string-keyed logical-state map with no stored GPU handle, and
+`loadVolume()` already re-transitions through `TransferDst` before
+`renderFrame()`'s `ShaderReadOnly` transition on every load, unload or
+not.
+
+Shell side (`viewer/src/shell/main.ts`): `engineLoadVolume()` now
+retains everything needed to call `_engine_load_volume` again
+(`currentVolumeForGpuReload`) instead of discarding the volume's bytes
+once handed to WASM. `engineUnloadVolumeForInference()`/
+`engineReloadVolumeAfterInference()` wrap `_engine_unload_volume`/a
+re-upload, gated by a `gpuVolumeUnloadedForInference` flag; any
+`mask-slice` arriving while unloaded is buffered
+(`bufferedMaskSlicesDuringUnload`) instead of applied immediately
+(`applyMaskSlice()` silently no-ops with no volume loaded) and replayed
+in order once the volume reloads. Deliberately decoupled from refined
+C-2's fine-grained `"inference-started"`/`"inference-ended"` pause
+hooks, which fire once per *flush cycle* (~17 times for a 133-slice
+volume at batch size 8) -- reusing them directly for unload/reload
+would reload the ~66MB texture up to 17 times per run, both wasteful
+and untested (the real-device confirmation above kept the volume
+unloaded for an entire run, not per-flush). Instead, `"inference-ended"`
+starts a 750ms reload-debounce timer that a subsequent
+`"inference-started"` cancels -- the run reloads a beat after activity
+actually stops, without needing an exact slice count (which would
+depend on the Parse Worker sending exactly `depth` hu-slices per
+volume, unverified) and self-heals if a run ends early/fails partway.
+
+**Verified:** `wasm-macos` rebuilds cleanly; native `ctest` unaffected
+(no native Vulkan backend). New
+`viewer/tests/e2e/volume-unload-during-inference.spec.ts` loads a
+volume through the real Parse Worker (so `engineLoadVolume()`'s real
+retention wiring is genuinely exercised), then injects a deterministic
+`"inference-started"`/`"mask-slice"`/`"inference-ended"` sequence
+directly (real ONNX-timing races unpredictably against DICOM parsing
+for a fixture this small) to assert: unload fires exactly once per run
+(not per mask-slice, not twice for a mid-run flush), a mask-slice
+arriving while unloaded is not applied yet, a new `"inference-started"`
+inside the debounce window cancels the pending reload, and the volume
+reloads plus the buffered mask-slice replays once the run actually
+settles. Verified via two real mutation tests (disabling the unload
+call; disabling the buffering branch so slices apply immediately while
+unloaded, which silently drops them since `applyMaskSlice()` no-ops
+with no volume loaded) that both fail as expected, not pass vacuously.
+Full `viewer/tests/e2e/` suite (42 specs, including this one) and the
+inference-worker's own unit suite run to completion; the pre-existing
+`typeof self !== "undefined"` breakage this session's earlier
+diagnostic detour introduced in
+`test/batch-pipeline.test.ts` was found and fixed along the way, before
+this feature's own code was written.
+
+Real iPhone 14 Pro manual retest remains the only way to confirm the
+actual crash is gone end-to-end -- not yet done as of this entry.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

@@ -47,6 +47,13 @@ void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uin
                          lowMemoryMode != 0);
 }
 
+// Mobile OOM mitigation (Option D) -- see rhi::Device::unloadVolume's
+// header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_unload_volume() {
+    g_device.unloadVolume();
+}
+
 EMSCRIPTEN_KEEPALIVE
 void engine_apply_mask_slice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
                               uint8_t* data, size_t byteLength) {
@@ -299,6 +306,15 @@ void engine_clear_uncaptured_error() {
 EMSCRIPTEN_KEEPALIVE
 void engine_debug_simulate_device_lost() {
     g_device.debugSimulateDeviceLost();
+}
+
+// Mobile OOM mitigation -- see rhi::Device::setRenderPaused's header
+// comment. Called from the Shell when the Inference Worker is actively
+// running a batch, so rendering and AI inference don't compete for the
+// same GPU.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_render_paused(uint32_t paused) {
+    g_device.setRenderPaused(paused != 0);
 }
 
 }  // extern "C"

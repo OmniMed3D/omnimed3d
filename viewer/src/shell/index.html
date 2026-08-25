@@ -482,6 +482,17 @@
       <button type="button" id="uncaptured-error-toast-dismiss" class="upload-btn secondary">Dismiss</button>
     </div>
 
+    <!-- Mobile OOM mitigation (renderPauseBanner.ts) -- shown while the
+         Inference Worker is actively running a batch, matching
+         setRenderPaused(true) so the frozen canvas underneath has a
+         visible reason rather than looking broken. Not blocking (no
+         backdrop, no button) -- this is expected, routine behavior, not
+         an error state like device-lost-banner above; the render just
+         resumes on its own once inference finishes. -->
+    <div id="render-pause-banner" hidden>
+      <p>Rendering paused while AI analysis runs&hellip;</p>
+    </div>
+
     <script type="text/javascript">
       // Classic (non-MODULARIZE) Emscripten output for the rendering engine
       // -- Module must exist as a global before wasm_smoke.js loads, same
