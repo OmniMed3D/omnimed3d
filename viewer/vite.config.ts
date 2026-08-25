@@ -6,6 +6,18 @@ export default defineConfig({
     outDir: "../../dist",
     emptyOutDir: true,
   },
+  // Inference Worker (worker.ts) dynamically imports either
+  // "onnxruntime-web" or "onnxruntime-web/webgpu" per `init` message, so a
+  // WebKit session never loads the JSEP/webgpu bundle at all (see that
+  // file's ortModule comment). Vite's default worker output format,
+  // "iife", bundles each Worker as a single self-contained file and can't
+  // emit the separate chunk that dynamic import() needs -- Rollup errors
+  // with "UMD and IIFE output formats are not supported for code-splitting
+  // builds." "es" allows the worker bundle to code-split like any other
+  // ES module entry point.
+  worker: {
+    format: "es",
+  },
   // Real-device testing via a Cloudflare Quick Tunnel (`cloudflared tunnel
   // --url`) fronts either the preview server (`vite preview`) or the dev
   // server (`vite`/`npm run dev`) with a random *.trycloudflare.com

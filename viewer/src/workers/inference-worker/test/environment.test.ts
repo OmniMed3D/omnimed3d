@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isWebKitForced } from "../src/environment.js";
+import { isIOS, isWebKitForced } from "../src/environment.js";
 
 const IPHONE_SAFARI =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -45,5 +45,26 @@ describe("isWebKitForced", () => {
   it("is false for non-Apple platforms", () => {
     expect(isWebKitForced(WINDOWS_CHROME)).toBe(false);
     expect(isWebKitForced(ANDROID_CHROME)).toBe(false);
+  });
+});
+
+describe("isIOS", () => {
+  it("is true for iOS, regardless of browser brand", () => {
+    expect(isIOS(IPHONE_SAFARI)).toBe(true);
+    expect(isIOS(IPHONE_CHROME)).toBe(true);
+    expect(isIOS(IPAD_SAFARI)).toBe(true);
+  });
+
+  it("is false for desktop macOS Safari -- the distinction isWebKitForced() doesn't make but batch-size selection needs", () => {
+    expect(isIOS(MACOS_SAFARI)).toBe(false);
+  });
+
+  it("is false for an iPad masquerading as a desktop Mac (same UA-level indistinguishability as isWebKitForced())", () => {
+    expect(isIOS(IPAD_MASQUERADING_AS_MAC)).toBe(false);
+  });
+
+  it("is false for non-Apple platforms", () => {
+    expect(isIOS(WINDOWS_CHROME)).toBe(false);
+    expect(isIOS(ANDROID_CHROME)).toBe(false);
   });
 });

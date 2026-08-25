@@ -39,9 +39,27 @@ export default defineConfig({
     // single-threaded path instead of erroring, which would make any
     // WASM-vs-WebGPU comparison measure "browser + a threading bug" rather
     // than a fair baseline.
+    // Cross-Origin-Resource-Policy, matching viewer/vite.config.ts's own
+    // fix (found there via real Safari Web Inspector, 2026-08-26): under
+    // COEP: require-corp, WebKit -- more strictly than Chromium, which
+    // let this pass silently -- requires every resource a `type: "module"`
+    // Worker's module graph loads to carry an explicit CORP header. Vite's
+    // dev server auto-injects its HMR client (`@vite/client`) into every
+    // such Worker (this harness's own bench/workerHarness.ts included) but
+    // doesn't add this header to it -- without it, WebKit blocks the
+    // Worker's own module import chain outright ("Worker load was blocked
+    // by Cross-Origin-Embedder-Policy" / "Importing a module script
+    // failed"), so `init` never completes. Chromium/Playwright testing
+    // never surfaces this, since it doesn't enforce the requirement as
+    // strictly -- confirmed missing here only because a real-Safari
+    // session (2026-08-27, WebKit routing verification) used this exact
+    // harness successfully without it, meaning this gap hadn't actually
+    // been exercised by that flow -- added proactively to match Engine's
+    // already-fixed config, not because a failure was reproduced here.
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   },
   optimizeDeps: {

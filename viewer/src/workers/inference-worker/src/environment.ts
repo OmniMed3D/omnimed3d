@@ -1,9 +1,27 @@
 /**
- * Detects whether this JS engine is WebKit -- iOS (any browser, since
- * Apple mandates WebKit under the hood regardless of browser brand: Chrome
- * for iOS, Firefox for iOS, etc. all run on it too) or desktop macOS
- * Safari specifically (not Chrome/Firefox/Edge on macOS, which use their
- * own engines).
+ * True for iOS specifically (any browser -- Apple mandates WebKit under
+ * the hood there regardless of brand: Chrome for iOS, Firefox for iOS,
+ * etc. all run on it too), as distinct from `isWebKitForced()` below
+ * (iOS + desktop macOS Safari together). Exported on its own because not
+ * every WebKit-specific decision applies equally to both halves --
+ * `worker.ts`'s `MAX_BATCH_SIZE` is the concrete example: the 2026-08-26
+ * real-iPhone-14-Pro investigation found `MAX_BATCH_SIZE=8` reliably
+ * crashed (even right after `init-complete`, no volume loaded yet) and
+ * `4` was the only size that completed a full run, but a later real
+ * desktop-Safari run (M1 Pro, once an unrelated Engine WebGPU-surface
+ * crash blocking Safari entirely was fixed) completed fine at 8 -- so
+ * capping desktop Safari at 4 too, on the assumption that "same JS engine
+ * family" implies "same batch ceiling," would have been costing real
+ * throughput for a risk that direct testing didn't actually confirm.
+ */
+export function isIOS(userAgent: string): boolean {
+  return /iP(hone|ad|od)/.test(userAgent);
+}
+
+/**
+ * Detects whether this JS engine is WebKit -- iOS (see isIOS() above) or
+ * desktop macOS Safari specifically (not Chrome/Firefox/Edge on macOS,
+ * which use their own engines).
  *
  * Real-device and real-browser testing (docs/ai-track-decisions.md,
  * 2026-08-26 sessions) found the onnxruntime-web/WebKit JIT bug (upstream:
@@ -40,8 +58,7 @@
  * modelSelection.ts's exports; worker.ts owns passing in the real value.
  */
 export function isWebKitForced(userAgent: string): boolean {
-  const isIOS = /iP(hone|ad|od)/.test(userAgent);
   const isMacSafari =
     /Macintosh/.test(userAgent) && /Safari/.test(userAgent) && !/Chrome|Chromium|Edg|OPR|CriOS|FxiOS/.test(userAgent);
-  return isIOS || isMacSafari;
+  return isIOS(userAgent) || isMacSafari;
 }

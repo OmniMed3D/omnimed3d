@@ -25,7 +25,7 @@
 import type * as ort from "onnxruntime-web";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
-import { isWebKitForced } from "./environment.js";
+import { isIOS, isWebKitForced } from "./environment.js";
 import { resolveEffectiveGpuDetected, resolveModelPath, type DebugForce } from "./modelSelection.js";
 import { runBatch, runSlice, type MaskSliceMessage, type SliceRequest } from "./pipeline.js";
 
@@ -196,7 +196,7 @@ let inferenceQueue: Promise<void> = Promise.resolve();
 // before flushing, and a lone slice (no burst) still only waits one short
 // window, not indefinitely.
 //
-// MAX_BATCH_SIZE=8 chosen from measurement (test/batch-latency-benchmark.test.ts,
+// 8 chosen from desktop/Android measurement (test/batch-latency-benchmark.test.ts,
 // e2e/batch-latency-browser.spec.ts; see docs/verification/inference-worker.md
 // §10), not guessed -- most model/EP combinations plateau by batch size
 // 4-8 (modest ~10-20% gain), but INT8-on-WebGPU keeps improving through 8
@@ -206,11 +206,34 @@ let inferenceQueue: Promise<void> = Promise.resolve();
 // of paying it per slice, which is enough to bring INT8-on-WebGPU under
 // the 500ms/slice target for the first time (was the one model/EP gap
 // Issue #35 left open).
-const MAX_BATCH_SIZE = 8;
+//
+// iOS gets 4 instead, from real-iPhone-14-Pro measurement
+// (docs/ai-track-decisions.md, 2026-08-26): 8 reliably crashed (even
+// right after init-complete, before any volume was loaded), 4 was the
+// only size that completed a full run. Deliberately isIOS(), not
+// isWebKitForced() -- a later real desktop-Safari run (once an unrelated
+// Engine WebGPU-surface bug blocking Safari entirely was fixed) completed
+// fine at 8, so capping desktop Safari at 4 too on the assumption that
+// "same JS engine family" implies "same batch ceiling" would cost real
+// throughput for a risk direct testing didn't confirm -- see
+// environment.ts's isIOS() comment.
+const MAX_BATCH_SIZE = isIOS(navigator.userAgent) ? 4 : 8;
 const BATCH_WINDOW_MS = 20;
 
 let pendingBatch: SliceRequest[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+// TEMP DIAGNOSTIC (remove once the real-device iOS Safari white-screen/OOM
+// crash investigation is done) -- Safari's OOM kill isn't a catchable JS
+// error, so the only way to see how far a run got before it happened is a
+// log trail captured via Web Inspector's "Preserve Log" (which survives
+// the auto-reload). A monotonic counter plus each flush's slice range is
+// enough to tell "died between batch N and N+1" without needing per-
+// preprocess/infer timing (that was for the WebKit JIT-stall
+// investigation, ADR-0003 -- this is a different question: how much
+// cumulative work happened before memory ran out, not how long one call
+// took).
+let flushCounter = 0;
 
 function scheduleBatchFlush(): void {
   if (flushTimer !== undefined) return;
@@ -218,6 +241,9 @@ function scheduleBatchFlush(): void {
     flushTimer = undefined;
     const batch = pendingBatch.splice(0, MAX_BATCH_SIZE);
     if (batch.length > 0) {
+      const thisFlush = ++flushCounter;
+      const sliceRange = `${batch[0]!.sliceIndex}-${batch[batch.length - 1]!.sliceIndex}`;
+      console.log(`[AI-DIAG] #${thisFlush} starting batch[${sliceRange}] (${batch.length} slices)`);
       inferenceQueue = inferenceQueue
         .then(async () => {
           // Mobile OOM mitigation: tells the Shell to pause rendering for
@@ -264,9 +290,11 @@ function scheduleBatchFlush(): void {
           for (const result of results) {
             (self as unknown as Worker).postMessage(result, [result.data.buffer]);
           }
+          console.log(`[AI-DIAG] #${thisFlush} finished batch[${sliceRange}]`);
         })
         .catch((err: unknown) => {
           console.error(
+            `[AI-DIAG] #${thisFlush} failed batch[${sliceRange}]`,
             "Inference Worker: failed to process batch",
             batch.map((r) => r.sliceIndex),
             err,
