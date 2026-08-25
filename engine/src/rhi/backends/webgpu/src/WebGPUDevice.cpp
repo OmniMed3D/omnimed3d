@@ -30,6 +30,36 @@ constexpr uint32_t kPreintegrationSubSamples = 16;
 // apply here).
 constexpr float kOrbitSensitivity = 0.0025F;
 
+// Nearest-neighbor subsample of a WxHxD (or single-slice, D=1) buffer to
+// (ceil(W/factor))x(ceil(H/factor))xD, in place of box-averaging: the
+// volume's uint16_t buffer is already float16-bit-pattern-encoded
+// upstream (viewer/src/workers/parse-worker/src/halfFloat.ts) -- treating
+// it as an opaque value and picking one texel per block needs no float16
+// codec in the Engine, whereas averaging would. Mask data (uint8_t) is
+// discrete class indices (REQ-C01), where averaging labels is meaningless
+// regardless -- nearest-neighbor is the correct choice there on its own
+// terms. Ceiling division on the output extent handles odd input
+// dimensions; the source-index clamp guards the last output row/column
+// when width/height isn't an exact multiple of factor.
+template <typename T>
+std::vector<T> downsampleNearestXY(T const* src, uint32_t width, uint32_t height, uint32_t depth, uint32_t factor,
+                                    uint32_t& outWidth, uint32_t& outHeight) {
+    outWidth = (width + factor - 1) / factor;
+    outHeight = (height + factor - 1) / factor;
+    std::vector<T> out(static_cast<size_t>(outWidth) * outHeight * depth);
+    for (uint32_t z = 0; z < depth; z++) {
+        for (uint32_t y = 0; y < outHeight; y++) {
+            uint32_t const sy = std::min(y * factor, height - 1);
+            for (uint32_t x = 0; x < outWidth; x++) {
+                uint32_t const sx = std::min(x * factor, width - 1);
+                out[(static_cast<size_t>(z) * outHeight + y) * outWidth + x] =
+                    src[(static_cast<size_t>(z) * height + sy) * width + sx];
+            }
+        }
+    }
+    return out;
+}
+
 void logStringView(char const* prefix, WGPUStringView message) {
     if (message.data && message.length > 0) {
         std::printf("%s: %.*s\n", prefix, static_cast<int>(message.length), message.data);
@@ -1197,7 +1227,7 @@ void WebGPUDevice::renderFrame() {
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
         ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
-        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, lowMemoryMode_ ? 1.0F : 0.0F, 0.0F};
+        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, downsampleFactor_ > 1 ? 1.0F : 0.0F, 0.0F};
         ubo.backgroundColor = glm::vec4{backgroundColor_, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
@@ -1305,7 +1335,7 @@ void WebGPUDevice::renderFrame() {
 
 void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                                uint32_t width, uint32_t height, uint32_t depth,
-                               float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) {
+                               float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) {
     if (!ready_) {
         std::printf("WebGPUDevice::loadVolume: device not ready, ignoring\n");
         return;
@@ -1318,27 +1348,51 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     }
     // Only committed once the load is confirmed valid -- setting this
     // before the check above would let a rejected (malformed) load's
-    // lowMemoryMode value silently apply to the *previous*, still-active
+    // downsampleFactor value silently apply to the *previous*, still-active
     // volume's already-created gradient texture on the next frame (e.g. a
-    // rejected lowMemoryMode=true would flip fragmentMain to
+    // rejected downsampleFactor > 1 would flip fragmentMain to
     // computeGradient() while the old, still-baked full gradient texture
-    // sits unused, or a rejected lowMemoryMode=false would flip it to
+    // sits unused, or a rejected downsampleFactor of 1 would flip it to
     // sample the old 1x1x1 dummy as if it were a real baked texture --
     // both wrong for a load that never actually happened).
-    lowMemoryMode_ = lowMemoryMode;
+    downsampleFactor_ = downsampleFactor;
+    originalVolumeWidth_ = width;
+    originalVolumeHeight_ = height;
 
     // A new volume load invalidates any mask texture from the previous
     // volume -- old mask data no longer applies (PRD #5.3.2).
     releaseVolumeResources();
 
+    // Mobile OOM mitigation, on top of Option A's gradient-texture skip:
+    // downsampleFactor_ > 1 also shrinks the volume texture itself
+    // in-plane (X/Y only -- see downsampleNearestXY's own comment for why
+    // depth is untouched and nearest-neighbor is used instead of
+    // averaging). uint16_t const* reinterpret is safe here: data is
+    // already validated above to be exactly width*height*depth*
+    // sizeof(uint16_t) bytes, the same buffer layout downsampleNearestXY
+    // expects.
+    std::vector<uint16_t> downsampledVolume;
+    uint32_t textureWidth = width;
+    uint32_t textureHeight = height;
+    void const* uploadData = data;
+    size_t uploadByteLength = byteLength;
+    if (downsampleFactor_ > 1) {
+        downsampledVolume = downsampleNearestXY(static_cast<uint16_t const*>(data), width, height, depth,
+                                                 downsampleFactor_, textureWidth, textureHeight);
+        uploadData = downsampledVolume.data();
+        uploadByteLength = downsampledVolume.size() * sizeof(uint16_t);
+    }
+
     WGPUTextureDescriptor desc{};
     desc.dimension = WGPUTextureDimension_3D;
-    desc.size = WGPUExtent3D{width, height, depth};
+    desc.size = WGPUExtent3D{textureWidth, textureHeight, depth};
     desc.format = WGPUTextureFormat_R16Float;
     desc.mipLevelCount = 1;
     desc.sampleCount = 1;
     desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
     volumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+    std::printf("WebGPUDevice::volumeTexture: %ux%ux%u (downsampleFactor=%u)\n", textureWidth, textureHeight, depth,
+                 downsampleFactor_);
 
     // Precomputed gradient volume (issue #81's own follow-up) -- same
     // voxel dimensions as volumeTexture_, baked by bakeGradientVolume()
@@ -1346,28 +1400,30 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // compute pass's write-only access, TextureBinding for the raymarch
     // fragment shader's later trilinear read.
     //
-    // Mobile OOM mitigation: in low-memory mode this texture would be the
-    // single largest allocation this function makes (RGBA16Float, 4x
-    // volumeTexture_'s own size, since it has 4x the bytes-per-texel) for
-    // a benefit (cheaper per-step shading) that matters far less than
-    // staying under a memory ceiling. A 1x1x1 placeholder keeps binding
-    // 6's bind-group-layout slot satisfied (validation only checks sample
-    // type/dimension, not extent) without the bake pass ever running --
-    // fragmentMain falls back to computeGradient() instead of sampling
-    // this texture when tfParams.z signals low-memory mode (see
-    // renderFrame()'s UBO population). No StorageBinding usage needed
-    // here since the bake pass that would need it is skipped below.
+    // Mobile OOM mitigation: with downsampleFactor_ > 1, this texture
+    // would be the single largest allocation this function makes
+    // (RGBA16Float, 4x volumeTexture_'s own size, since it has 4x the
+    // bytes-per-texel) for a benefit (cheaper per-step shading) that
+    // matters far less than staying under a memory ceiling. A 1x1x1
+    // placeholder keeps binding 6's bind-group-layout slot satisfied
+    // (validation only checks sample type/dimension, not extent) without
+    // the bake pass ever running -- fragmentMain falls back to
+    // computeGradient() instead of sampling this texture when tfParams.z
+    // signals downsampleFactor_ > 1 (see renderFrame()'s UBO population).
+    // No StorageBinding usage needed here since the bake pass that would
+    // need it is skipped below.
     WGPUTextureDescriptor gradientDesc{};
     gradientDesc.dimension = WGPUTextureDimension_3D;
-    gradientDesc.size = lowMemoryMode_ ? WGPUExtent3D{1, 1, 1} : WGPUExtent3D{width, height, depth};
+    gradientDesc.size = downsampleFactor_ > 1 ? WGPUExtent3D{1, 1, 1} : WGPUExtent3D{width, height, depth};
     gradientDesc.format = WGPUTextureFormat_RGBA16Float;
     gradientDesc.mipLevelCount = 1;
     gradientDesc.sampleCount = 1;
-    gradientDesc.usage = lowMemoryMode_ ? WGPUTextureUsage_TextureBinding
-                                         : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
+    gradientDesc.usage = downsampleFactor_ > 1
+                              ? WGPUTextureUsage_TextureBinding
+                              : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
     gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
     // Reports the *actual* chosen extent (gradientDesc.size), not just an
-    // echo of the lowMemoryMode input -- a test asserting on this line
+    // echo of the downsampleFactor input -- a test asserting on this line
     // catches a regression where the branch above silently stops honoring
     // the flag (e.g. always allocating full-size), which a pixel-only
     // comparison of the two modes' rendered output would not.
@@ -1382,11 +1438,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
-    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint16_t));
-    layout.rowsPerImage = height;
+    layout.bytesPerRow = textureWidth * static_cast<uint32_t>(sizeof(uint16_t));
+    layout.rowsPerImage = textureHeight;
 
-    WGPUExtent3D writeSize{width, height, depth};
-    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+    WGPUExtent3D writeSize{textureWidth, textureHeight, depth};
+    wgpuQueueWriteTexture(queue_, &dst, uploadData, uploadByteLength, &layout, &writeSize);
     renderGraph_.transition("volume", core::ResourceState::TransferDst);
 
     // Mask texture is created here (not lazily on the first applyMaskSlice
@@ -1400,7 +1456,7 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // itself -- same property the old lazy-creation comment relied on.
     WGPUTextureDescriptor maskDesc{};
     maskDesc.dimension = WGPUTextureDimension_3D;
-    maskDesc.size = WGPUExtent3D{width, height, depth};
+    maskDesc.size = WGPUExtent3D{textureWidth, textureHeight, depth};
     maskDesc.format = WGPUTextureFormat_R8Uint;
     maskDesc.mipLevelCount = 1;
     maskDesc.sampleCount = 1;
@@ -1438,17 +1494,17 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // Skipped in low-memory mode: gradientTexture_ is a 1x1x1 placeholder
     // there, and dispatching a bake against it would be meaningless (the
     // shader falls back to computeGradient() instead of sampling it).
-    if (!lowMemoryMode_) {
+    if (downsampleFactor_ <= 1) {
         bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
         std::printf("WebGPUDevice::gradientTexture: baked\n");
     } else {
-        std::printf("WebGPUDevice::gradientTexture: bake skipped (low-memory mode)\n");
+        std::printf("WebGPUDevice::gradientTexture: bake skipped (downsampleFactor=%u)\n", downsampleFactor_);
     }
 
     currentVolumeId_ = volumeId;
     hasVolume_ = true;
-    volumeWidth_ = width;
-    volumeHeight_ = height;
+    volumeWidth_ = textureWidth;
+    volumeHeight_ = textureHeight;
     volumeDepth_ = depth;
     // Defaults the AxialSlice2D view to the volume's middle slice (issue
     // #37) -- mirrors frameCameraForVolume()'s own reset-defaults-on-load
@@ -1463,8 +1519,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // leftover pixels from whatever was loaded (or not) before.
     markAccumulationDirty();
 
-    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded lowMemoryMode=%d\n", volumeId, width, height,
-                 depth, static_cast<int>(lowMemoryMode_));
+    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded downsampleFactor=%u\n", volumeId, width,
+                 height, depth, downsampleFactor_);
 }
 
 void WebGPUDevice::releaseVolumeResources() {
@@ -1494,30 +1550,6 @@ void WebGPUDevice::releaseVolumeResources() {
     }
 }
 
-// Mobile OOM mitigation (Option D): frees the GPU-resident volume/gradient/
-// mask textures for the duration of an AI inference run -- see
-// rhi::Device::unloadVolume's header comment for why. Also releases
-// bindGroup_ (same pattern rebuildBindGroup() already uses) so nothing
-// holds a bind group referencing the now-freed texture views, even though
-// renderFrame()'s draw branches already gate on hasVolume_ and would never
-// touch it in that state -- belt-and-suspenders, not the only safety net.
-void WebGPUDevice::unloadVolume() {
-    if (!hasVolume_) {
-        return;
-    }
-    releaseVolumeResources();
-    if (bindGroup_) {
-        wgpuBindGroupRelease(bindGroup_);
-        bindGroup_ = nullptr;
-    }
-    hasVolume_ = false;
-    currentVolumeId_ = 0;
-    volumeWidth_ = 0;
-    volumeHeight_ = 0;
-    volumeDepth_ = 0;
-    std::printf("WebGPUDevice::unloadVolume: released\n");
-}
-
 void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
                                    void const* data, size_t byteLength) {
     if (!hasVolume_ || volumeId != currentVolumeId_) {
@@ -1525,9 +1557,15 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
                      currentVolumeId_);
         return;
     }
-    if (width != volumeWidth_ || height != volumeHeight_) {
+    // Validated against originalVolumeWidth_/originalVolumeHeight_, not
+    // volumeWidth_/volumeHeight_ (the actual mask/volume texture size) --
+    // an incoming slice always arrives at the source DICOM series'
+    // resolution, since the AI Worker runs against that, unaware of any
+    // internal low-memory-mode downsampling (see
+    // originalVolumeWidth_/Height_'s own comment).
+    if (width != originalVolumeWidth_ || height != originalVolumeHeight_) {
         std::printf("WebGPUDevice::applyMaskSlice: %ux%u doesn't match loaded volume %ux%u, ignoring\n",
-                     width, height, volumeWidth_, volumeHeight_);
+                     width, height, originalVolumeWidth_, originalVolumeHeight_);
         return;
     }
     if (sliceIndex >= volumeDepth_) {
@@ -1542,6 +1580,23 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
         return;
     }
 
+    // Mobile OOM mitigation: with downsampleFactor_ > 1, maskTexture_ was
+    // created at the downsampled (volumeWidth_ x volumeHeight_) extent --
+    // see loadVolume()'s own comment -- so an incoming full-resolution
+    // slice needs the same nearest-neighbor downsample before writing.
+    // depth=1 (a single Z-slice), so downsampleNearestXY's Z loop runs once.
+    std::vector<uint8_t> downsampledSlice;
+    void const* uploadData = data;
+    size_t uploadByteLength = byteLength;
+    if (downsampleFactor_ > 1) {
+        uint32_t outWidth = 0;
+        uint32_t outHeight = 0;
+        downsampledSlice = downsampleNearestXY(static_cast<uint8_t const*>(data), width, height, 1,
+                                                downsampleFactor_, outWidth, outHeight);
+        uploadData = downsampledSlice.data();
+        uploadByteLength = downsampledSlice.size() * sizeof(uint8_t);
+    }
+
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = maskTexture_;
     dst.mipLevel = 0;
@@ -1550,11 +1605,11 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
-    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint8_t));
-    layout.rowsPerImage = height;
+    layout.bytesPerRow = volumeWidth_ * static_cast<uint32_t>(sizeof(uint8_t));
+    layout.rowsPerImage = volumeHeight_;
 
-    WGPUExtent3D writeSize{width, height, 1};
-    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+    WGPUExtent3D writeSize{volumeWidth_, volumeHeight_, 1};
+    wgpuQueueWriteTexture(queue_, &dst, uploadData, uploadByteLength, &layout, &writeSize);
     renderGraph_.transition("mask", core::ResourceState::TransferDst);
     // A newly-applied mask slice changes what renderFrame() should draw
     // even if the camera/window/level haven't -- without this, its

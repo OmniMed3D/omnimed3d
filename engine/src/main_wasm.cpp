@@ -42,16 +42,9 @@ int engine_is_ready() {
 
 EMSCRIPTEN_KEEPALIVE
 void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width, uint32_t height,
-                         uint32_t depth, float spacingX, float spacingY, float spacingZ, uint32_t lowMemoryMode) {
+                         uint32_t depth, float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) {
     g_device.loadVolume(volumeId, data, byteLength, width, height, depth, spacingX, spacingY, spacingZ,
-                         lowMemoryMode != 0);
-}
-
-// Mobile OOM mitigation (Option D) -- see rhi::Device::unloadVolume's
-// header comment.
-EMSCRIPTEN_KEEPALIVE
-void engine_unload_volume() {
-    g_device.unloadVolume();
+                         downsampleFactor);
 }
 
 EMSCRIPTEN_KEEPALIVE

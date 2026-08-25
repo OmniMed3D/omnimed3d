@@ -4,8 +4,9 @@ import { expect, test } from "@playwright/test";
 
 /**
  * Mobile OOM mitigation, C-3: `deviceTier.ts`'s `shouldUseLowMemoryMode()`
- * decides Option A's `lowMemoryMode` argument automatically from
- * `navigator.deviceMemory` (<=4GB -> low-memory), falls back to a UA
+ * decides whether `_engine_load_volume`'s `downsampleFactor` argument is
+ * 1 (off) or `getDownsampleFactor()`'s value (on, currently 4) --
+ * automatically from `navigator.deviceMemory` (<=4GB -> low-memory), falls back to a UA
  * sniff for iOS specifically (the one exception to this codebase's
  * feature-detection preference, since Apple doesn't implement the Device
  * Memory API at all -- no feature-detectable signal exists there), and
@@ -23,7 +24,7 @@ import { expect, test } from "@playwright/test";
  * `mask-opacity-controls.spec.ts` already use, for speed.
  *
  * Wraps the real `_engine_load_volume` WASM export to record its actual
- * `lowMemoryMode` argument (the `mobile-render-perf.spec.ts` technique)
+ * `downsampleFactor` argument (the `mobile-render-perf.spec.ts` technique)
  * rather than inferring it indirectly, and separately checks the
  * `#stat-low-memory-value` debug-overlay row `notifyLowMemoryMode()`
  * writes -- covering both the decision itself and its one piece of UI
@@ -96,14 +97,14 @@ async function loadCtSmallAndCaptureLowMemoryMode(
 test("navigator.deviceMemory above the threshold loads in full mode", async ({ page }) => {
   await stubDeviceMemory(page, 8);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page);
-  expect(calledWith).toEqual([0]);
+  expect(calledWith).toEqual([1]);
   expect(statText).toBe("OFF");
 });
 
 test("navigator.deviceMemory at or below the threshold loads in low-memory mode", async ({ page }) => {
   await stubDeviceMemory(page, 2);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page);
-  expect(calledWith).toEqual([1]);
+  expect(calledWith).toEqual([4]);
   expect(statText).toBe("ON");
 });
 
@@ -111,7 +112,7 @@ test("deviceMemory absent + iOS user agent falls back to low-memory mode", async
   await stubDeviceMemory(page, undefined);
   await stubUserAgent(page, IOS_UA);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page);
-  expect(calledWith).toEqual([1]);
+  expect(calledWith).toEqual([4]);
   expect(statText).toBe("ON");
 });
 
@@ -119,21 +120,21 @@ test("deviceMemory absent + non-iOS user agent stays in full mode", async ({ pag
   await stubDeviceMemory(page, undefined);
   await stubUserAgent(page, DESKTOP_UA);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page);
-  expect(calledWith).toEqual([0]);
+  expect(calledWith).toEqual([1]);
   expect(statText).toBe("OFF");
 });
 
 test("?lowMemory=1 forces low-memory mode even when deviceMemory says otherwise", async ({ page }) => {
   await stubDeviceMemory(page, 8);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page, "?lowMemory=1");
-  expect(calledWith).toEqual([1]);
+  expect(calledWith).toEqual([4]);
   expect(statText).toBe("ON");
 });
 
 test("?lowMemory=0 forces full mode even when deviceMemory says otherwise", async ({ page }) => {
   await stubDeviceMemory(page, 2);
   const { calledWith, statText } = await loadCtSmallAndCaptureLowMemoryMode(page, "?lowMemory=0");
-  expect(calledWith).toEqual([0]);
+  expect(calledWith).toEqual([1]);
   expect(statText).toBe("OFF");
 });
 
@@ -156,6 +157,6 @@ test("checking the Low-Memory Mode checkbox overrides deviceMemory for the next 
     await expect(p.locator("#low-memory-mode-enabled")).not.toBeChecked();
     await p.locator("#low-memory-mode-enabled").check();
   });
-  expect(calledWith).toEqual([1]);
+  expect(calledWith).toEqual([4]);
   expect(statText).toBe("ON");
 });

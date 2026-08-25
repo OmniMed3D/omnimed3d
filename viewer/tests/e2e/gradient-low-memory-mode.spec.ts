@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { float32ToFloat16 } from "../../src/workers/parse-worker/src/halfFloat.js";
 
 /**
- * Mobile OOM mitigation (Option A): `_engine_load_volume`'s new trailing
- * `lowMemoryMode` argument skips baking the precomputed gradient volume
+ * Mobile OOM mitigation (Option A): `_engine_load_volume`'s trailing
+ * `downsampleFactor` argument (> 1) skips baking the precomputed gradient volume
  * (a full-volume RGBA16Float texture, 4x the HU volume's own size --
  * 266MB for the demo CT) in favor of an on-the-fly per-step gradient in
  * the raymarch shader (`computeGradient()`, restored from before issue
@@ -89,7 +89,7 @@ function expectedGradientMarkers(lowMemoryMode: 0 | 1): { extent: RegExp; bake: 
   return lowMemoryMode === 1
     ? {
         extent: /WebGPUDevice::gradientTexture: 1x1x1/,
-        bake: /WebGPUDevice::gradientTexture: bake skipped \(low-memory mode\)/,
+        bake: /WebGPUDevice::gradientTexture: bake skipped \(downsampleFactor=\d+\)/,
       }
     : {
         extent: new RegExp(`WebGPUDevice::gradientTexture: ${VOLUME_SIZE}x${VOLUME_SIZE}x${VOLUME_SIZE}`),
@@ -107,15 +107,21 @@ async function loadSphereVolume(
   const listener = (msg: import("@playwright/test").ConsoleMessage) => consoleLines.push(msg.text());
   page.on("console", listener);
   try {
+    // ABI: loadVolume's trailing arg is a downsample factor (1 = off, N =
+    // the actual in-plane shrink), not a 0/1 bool -- this test's own
+    // lowMemoryMode parameter stays 0/1 (its own on/off concept), 4
+    // matches the Engine/Shell's current default (viewer/src/shell/
+    // deviceTier.ts's DEFAULT_DOWNSAMPLE_FACTOR).
+    const downsampleFactor = lowMemoryMode === 1 ? 4 : 1;
     await page.evaluate(
-      ({ id, size, base64, lowMemory }) => {
+      ({ id, size, base64, factor }) => {
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         const ptr = window.Module._malloc(bytes.length);
         window.Module.HEAPU8.set(bytes, ptr);
-        window.Module._engine_load_volume(id, ptr, bytes.length, size, size, size, 1.0, 1.0, 1.0, lowMemory);
+        window.Module._engine_load_volume(id, ptr, bytes.length, size, size, size, 1.0, 1.0, 1.0, factor);
         window.Module._free(ptr);
       },
-      { id: volumeId, size: VOLUME_SIZE, base64: volumeBase64, lowMemory: lowMemoryMode },
+      { id: volumeId, size: VOLUME_SIZE, base64: volumeBase64, factor: downsampleFactor },
     );
     await expect
       .poll(() => consoleLines.some((line) => new RegExp(`WebGPUDevice::loadVolume: volumeId=${volumeId} `).test(line)))
@@ -210,24 +216,29 @@ test("low-memory gradient fallback renders real shading on a sphere, not flat/de
   const lowMemoryPixels = await decodeScreenshotCrop(page, lowMemoryShot);
 
   const diff = meanAbsoluteDifference(fullModePixels, lowMemoryPixels);
-  // Not byte-equal (different gradient computations, see header comment)
-  // but should be visually close -- empirically ~0.6 for the correct
-  // implementation vs. ~5.9 for a deliberately-broken one (mutation
-  // tested by temporarily swapping which branch each mode takes, so a
-  // low-memory load samples the unbaked dummy gradientTex instead of
-  // computing on the fly) -- comfortably separated by this threshold.
-  expect(diff).toBeLessThan(3);
-
+  // Not byte-equal -- two things legitimately differ between modes, not
+  // just the gradient computation (see header comment): low-memory mode
+  // also downsamples the volume/mask textures in-plane (mobile OOM
+  // mitigation, on top of Option A's original gradient-only skip -- see
+  // engine/docs/RENDERING_SPEC.md's matching Change History entries), so
+  // the sphere's own silhouette is genuinely coarser in the low-memory
+  // shot, not just differently shaded -- and coarser still each time the
+  // downsample factor (WebGPUDevice.cpp's kLowMemoryXYDownsampleFactor)
+  // gets bumped up after a real-device retest shows the previous factor
+  // wasn't enough (2 -> 4 already happened once). Both thresholds below
+  // are re-measured against the *current* factor each time it changes,
+  // via the same deliberately-broken mutation this file has always used
+  // (temporarily swapping which branch each mode takes, so a low-memory
+  // load samples the unbaked dummy gradientTex instead of computing on
+  // the fly) -- at the current factor (4), correct reads diff=7.13/
+  // ratio=0.653, the mutation reads diff=10.41/ratio=0.517.
   const fullModeStdDev = luminanceStdDev(fullModePixels);
   const lowMemoryStdDev = luminanceStdDev(lowMemoryPixels);
+  expect(diff).toBeLessThan(8.5);
+
   expect(fullModeStdDev, "sanity check: full-mode sphere shading should itself vary spatially").toBeGreaterThan(10);
-  // Empirically ~99% of full-mode's stddev for the correct implementation
-  // vs. ~67% for the mutation above (degenerate/flatter shading loses
-  // real contrast, but isn't fully flat either, since the sphere's
-  // silhouette edge alone still contributes some variation) -- 0.85 sits
-  // clearly between the two, verified against both.
   expect(lowMemoryStdDev, "low-memory fallback shading looks flat/degenerate, not gradient-based").toBeGreaterThan(
-    fullModeStdDev * 0.85,
+    fullModeStdDev * 0.58,
   );
 
   expect(errors, `unexpected console errors: ${errors.join("; ")}`).toHaveLength(0);
