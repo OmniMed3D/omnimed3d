@@ -210,24 +210,29 @@ test("low-memory gradient fallback renders real shading on a sphere, not flat/de
   const lowMemoryPixels = await decodeScreenshotCrop(page, lowMemoryShot);
 
   const diff = meanAbsoluteDifference(fullModePixels, lowMemoryPixels);
-  // Not byte-equal (different gradient computations, see header comment)
-  // but should be visually close -- empirically ~0.6 for the correct
-  // implementation vs. ~5.9 for a deliberately-broken one (mutation
-  // tested by temporarily swapping which branch each mode takes, so a
-  // low-memory load samples the unbaked dummy gradientTex instead of
-  // computing on the fly) -- comfortably separated by this threshold.
-  expect(diff).toBeLessThan(3);
-
+  // Not byte-equal -- two things legitimately differ between modes, not
+  // just the gradient computation (see header comment): low-memory mode
+  // also downsamples the volume/mask textures in-plane (mobile OOM
+  // mitigation, on top of Option A's original gradient-only skip -- see
+  // engine/docs/RENDERING_SPEC.md's matching Change History entries), so
+  // the sphere's own silhouette is genuinely coarser in the low-memory
+  // shot, not just differently shaded -- and coarser still each time the
+  // downsample factor (WebGPUDevice.cpp's kLowMemoryXYDownsampleFactor)
+  // gets bumped up after a real-device retest shows the previous factor
+  // wasn't enough (2 -> 4 already happened once). Both thresholds below
+  // are re-measured against the *current* factor each time it changes,
+  // via the same deliberately-broken mutation this file has always used
+  // (temporarily swapping which branch each mode takes, so a low-memory
+  // load samples the unbaked dummy gradientTex instead of computing on
+  // the fly) -- at the current factor (4), correct reads diff=7.13/
+  // ratio=0.653, the mutation reads diff=10.41/ratio=0.517.
   const fullModeStdDev = luminanceStdDev(fullModePixels);
   const lowMemoryStdDev = luminanceStdDev(lowMemoryPixels);
+  expect(diff).toBeLessThan(8.5);
+
   expect(fullModeStdDev, "sanity check: full-mode sphere shading should itself vary spatially").toBeGreaterThan(10);
-  // Empirically ~99% of full-mode's stddev for the correct implementation
-  // vs. ~67% for the mutation above (degenerate/flatter shading loses
-  // real contrast, but isn't fully flat either, since the sphere's
-  // silhouette edge alone still contributes some variation) -- 0.85 sits
-  // clearly between the two, verified against both.
   expect(lowMemoryStdDev, "low-memory fallback shading looks flat/degenerate, not gradient-based").toBeGreaterThan(
-    fullModeStdDev * 0.85,
+    fullModeStdDev * 0.58,
   );
 
   expect(errors, `unexpected console errors: ${errors.join("; ")}`).toHaveLength(0);

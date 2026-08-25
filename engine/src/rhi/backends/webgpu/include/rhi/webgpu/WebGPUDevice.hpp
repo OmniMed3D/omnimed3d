@@ -280,9 +280,21 @@ private:
     WGPUTextureView gradientTextureView_ = nullptr;
     uint32_t currentVolumeId_ = 0;
     bool hasVolume_ = false;
+    // The actual GPU texture's dimensions -- may be smaller than what
+    // loadVolume() received if lowMemoryMode_ downsampled it (see
+    // originalVolumeWidth_/originalVolumeHeight_ below).
     uint32_t volumeWidth_ = 0;
     uint32_t volumeHeight_ = 0;
     uint32_t volumeDepth_ = 0;
+    // What loadVolume() actually received (before any lowMemoryMode_
+    // downsampling) -- applyMaskSlice()'s incoming slices are always at
+    // this resolution (the AI Worker runs against the original DICOM
+    // series, unaware of the Engine's internal downsampling), so this is
+    // what its width/height validation checks against, separately from
+    // volumeWidth_/volumeHeight_ above. Equal to volumeWidth_/
+    // volumeHeight_ whenever lowMemoryMode_ is false.
+    uint32_t originalVolumeWidth_ = 0;
+    uint32_t originalVolumeHeight_ = 0;
     // Set per loadVolume() call (mobile OOM mitigation) -- true skips
     // baking gradientTexture_ (a full-volume RGBA16Float texture, 4x
     // volumeTexture_'s own size) in favor of an on-the-fly per-step

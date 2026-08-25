@@ -30,6 +30,49 @@ constexpr uint32_t kPreintegrationSubSamples = 16;
 // apply here).
 constexpr float kOrbitSensitivity = 0.0025F;
 
+// Mobile OOM mitigation, on top of Option A's gradient-texture skip: in
+// low-memory mode, the volume/mask textures themselves are also shrunk
+// in-plane (X/Y only, depth untouched -- keeps applyMaskSlice()'s
+// sliceIndex meaning exactly one Z-slice, no merging needed). Real-device
+// testing found releasing-then-reloading GPU-resident textures around an
+// inference run (see Device::unloadVolume()) does not actually reduce a
+// page's peak GPU memory footprint on iOS WebKit -- the only remaining
+// lever is to make that peak itself smaller. Deliberately a plain
+// constant, not a WASM-exposed parameter -- an easy single-line tune if a
+// real-device retest shows this factor isn't enough, not a knob any
+// caller is expected to choose.
+constexpr uint32_t kLowMemoryXYDownsampleFactor = 4;
+
+// Nearest-neighbor subsample of a WxHxD (or single-slice, D=1) buffer to
+// (ceil(W/factor))x(ceil(H/factor))xD, in place of box-averaging: the
+// volume's uint16_t buffer is already float16-bit-pattern-encoded
+// upstream (viewer/src/workers/parse-worker/src/halfFloat.ts) -- treating
+// it as an opaque value and picking one texel per block needs no float16
+// codec in the Engine, whereas averaging would. Mask data (uint8_t) is
+// discrete class indices (REQ-C01), where averaging labels is meaningless
+// regardless -- nearest-neighbor is the correct choice there on its own
+// terms. Ceiling division on the output extent handles odd input
+// dimensions; the source-index clamp guards the last output row/column
+// when width/height isn't an exact multiple of factor.
+template <typename T>
+std::vector<T> downsampleNearestXY(T const* src, uint32_t width, uint32_t height, uint32_t depth, uint32_t factor,
+                                    uint32_t& outWidth, uint32_t& outHeight) {
+    outWidth = (width + factor - 1) / factor;
+    outHeight = (height + factor - 1) / factor;
+    std::vector<T> out(static_cast<size_t>(outWidth) * outHeight * depth);
+    for (uint32_t z = 0; z < depth; z++) {
+        for (uint32_t y = 0; y < outHeight; y++) {
+            uint32_t const sy = std::min(y * factor, height - 1);
+            for (uint32_t x = 0; x < outWidth; x++) {
+                uint32_t const sx = std::min(x * factor, width - 1);
+                out[(static_cast<size_t>(z) * outHeight + y) * outWidth + x] =
+                    src[(static_cast<size_t>(z) * height + sy) * width + sx];
+            }
+        }
+    }
+    return out;
+}
+
 void logStringView(char const* prefix, WGPUStringView message) {
     if (message.data && message.length > 0) {
         std::printf("%s: %.*s\n", prefix, static_cast<int>(message.length), message.data);
@@ -1326,19 +1369,43 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // sample the old 1x1x1 dummy as if it were a real baked texture --
     // both wrong for a load that never actually happened).
     lowMemoryMode_ = lowMemoryMode;
+    originalVolumeWidth_ = width;
+    originalVolumeHeight_ = height;
 
     // A new volume load invalidates any mask texture from the previous
     // volume -- old mask data no longer applies (PRD #5.3.2).
     releaseVolumeResources();
 
+    // Mobile OOM mitigation, on top of Option A's gradient-texture skip:
+    // in low-memory mode the volume texture itself is also shrunk in-plane
+    // (X/Y only -- see kLowMemoryXYDownsampleFactor's own comment for why
+    // depth is untouched and nearest-neighbor is used instead of
+    // averaging). uint16_t const* reinterpret is safe here: data is
+    // already validated above to be exactly width*height*depth*
+    // sizeof(uint16_t) bytes, the same buffer layout downsampleNearestXY
+    // expects.
+    std::vector<uint16_t> downsampledVolume;
+    uint32_t textureWidth = width;
+    uint32_t textureHeight = height;
+    void const* uploadData = data;
+    size_t uploadByteLength = byteLength;
+    if (lowMemoryMode_) {
+        downsampledVolume = downsampleNearestXY(static_cast<uint16_t const*>(data), width, height, depth,
+                                                 kLowMemoryXYDownsampleFactor, textureWidth, textureHeight);
+        uploadData = downsampledVolume.data();
+        uploadByteLength = downsampledVolume.size() * sizeof(uint16_t);
+    }
+
     WGPUTextureDescriptor desc{};
     desc.dimension = WGPUTextureDimension_3D;
-    desc.size = WGPUExtent3D{width, height, depth};
+    desc.size = WGPUExtent3D{textureWidth, textureHeight, depth};
     desc.format = WGPUTextureFormat_R16Float;
     desc.mipLevelCount = 1;
     desc.sampleCount = 1;
     desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
     volumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+    std::printf("WebGPUDevice::volumeTexture: %ux%ux%u (lowMemoryMode=%d)\n", textureWidth, textureHeight, depth,
+                 static_cast<int>(lowMemoryMode_));
 
     // Precomputed gradient volume (issue #81's own follow-up) -- same
     // voxel dimensions as volumeTexture_, baked by bakeGradientVolume()
@@ -1382,11 +1449,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
-    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint16_t));
-    layout.rowsPerImage = height;
+    layout.bytesPerRow = textureWidth * static_cast<uint32_t>(sizeof(uint16_t));
+    layout.rowsPerImage = textureHeight;
 
-    WGPUExtent3D writeSize{width, height, depth};
-    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+    WGPUExtent3D writeSize{textureWidth, textureHeight, depth};
+    wgpuQueueWriteTexture(queue_, &dst, uploadData, uploadByteLength, &layout, &writeSize);
     renderGraph_.transition("volume", core::ResourceState::TransferDst);
 
     // Mask texture is created here (not lazily on the first applyMaskSlice
@@ -1400,7 +1467,7 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // itself -- same property the old lazy-creation comment relied on.
     WGPUTextureDescriptor maskDesc{};
     maskDesc.dimension = WGPUTextureDimension_3D;
-    maskDesc.size = WGPUExtent3D{width, height, depth};
+    maskDesc.size = WGPUExtent3D{textureWidth, textureHeight, depth};
     maskDesc.format = WGPUTextureFormat_R8Uint;
     maskDesc.mipLevelCount = 1;
     maskDesc.sampleCount = 1;
@@ -1447,8 +1514,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
 
     currentVolumeId_ = volumeId;
     hasVolume_ = true;
-    volumeWidth_ = width;
-    volumeHeight_ = height;
+    volumeWidth_ = textureWidth;
+    volumeHeight_ = textureHeight;
     volumeDepth_ = depth;
     // Defaults the AxialSlice2D view to the volume's middle slice (issue
     // #37) -- mirrors frameCameraForVolume()'s own reset-defaults-on-load
@@ -1515,6 +1582,8 @@ void WebGPUDevice::unloadVolume() {
     volumeWidth_ = 0;
     volumeHeight_ = 0;
     volumeDepth_ = 0;
+    originalVolumeWidth_ = 0;
+    originalVolumeHeight_ = 0;
     std::printf("WebGPUDevice::unloadVolume: released\n");
 }
 
@@ -1525,9 +1594,15 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
                      currentVolumeId_);
         return;
     }
-    if (width != volumeWidth_ || height != volumeHeight_) {
+    // Validated against originalVolumeWidth_/originalVolumeHeight_, not
+    // volumeWidth_/volumeHeight_ (the actual mask/volume texture size) --
+    // an incoming slice always arrives at the source DICOM series'
+    // resolution, since the AI Worker runs against that, unaware of any
+    // internal low-memory-mode downsampling (see
+    // originalVolumeWidth_/Height_'s own comment).
+    if (width != originalVolumeWidth_ || height != originalVolumeHeight_) {
         std::printf("WebGPUDevice::applyMaskSlice: %ux%u doesn't match loaded volume %ux%u, ignoring\n",
-                     width, height, volumeWidth_, volumeHeight_);
+                     width, height, originalVolumeWidth_, originalVolumeHeight_);
         return;
     }
     if (sliceIndex >= volumeDepth_) {
@@ -1542,6 +1617,23 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
         return;
     }
 
+    // Mobile OOM mitigation: in low-memory mode maskTexture_ was created at
+    // the downsampled (volumeWidth_ x volumeHeight_) extent -- see
+    // loadVolume()'s own comment -- so an incoming full-resolution slice
+    // needs the same nearest-neighbor downsample before writing. depth=1
+    // (a single Z-slice), so downsampleNearestXY's Z loop runs once.
+    std::vector<uint8_t> downsampledSlice;
+    void const* uploadData = data;
+    size_t uploadByteLength = byteLength;
+    if (lowMemoryMode_) {
+        uint32_t outWidth = 0;
+        uint32_t outHeight = 0;
+        downsampledSlice = downsampleNearestXY(static_cast<uint8_t const*>(data), width, height, 1,
+                                                kLowMemoryXYDownsampleFactor, outWidth, outHeight);
+        uploadData = downsampledSlice.data();
+        uploadByteLength = downsampledSlice.size() * sizeof(uint8_t);
+    }
+
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = maskTexture_;
     dst.mipLevel = 0;
@@ -1550,11 +1642,11 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
-    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint8_t));
-    layout.rowsPerImage = height;
+    layout.bytesPerRow = volumeWidth_ * static_cast<uint32_t>(sizeof(uint8_t));
+    layout.rowsPerImage = volumeHeight_;
 
-    WGPUExtent3D writeSize{width, height, 1};
-    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+    WGPUExtent3D writeSize{volumeWidth_, volumeHeight_, 1};
+    wgpuQueueWriteTexture(queue_, &dst, uploadData, uploadByteLength, &layout, &writeSize);
     renderGraph_.transition("mask", core::ResourceState::TransferDst);
     // A newly-applied mask slice changes what renderFrame() should draw
     // even if the camera/window/level haven't -- without this, its

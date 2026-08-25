@@ -33,11 +33,31 @@ export default defineConfig({
   // had these headers even though the sibling inference-worker config
   // did, since the Shell wasn't originally expected to be where heavy
   // threaded-WASM inference actually runs from.
+  // Cross-Origin-Resource-Policy, discovered via real Safari Web Inspector
+  // (attached over USB -- the first time this session had console access
+  // on the actual device, rather than a synthetic localStorage checkpoint
+  // trail): Cross-Origin-Embedder-Policy: require-corp requires every
+  // resource a Worker's module graph loads to carry an explicit CORP
+  // header. Vite's dev server auto-injects its HMR client (`@vite/client`)
+  // into every `type: "module"` Worker for live-reload support -- that
+  // injected import has no CORP header, and WebKit enforces the
+  // requirement more strictly than Chromium does (which let this pass
+  // silently, so it never surfaced in any desktop/Playwright testing this
+  // session). The console showed exactly this: "Worker load was blocked
+  // by Cross-Origin-Embedder-Policy" / "Importing a module script
+  // failed" for `@vite/client` -- which broke the Inference Worker's own
+  // module import chain, so it silently never finished initializing.
+  // "Downloading model..." then hangs forever with zero progress, since
+  // the worker that would report progress never came up in the first
+  // place -- this explains every "model download stuck" symptom this
+  // session, independent of and on top of the real GPU-memory crash
+  // investigation.
   server: {
     allowedHosts: [".trycloudflare.com"],
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   },
   preview: {
@@ -45,6 +65,7 @@ export default defineConfig({
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   },
   optimizeDeps: {

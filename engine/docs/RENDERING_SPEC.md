@@ -1027,4 +1027,112 @@ this feature's own code was written.
 Real iPhone 14 Pro manual retest remains the only way to confirm the
 actual crash is gone end-to-end -- not yet done as of this entry.
 
+**Correction (2026-08-25, same day):** that retest happened, and this
+entry's fix does **not** actually eliminate the crash. Releasing the
+Engine's GPU-resident textures before an inference run, confirmed with
+over a second of elapsed time and zero frames ever rendered in between,
+still crashes at the identical `session.run()` point as if unload had
+never run at all. The real mechanism is a GPU memory allocator/driver
+"high-water mark": once a page's GPU process has allocated a given
+amount of memory, that peak is not returned to the OS even after the
+corresponding WebGPU resources are released, so releasing-then-reloading
+textures cannot help once the peak has already been reached once. Full
+diagnostic trail: `engine/docs/MOBILE_OOM_DIAGNOSTIC_2026-08-25.md`. The
+render-pause half of this entry (rendering and inference no longer
+compete for the same GPU command queue) is unaffected by this correction
+and remains a legitimate improvement on its own terms -- only the
+unload/reload half's crash-prevention claim is retracted. The actual fix
+is the next entry below.
+
+### 2026-08-25 — downsample volume/mask textures in low-memory mode
+
+The real fix for the crash the previous two entries did not achieve.
+Given the "GPU memory high-water mark" finding above, releasing textures
+temporarily cannot help -- the only lever left is to keep the *peak*
+GPU allocation small enough that it never reaches the ceiling in the
+first place. Extends Option A (`lowMemoryMode`, which so far only ever
+skipped the derived gradient texture) to also shrink the volume and mask
+textures' own resolution.
+
+In-plane (X/Y) downsampling only, depth (Z / slice count) untouched --
+halving X and Y alone already gives a 4x memory reduction
+(`W*H*D` -> `(W/2)*(H/2)*D`) and keeps `applyMaskSlice()`'s `sliceIndex`
+meaning exactly one Z-slice, with no slice-merging logic needed for
+multiple incoming AI-Worker slices mapping to fewer output Z-slices.
+Nearest-neighbor subsampling, not box-averaging: the volume's `uint16_t`
+buffer is already float16-bit-pattern-encoded upstream
+(`viewer/src/workers/parse-worker/src/halfFloat.ts`) before it reaches
+the Engine, which has never needed to decode/re-encode float16 itself
+(it just uploads the opaque bytes and lets the GPU's own texture-sampling
+hardware interpret them) -- averaging would require adding a new float16
+codec to the Engine purely for this low-memory fallback, real new
+numerical-correctness surface for a path that's already explicitly
+trading quality for footprint (the same trade `computeGradient()`'s own
+fallback already makes). Mask data is discrete class indices (REQ-C01)
+regardless, where averaging labels is meaningless -- nearest-neighbor is
+the correct choice there independent of the volume-side reasoning.
+
+New `originalVolumeWidth_`/`originalVolumeHeight_` members record what
+`loadVolume()` actually received; `volumeWidth_`/`volumeHeight_` come to
+mean the actual (possibly downsampled) GPU texture's dimensions.
+`applyMaskSlice()`'s incoming-slice validation checks against the
+*original* pair (an AI-Worker slice always arrives at the source DICOM
+series' resolution, unaware of the Engine's internal downsampling), then
+downsamples the slice itself (same nearest-neighbor helper,
+`downsampleNearestXY()`, templated over `uint16_t`/`uint8_t`) before
+writing it into the smaller mask texture. No shader changes needed at
+all: `volume_raymarch.slang`'s `texelUvw`/`worldTexelSize` (used by
+`computeGradient()`'s low-memory fallback and occlusion) are derived from
+`volumeTex.GetDimensions(...)`/`maskTex.GetDimensions(...)`, a runtime
+query of the actual bound texture -- a smaller texture is handled
+correctly automatically. The world-space AABB
+(`frameCameraForVolume()`, still called with the *original*
+width/height/spacing) is likewise unaffected, since it was never wired to
+`volumeWidth_`/`volumeHeight_` in the first place.
+
+The downsample factor (2, in-plane) is a plain compile-time constant
+(`kLowMemoryXYDownsampleFactor`), not a WASM-exposed parameter -- a
+deliberate, easy-to-bump starting point, not a claimed-sufficient number;
+whether it's actually enough to stay under iOS WebKit's memory ceiling
+combined with AI inference's own footprint is unverified until another
+real-device retest.
+
+**Verified:** `wasm-macos` rebuild clean. New
+`viewer/tests/e2e/volume-downsample-low-memory-mode.spec.ts` (same
+direct-injection, known-answer-quadrant-mask technique
+`mask-geometry-parity.spec.ts` uses) confirms both that the new
+`WebGPUDevice::volumeTexture` log line reports a smaller extent only in
+low-memory mode, and that a mask slice sent at the *original* resolution
+still lands in the geometrically correct quadrant in both modes --
+verified via a real mutation test (disabling the downsample branch) that
+this fails as expected. `gradient-low-memory-mode.spec.ts`'s existing
+full-vs-low-memory shading comparison needed recalibration: its
+pixel-difference and shading-contrast thresholds were tuned assuming
+low-memory mode only changed the gradient computation, not the texture
+resolution -- now that both legitimately differ, its old thresholds (< 3
+pixel-difference, > 85% contrast ratio) fail even for the correct
+implementation. Re-measured and widened (< 6, > 70%) against both the
+correct implementation and the same deliberately-broken mutation that
+test already used, re-run against today's downsampling-enabled baseline,
+confirming the new thresholds still separate correct from broken by a
+comfortable margin. Full `viewer/tests/e2e/` suite (43 specs) and the
+inference-worker's own unit suite run to completion.
+
+Real iPhone 14 Pro manual retest remains the only way to learn whether
+this factor is actually sufficient -- not yet done as of this entry.
+
+**Addendum (2026-08-25, same day):** that retest happened, and factor 2
+was not enough -- crash reproduced identically. `kLowMemoryXYDownsampleFactor`
+bumped from 2 to 4 (16x volume/mask memory reduction instead of 4x).
+`gradient-low-memory-mode.spec.ts`'s thresholds needed re-recalibrating
+again against the new factor, same method as before (re-measured against
+both the correct implementation and the existing deliberately-broken
+mutation): now `< 8.5` pixel-difference (was `< 6`), `> 58%` contrast
+ratio (was `> 70%`) -- correct reads diff=7.13/ratio=0.653, the mutation
+reads diff=10.41/ratio=0.517. `volume-downsample-low-memory-mode.spec.ts`'s
+expected-extent assertion updated to divide by 4 instead of 2. Full
+`viewer/tests/e2e/` suite (43 specs) re-run to completion. Another real
+iPhone 14 Pro retest is needed to learn whether *this* factor is enough --
+not yet done as of this addendum.
+
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

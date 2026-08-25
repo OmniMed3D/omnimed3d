@@ -91,7 +91,7 @@ snapshot gathered earlier in this investigation showed `WebKit.GPU`
 separate `rpages` accounting — consistent with them drawing from
 meaningfully separate memory budgets.
 
-## Conclusion
+## Conclusion (revised — see "Option D didn't actually work" below)
 
 - The cause is the Engine's resident GPU volume/gradient/mask textures
   (~100MB even with Option A's low-memory mode) held **concurrently**
@@ -100,10 +100,65 @@ meaningfully separate memory budgets.
 - Refined C-2 (pause rendering during inference), already shipped,
   reduces GPU **compute** contention but never frees the GPU-**resident**
   textures, so it never touched this problem.
-- The actual fix (Option D): release the Engine's GPU textures for the
-  duration of an inference run and re-upload them once it finishes. See
-  `RENDERING_SPEC.md`'s 2026-08-25 "unload/reload Engine volume textures
-  during AI inference" entry for the implementation.
+- The fix attempted first (Option D): release the Engine's GPU textures
+  for the duration of an inference run and re-upload them once it
+  finishes. See `RENDERING_SPEC.md`'s 2026-08-25 "unload/reload Engine
+  volume textures during AI inference" entry for the implementation --
+  **and its own same-day correction note, since real-device retesting
+  (next section) found this does not actually work.**
+
+## Round 2 — Option D didn't actually work, and why
+
+Option D shipped (PR #116) and was retested on the same iPhone 14 Pro +
+Chrome. It still crashed, identically, at `session.run()`. Reusing the
+same `localStorage` checkpoint technique (re-added leaner than the
+original, since it had been fully reverted after Round 1):
+
+1. **Confirmed unload actually ran, with real elapsed time.** The
+   checkpoint trail showed `shell:unload-called` firing, then
+   `worker:before-session-run` ~249ms later — enough time for a
+   synchronous WebGPU resource release to complete. Crash still happened
+   right after.
+2. **Ruled out "just needs more time."** Added a 1.5s artificial delay
+   between the unload call and `session.run()` (worker.ts, temporary).
+   The checkpoint trail confirmed ~1.77s actually elapsed. Crash still
+   happened at the identical point. This rules out a simple deferred-GPU-
+   cleanup-needs-a-moment explanation — 1.8s is far more than any normal
+   fence/completion wait should need.
+3. **Decisive test: unload immediately at load time, long before
+   inference ever starts.** Instead of unloading when inference begins,
+   the volume was loaded and immediately unloaded again in the same
+   synchronous call (so the canvas never rendered a single frame), then
+   left alone for the entire time the user spent loading the segmentation
+   model and pressing the inference button — many seconds. The checkpoint
+   trail showed no new `shell:unload-called` at inference time (correctly
+   skipped — already unloaded, per the idempotency guard), and the crash
+   **still happened**, at the same `session.run()` point.
+
+(3) is the decisive result: the volume was never resident on screen at
+all during this run, unload had happened long before, with seconds not
+milliseconds of headroom — and it still crashed. This is inconsistent
+with "concurrent residency" being the mechanism, and points instead to a
+**GPU memory allocator/driver high-water mark**: once a page's GPU
+process has allocated a given amount of memory, that peak is not
+returned to the OS even after the corresponding WebGPU resources are
+released. The earlier Round 1 "confirmed fix" tests (skip
+`_engine_load_volume` entirely, or skip it while retaining bytes off-GPU)
+worked not because releasing memory helps, but because they never let the
+GPU process reach that peak in the first place. Once a page's GPU process
+has touched that memory ceiling once, releasing individual WebGPU
+resources afterward does not lower it back down.
+
+This reframes the fix direction entirely: temporarily freeing textures
+around an inference run cannot work, because the peak has already
+happened by the time any inference-triggered unload would run (the
+volume is loaded, rendered, and visible before the user ever presses the
+segmentation button). The only lever left within engine scope is to make
+sure the peak itself — the Engine's own texture allocations — is small
+enough to never reach the ceiling at all. See `RENDERING_SPEC.md`'s
+2026-08-25 "downsample volume/mask textures in low-memory mode" entry for
+the resulting fix: shrinking the volume/mask textures' own resolution in
+low-memory mode, on top of Option A's existing gradient-texture skip.
 
 ## Lessons for next time
 
@@ -120,4 +175,39 @@ meaningfully separate memory budgets.
 - A `vite.config.ts` change (e.g. new headers) needs a dev-server
   restart — HMR doesn't pick it up.
 - The `localStorage` checkpoint technique is a reusable pattern for a
-  future crash investigation with no debugger access.
+  future crash investigation with no debugger access, but a real Safari
+  Web Inspector session (attached over USB) finds things it categorically
+  cannot: it caught a genuine `Cross-Origin-Embedder-Policy` console error
+  blocking `@vite/client` and several Worker-imported source files from
+  loading at all under the dev server (fixed by adding a
+  `Cross-Origin-Resource-Policy` header) — no error, no crash, and no
+  reload ever occurred for this failure mode, so the checkpoint trail had
+  nothing to show. Prefer Web Inspector when USB access is available.
+
+## Round 3 — confirming the downsample factor is blocked on a separate issue
+
+Real-device retesting of the downsample fix above surfaced two more real
+findings, both now tracked separately since they're not about GPU memory
+at all:
+
+1. A `Cross-Origin-Embedder-Policy` console error (only visible once Web
+   Inspector was attached) was blocking the Vite dev server's HMR client
+   and several Worker-imported source files from loading under
+   `npm run dev`, independent of the crash investigation. Fixed by adding
+   `Cross-Origin-Resource-Policy: same-origin` to `viewer/vite.config.ts`.
+   Switching real-device testing to a production build served via
+   `vite preview` (no HMR client at all) sidesteps this whole class of
+   issue for future retests.
+2. Even under `vite preview`, the segmentation model's `session.create()`
+   step still hangs (or the Inference Worker silently restarts) on this
+   device after the model finishes downloading — a separate, likely
+   AI-track-adjacent issue (ONNX Runtime Web's threaded WASM backend
+   under cross-origin isolation on iOS Safari/WebKit), tracked in its own
+   issue rather than diagnosed further here, per the "don't keep editing
+   AI-track code directly" lesson above. This blocks a full real-device
+   confirmation that the current downsample factor (4) is sufficient —
+   the downsample fix itself is landed regardless, since it's
+   independently correct and beneficial, verified by the real demo CT
+   (512×512×133 → 128×128×133, confirmed via console log and a visual
+   screenshot comparison) even though the end-to-end crash-free check
+   remains open until the separate inference-loading issue is resolved.
