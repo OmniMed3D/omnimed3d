@@ -1044,6 +1044,19 @@ and remains a legitimate improvement on its own terms -- only the
 unload/reload half's crash-prevention claim is retracted. The actual fix
 is the next entry below.
 
+**Removed (2026-08-25, same day):** the unload/reload mechanism itself
+(`rhi::Device::unloadVolume()`, the Shell's mask-slice buffering/
+reload-debounce orchestration) has since been deleted outright, not just
+corrected above -- a second, independent problem surfaced on top of the
+no-memory-benefit finding: while a volume sits unloaded for an entire
+inference run, every incoming `mask-slice` was buffered instead of
+applied immediately, then all of them replayed in one tight synchronous
+loop once the run settled. That loop never yielded back to the browser,
+so the segmentation progress gauge visibly jumped from "0/N" straight to
+"complete" instead of counting up per slice. With no memory benefit and a
+confirmed UX regression, keeping the mechanism around had nothing left to
+justify it. Render-pause (`setRenderPaused`) stays, unaffected.
+
 ### 2026-08-25 — downsample volume/mask textures in low-memory mode
 
 The real fix for the crash the previous two entries did not achieve.
@@ -1134,5 +1147,22 @@ expected-extent assertion updated to divide by 4 instead of 2. Full
 `viewer/tests/e2e/` suite (43 specs) re-run to completion. Another real
 iPhone 14 Pro retest is needed to learn whether *this* factor is enough --
 not yet done as of this addendum.
+
+**Addendum 2 (2026-08-25, same day):** having already bumped this factor
+once by guessing, made it a user-facing setting instead of guessing
+again -- `loadVolume()`'s trailing argument is now a plain `downsampleFactor`
+(`uint32_t`, 1 = off) threaded all the way through `Device.hpp`,
+`WebGPUDevice`, `main_wasm.cpp`'s export, and the Shell's `EngineModule`
+interface, replacing the old `bool lowMemoryMode` -- `kLowMemoryXYDownsampleFactor`
+no longer exists. `viewer/src/shell/deviceTier.ts` gains
+`getDownsampleFactor()`/`setManualDownsampleFactor()`/
+`setupDownsampleFactorControl()` (same pattern as the existing
+`shouldUseLowMemoryMode()`/checkbox trio) wired to a new "Downsample
+Factor" dropdown (2x/4x/8x, default 4x) in the Rendering panel section --
+the first `<select>` in this codebase. Separately, the unload/reload
+mechanism (this section's first entry above) has been deleted outright,
+not just corrected -- see that entry's own "Removed" addendum for why
+(a confirmed progress-gauge regression on top of the no-memory-benefit
+finding).
 
 <!-- Next entry: whatever follow-up comes out of the ~21.7ms fixed-cost investigation flagged several entries back, once real profiling access exists -->

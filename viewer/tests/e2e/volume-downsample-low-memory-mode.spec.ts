@@ -17,14 +17,16 @@ import { expect, test } from "@playwright/test";
  * that's what a real AI Worker would do (it has no idea the Engine
  * downsamples internally).
  *
- * Two things checked, in both lowMemoryMode=0 and =1:
+ * Two things checked, at both downsampleFactor=1 (off) and =4 (matches
+ * the Shell's current default, viewer/src/shell/deviceTier.ts's
+ * DEFAULT_DOWNSAMPLE_FACTOR):
  *   (a) the new `WebGPUDevice::volumeTexture` log line reports a smaller
- *       extent only in the =1 case (regression-catching, same reasoning
- *       as Option A's own gradientTexture log assertion -- proves the
- *       downsample branch is actually taken, not just that nothing
- *       crashes);
+ *       extent only when downsampleFactor > 1 (regression-catching, same
+ *       reasoning as Option A's own gradientTexture log assertion --
+ *       proves the downsample branch is actually taken, not just that
+ *       nothing crashes);
  *   (b) the known-answer top-left-quadrant mask still renders in the
- *       correct quadrant in both modes (proves applyMaskSlice()'s
+ *       correct quadrant at both factors (proves applyMaskSlice()'s
  *       original-resolution validation and its downsample-on-write path
  *       both work end to end, not just that loading doesn't reject it).
  */
@@ -57,22 +59,33 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
   await page.locator('[data-view-mode="1"]').click();
   await page.locator("#panel-collapse-toggle").click();
 
-  async function loadAndCheckQuadrant(volumeId: number, lowMemoryMode: 0 | 1): Promise<void> {
+  async function loadAndCheckQuadrant(volumeId: number, downsampleFactor: number): Promise<void> {
     await page.evaluate(
-      ({ volumeId, size, lowMemoryMode }) => {
+      ({ volumeId, size, downsampleFactor }) => {
         const voxelCount = size * size; // depth=1
         const huBytes = new Uint8Array(voxelCount * 2); // HU=0 everywhere -> all-zero float16 bits
         const ptr = window.Module._malloc(huBytes.length);
         window.Module.HEAPU8.set(huBytes, ptr);
-        window.Module._engine_load_volume(volumeId, ptr, huBytes.length, size, size, 1, 1.0, 1.0, 1.0, lowMemoryMode);
+        window.Module._engine_load_volume(
+          volumeId,
+          ptr,
+          huBytes.length,
+          size,
+          size,
+          1,
+          1.0,
+          1.0,
+          1.0,
+          downsampleFactor,
+        );
         window.Module._free(ptr);
       },
-      { volumeId, size: VOLUME_SIZE, lowMemoryMode },
+      { volumeId, size: VOLUME_SIZE, downsampleFactor },
     );
     await waitForLine(new RegExp(`WebGPUDevice::loadVolume: volumeId=${volumeId} `));
 
     // Known-answer mask, always sent at the *original* VOLUME_SIZE
-    // resolution regardless of lowMemoryMode -- matches what a real AI
+    // resolution regardless of downsampleFactor -- matches what a real AI
     // Worker would send, unaware of any internal downsampling.
     await page.evaluate(
       ({ volumeId, size }) => {
@@ -104,25 +117,23 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
     expect(topRight.equals(bottomRight)).toBe(true);
   }
 
-  await loadAndCheckQuadrant(801, 0);
+  await loadAndCheckQuadrant(801, 1);
   const fullModeExtent = consoleLines.find((line) => /WebGPUDevice::volumeTexture: \d+x\d+x\d+/.test(line));
   expect(fullModeExtent).toBeTruthy();
-  expect(fullModeExtent).toMatch(`WebGPUDevice::volumeTexture: ${VOLUME_SIZE}x${VOLUME_SIZE}x1 (lowMemoryMode=0)`);
+  expect(fullModeExtent).toMatch(`WebGPUDevice::volumeTexture: ${VOLUME_SIZE}x${VOLUME_SIZE}x1 (downsampleFactor=1)`);
 
-  await loadAndCheckQuadrant(802, 1);
-  const lowMemoryExtent = consoleLines.find(
-    (line) => /WebGPUDevice::volumeTexture: \d+x\d+x\d+ \(lowMemoryMode=1\)/.test(line),
+  const TEST_DOWNSAMPLE_FACTOR = 4; // matches the Shell's current default
+  await loadAndCheckQuadrant(802, TEST_DOWNSAMPLE_FACTOR);
+  const downsampledExtent = consoleLines.find(
+    (line) => /WebGPUDevice::volumeTexture: \d+x\d+x\d+ \(downsampleFactor=4\)/.test(line),
   );
-  expect(lowMemoryExtent).toBeTruthy();
-  // Ceiling-divided by the Engine's downsample factor (kLowMemoryXYDownsampleFactor,
-  // WebGPUDevice.cpp -- currently 4, bumped up from an initial 2 after a
-  // real-device retest showed 2x wasn't enough, see
-  // engine/docs/RENDERING_SPEC.md's dated addenda) -- asserts the *actual*
-  // chosen extent is smaller, not just an echo of the input flag (same
+  expect(downsampledExtent).toBeTruthy();
+  // Ceiling-divided by the requested factor -- asserts the *actual* chosen
+  // extent is smaller, not just an echo of the input (same
   // regression-catching reasoning as Option A's own gradientTexture log
   // assertion).
-  const downsampledSize = Math.ceil(VOLUME_SIZE / 4);
-  expect(lowMemoryExtent).toMatch(
-    `WebGPUDevice::volumeTexture: ${downsampledSize}x${downsampledSize}x1 (lowMemoryMode=1)`,
+  const downsampledSize = Math.ceil(VOLUME_SIZE / TEST_DOWNSAMPLE_FACTOR);
+  expect(downsampledExtent).toMatch(
+    `WebGPUDevice::volumeTexture: ${downsampledSize}x${downsampledSize}x1 (downsampleFactor=${TEST_DOWNSAMPLE_FACTOR})`,
   );
 });

@@ -30,19 +30,6 @@ constexpr uint32_t kPreintegrationSubSamples = 16;
 // apply here).
 constexpr float kOrbitSensitivity = 0.0025F;
 
-// Mobile OOM mitigation, on top of Option A's gradient-texture skip: in
-// low-memory mode, the volume/mask textures themselves are also shrunk
-// in-plane (X/Y only, depth untouched -- keeps applyMaskSlice()'s
-// sliceIndex meaning exactly one Z-slice, no merging needed). Real-device
-// testing found releasing-then-reloading GPU-resident textures around an
-// inference run (see Device::unloadVolume()) does not actually reduce a
-// page's peak GPU memory footprint on iOS WebKit -- the only remaining
-// lever is to make that peak itself smaller. Deliberately a plain
-// constant, not a WASM-exposed parameter -- an easy single-line tune if a
-// real-device retest shows this factor isn't enough, not a knob any
-// caller is expected to choose.
-constexpr uint32_t kLowMemoryXYDownsampleFactor = 4;
-
 // Nearest-neighbor subsample of a WxHxD (or single-slice, D=1) buffer to
 // (ceil(W/factor))x(ceil(H/factor))xD, in place of box-averaging: the
 // volume's uint16_t buffer is already float16-bit-pattern-encoded
@@ -1240,7 +1227,7 @@ void WebGPUDevice::renderFrame() {
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
         ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
-        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, lowMemoryMode_ ? 1.0F : 0.0F, 0.0F};
+        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, downsampleFactor_ > 1 ? 1.0F : 0.0F, 0.0F};
         ubo.backgroundColor = glm::vec4{backgroundColor_, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
@@ -1348,7 +1335,7 @@ void WebGPUDevice::renderFrame() {
 
 void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                                uint32_t width, uint32_t height, uint32_t depth,
-                               float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) {
+                               float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) {
     if (!ready_) {
         std::printf("WebGPUDevice::loadVolume: device not ready, ignoring\n");
         return;
@@ -1361,14 +1348,14 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     }
     // Only committed once the load is confirmed valid -- setting this
     // before the check above would let a rejected (malformed) load's
-    // lowMemoryMode value silently apply to the *previous*, still-active
+    // downsampleFactor value silently apply to the *previous*, still-active
     // volume's already-created gradient texture on the next frame (e.g. a
-    // rejected lowMemoryMode=true would flip fragmentMain to
+    // rejected downsampleFactor > 1 would flip fragmentMain to
     // computeGradient() while the old, still-baked full gradient texture
-    // sits unused, or a rejected lowMemoryMode=false would flip it to
+    // sits unused, or a rejected downsampleFactor of 1 would flip it to
     // sample the old 1x1x1 dummy as if it were a real baked texture --
     // both wrong for a load that never actually happened).
-    lowMemoryMode_ = lowMemoryMode;
+    downsampleFactor_ = downsampleFactor;
     originalVolumeWidth_ = width;
     originalVolumeHeight_ = height;
 
@@ -1377,8 +1364,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     releaseVolumeResources();
 
     // Mobile OOM mitigation, on top of Option A's gradient-texture skip:
-    // in low-memory mode the volume texture itself is also shrunk in-plane
-    // (X/Y only -- see kLowMemoryXYDownsampleFactor's own comment for why
+    // downsampleFactor_ > 1 also shrinks the volume texture itself
+    // in-plane (X/Y only -- see downsampleNearestXY's own comment for why
     // depth is untouched and nearest-neighbor is used instead of
     // averaging). uint16_t const* reinterpret is safe here: data is
     // already validated above to be exactly width*height*depth*
@@ -1389,9 +1376,9 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     uint32_t textureHeight = height;
     void const* uploadData = data;
     size_t uploadByteLength = byteLength;
-    if (lowMemoryMode_) {
+    if (downsampleFactor_ > 1) {
         downsampledVolume = downsampleNearestXY(static_cast<uint16_t const*>(data), width, height, depth,
-                                                 kLowMemoryXYDownsampleFactor, textureWidth, textureHeight);
+                                                 downsampleFactor_, textureWidth, textureHeight);
         uploadData = downsampledVolume.data();
         uploadByteLength = downsampledVolume.size() * sizeof(uint16_t);
     }
@@ -1404,8 +1391,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     desc.sampleCount = 1;
     desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
     volumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
-    std::printf("WebGPUDevice::volumeTexture: %ux%ux%u (lowMemoryMode=%d)\n", textureWidth, textureHeight, depth,
-                 static_cast<int>(lowMemoryMode_));
+    std::printf("WebGPUDevice::volumeTexture: %ux%ux%u (downsampleFactor=%u)\n", textureWidth, textureHeight, depth,
+                 downsampleFactor_);
 
     // Precomputed gradient volume (issue #81's own follow-up) -- same
     // voxel dimensions as volumeTexture_, baked by bakeGradientVolume()
@@ -1413,28 +1400,30 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // compute pass's write-only access, TextureBinding for the raymarch
     // fragment shader's later trilinear read.
     //
-    // Mobile OOM mitigation: in low-memory mode this texture would be the
-    // single largest allocation this function makes (RGBA16Float, 4x
-    // volumeTexture_'s own size, since it has 4x the bytes-per-texel) for
-    // a benefit (cheaper per-step shading) that matters far less than
-    // staying under a memory ceiling. A 1x1x1 placeholder keeps binding
-    // 6's bind-group-layout slot satisfied (validation only checks sample
-    // type/dimension, not extent) without the bake pass ever running --
-    // fragmentMain falls back to computeGradient() instead of sampling
-    // this texture when tfParams.z signals low-memory mode (see
-    // renderFrame()'s UBO population). No StorageBinding usage needed
-    // here since the bake pass that would need it is skipped below.
+    // Mobile OOM mitigation: with downsampleFactor_ > 1, this texture
+    // would be the single largest allocation this function makes
+    // (RGBA16Float, 4x volumeTexture_'s own size, since it has 4x the
+    // bytes-per-texel) for a benefit (cheaper per-step shading) that
+    // matters far less than staying under a memory ceiling. A 1x1x1
+    // placeholder keeps binding 6's bind-group-layout slot satisfied
+    // (validation only checks sample type/dimension, not extent) without
+    // the bake pass ever running -- fragmentMain falls back to
+    // computeGradient() instead of sampling this texture when tfParams.z
+    // signals downsampleFactor_ > 1 (see renderFrame()'s UBO population).
+    // No StorageBinding usage needed here since the bake pass that would
+    // need it is skipped below.
     WGPUTextureDescriptor gradientDesc{};
     gradientDesc.dimension = WGPUTextureDimension_3D;
-    gradientDesc.size = lowMemoryMode_ ? WGPUExtent3D{1, 1, 1} : WGPUExtent3D{width, height, depth};
+    gradientDesc.size = downsampleFactor_ > 1 ? WGPUExtent3D{1, 1, 1} : WGPUExtent3D{width, height, depth};
     gradientDesc.format = WGPUTextureFormat_RGBA16Float;
     gradientDesc.mipLevelCount = 1;
     gradientDesc.sampleCount = 1;
-    gradientDesc.usage = lowMemoryMode_ ? WGPUTextureUsage_TextureBinding
-                                         : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
+    gradientDesc.usage = downsampleFactor_ > 1
+                              ? WGPUTextureUsage_TextureBinding
+                              : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
     gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
     // Reports the *actual* chosen extent (gradientDesc.size), not just an
-    // echo of the lowMemoryMode input -- a test asserting on this line
+    // echo of the downsampleFactor input -- a test asserting on this line
     // catches a regression where the branch above silently stops honoring
     // the flag (e.g. always allocating full-size), which a pixel-only
     // comparison of the two modes' rendered output would not.
@@ -1505,11 +1494,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // Skipped in low-memory mode: gradientTexture_ is a 1x1x1 placeholder
     // there, and dispatching a bake against it would be meaningless (the
     // shader falls back to computeGradient() instead of sampling it).
-    if (!lowMemoryMode_) {
+    if (downsampleFactor_ <= 1) {
         bakeGradientVolume(width, height, depth, spacingX, spacingY, spacingZ);
         std::printf("WebGPUDevice::gradientTexture: baked\n");
     } else {
-        std::printf("WebGPUDevice::gradientTexture: bake skipped (low-memory mode)\n");
+        std::printf("WebGPUDevice::gradientTexture: bake skipped (downsampleFactor=%u)\n", downsampleFactor_);
     }
 
     currentVolumeId_ = volumeId;
@@ -1530,8 +1519,8 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // leftover pixels from whatever was loaded (or not) before.
     markAccumulationDirty();
 
-    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded lowMemoryMode=%d\n", volumeId, width, height,
-                 depth, static_cast<int>(lowMemoryMode_));
+    std::printf("WebGPUDevice::loadVolume: volumeId=%u %ux%ux%u loaded downsampleFactor=%u\n", volumeId, width,
+                 height, depth, downsampleFactor_);
 }
 
 void WebGPUDevice::releaseVolumeResources() {
@@ -1559,32 +1548,6 @@ void WebGPUDevice::releaseVolumeResources() {
         wgpuTextureRelease(gradientTexture_);
         gradientTexture_ = nullptr;
     }
-}
-
-// Mobile OOM mitigation (Option D): frees the GPU-resident volume/gradient/
-// mask textures for the duration of an AI inference run -- see
-// rhi::Device::unloadVolume's header comment for why. Also releases
-// bindGroup_ (same pattern rebuildBindGroup() already uses) so nothing
-// holds a bind group referencing the now-freed texture views, even though
-// renderFrame()'s draw branches already gate on hasVolume_ and would never
-// touch it in that state -- belt-and-suspenders, not the only safety net.
-void WebGPUDevice::unloadVolume() {
-    if (!hasVolume_) {
-        return;
-    }
-    releaseVolumeResources();
-    if (bindGroup_) {
-        wgpuBindGroupRelease(bindGroup_);
-        bindGroup_ = nullptr;
-    }
-    hasVolume_ = false;
-    currentVolumeId_ = 0;
-    volumeWidth_ = 0;
-    volumeHeight_ = 0;
-    volumeDepth_ = 0;
-    originalVolumeWidth_ = 0;
-    originalVolumeHeight_ = 0;
-    std::printf("WebGPUDevice::unloadVolume: released\n");
 }
 
 void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
@@ -1617,19 +1580,19 @@ void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32
         return;
     }
 
-    // Mobile OOM mitigation: in low-memory mode maskTexture_ was created at
-    // the downsampled (volumeWidth_ x volumeHeight_) extent -- see
-    // loadVolume()'s own comment -- so an incoming full-resolution slice
-    // needs the same nearest-neighbor downsample before writing. depth=1
-    // (a single Z-slice), so downsampleNearestXY's Z loop runs once.
+    // Mobile OOM mitigation: with downsampleFactor_ > 1, maskTexture_ was
+    // created at the downsampled (volumeWidth_ x volumeHeight_) extent --
+    // see loadVolume()'s own comment -- so an incoming full-resolution
+    // slice needs the same nearest-neighbor downsample before writing.
+    // depth=1 (a single Z-slice), so downsampleNearestXY's Z loop runs once.
     std::vector<uint8_t> downsampledSlice;
     void const* uploadData = data;
     size_t uploadByteLength = byteLength;
-    if (lowMemoryMode_) {
+    if (downsampleFactor_ > 1) {
         uint32_t outWidth = 0;
         uint32_t outHeight = 0;
         downsampledSlice = downsampleNearestXY(static_cast<uint8_t const*>(data), width, height, 1,
-                                                kLowMemoryXYDownsampleFactor, outWidth, outHeight);
+                                                downsampleFactor_, outWidth, outHeight);
         uploadData = downsampledSlice.data();
         uploadByteLength = downsampledSlice.size() * sizeof(uint8_t);
     }

@@ -102,3 +102,40 @@ export function setupLowMemoryModeControl(): void {
     setManualLowMemoryOverride(checkbox.checked);
   });
 }
+
+// How much low-memory mode shrinks the volume/mask textures in-plane
+// (X/Y) when active -- previously a hardcoded Engine-side C++ constant,
+// bumped once already (2 -> 4) after a real-device retest showed 2 wasn't
+// enough. Since whether even 4 is enough is still unconfirmed (blocked on
+// a separate inference-loading issue), this is now a user-facing setting
+// instead of another guessed constant -- lets a tester pick a different
+// factor for the next retest without a code change. Only takes effect
+// when `shouldUseLowMemoryMode()` is also true; the value here is
+// independent of the on/off decision above, same separation of concerns
+// as that function keeping "should we" and "how much" apart.
+const DEFAULT_DOWNSAMPLE_FACTOR = 4;
+let manualDownsampleFactor = DEFAULT_DOWNSAMPLE_FACTOR;
+
+export function setManualDownsampleFactor(value: number): void {
+  manualDownsampleFactor = value;
+}
+
+export function getDownsampleFactor(): number {
+  return manualDownsampleFactor;
+}
+
+// Wires the "Downsample Factor" dropdown -- same "reflects tomorrow's
+// load, not today's already-rendered one" limitation as the Low-Memory
+// Mode checkbox above (a live change doesn't re-request/re-upload the
+// current volume).
+export function setupDownsampleFactorControl(): void {
+  const select = document.getElementById("downsample-factor") as HTMLSelectElement | null;
+  if (!select) {
+    console.error("deviceTier: #downsample-factor not found in the DOM");
+    return;
+  }
+  select.value = String(manualDownsampleFactor);
+  select.addEventListener("change", () => {
+    setManualDownsampleFactor(Number(select.value));
+  });
+}

@@ -38,7 +38,12 @@ import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
 import { notifyMaskSliceApplied, notifyVolumeLoadedForInference, setupInferenceControls } from "./inferenceControls.js";
 import { setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
-import { setupLowMemoryModeControl, shouldUseLowMemoryMode } from "./deviceTier.js";
+import {
+  getDownsampleFactor,
+  setupDownsampleFactorControl,
+  setupLowMemoryModeControl,
+  shouldUseLowMemoryMode,
+} from "./deviceTier.js";
 import { notifyLowMemoryMode, setupStatsOverlay } from "./statsOverlay.js";
 import { setupDeviceLostBanner } from "./deviceLostBanner.js";
 import { notifyInferenceEnded, notifyInferenceStarted } from "./renderPauseBanner.js";
@@ -58,7 +63,7 @@ interface EngineModule {
     spacingX: number,
     spacingY: number,
     spacingZ: number,
-    lowMemoryMode: number,
+    downsampleFactor: number,
   ): void;
   _engine_apply_mask_slice(
     volumeId: number,
@@ -126,9 +131,6 @@ interface EngineModule {
   // Mobile OOM mitigation -- see rhi::Device::setRenderPaused's header
   // comment.
   _engine_set_render_paused(paused: number): void;
-  // Mobile OOM mitigation (Option D) -- see rhi::Device::unloadVolume's
-  // header comment.
-  _engine_unload_volume(): void;
   UTF8ToString(ptr: number): string;
 }
 
@@ -360,84 +362,6 @@ function withWasmBuffer<T>(byteLength: number, fn: (ptr: number) => T): T {
   }
 }
 
-/**
- * Mobile OOM mitigation, Option D: the Engine's resident GPU volume/
- * gradient/mask textures (~100MB even in low-memory mode) plus the
- * Inference Worker's ONNX Runtime session/activations together exceed iOS
- * WebKit's per-tab memory ceiling when both are live at once -- confirmed
- * via real-device isolation (real segmentation completes with zero
- * crashes once the Engine's GPU textures are released for the run's
- * duration, even while the volume's raw bytes stay resident in this JS
- * heap instead -- see engine_unload_volume's header comment). This is
- * everything engineLoadVolume() needs to call `_engine_load_volume` again
- * after such a release, without re-fetching/re-parsing the volume.
- */
-interface RetainedVolumeForReload {
-  numericId: number;
-  bytes: Uint8Array;
-  width: number;
-  height: number;
-  depth: number;
-  spacingX: number;
-  spacingY: number;
-  spacingZ: number;
-  lowMemoryMode: boolean;
-}
-let currentVolumeForGpuReload: RetainedVolumeForReload | undefined;
-let gpuVolumeUnloadedForInference = false;
-let bufferedMaskSlicesDuringUnload: MaskSliceMessage[] = [];
-
-function uploadVolumeToEngine(retained: RetainedVolumeForReload): void {
-  withWasmBuffer(retained.bytes.byteLength, (ptr) => {
-    window.Module.HEAPU8.set(retained.bytes, ptr);
-    window.Module._engine_load_volume(
-      retained.numericId,
-      ptr,
-      retained.bytes.byteLength,
-      retained.width,
-      retained.height,
-      retained.depth,
-      retained.spacingX,
-      retained.spacingY,
-      retained.spacingZ,
-      retained.lowMemoryMode ? 1 : 0,
-    );
-  });
-}
-
-/**
- * Releases the Engine's GPU-resident volume/gradient/mask textures for the
- * duration of an AI inference run -- see this section's header comment.
- * Idempotent: a no-op if already unloaded or nothing has been loaded yet.
- */
-function engineUnloadVolumeForInference(): void {
-  if (gpuVolumeUnloadedForInference || !currentVolumeForGpuReload) {
-    return;
-  }
-  gpuVolumeUnloadedForInference = true;
-  window.Module._engine_unload_volume();
-}
-
-/**
- * Re-uploads the volume released by engineUnloadVolumeForInference() and
- * replays every mask-slice result that arrived while it was unloaded (they
- * were buffered rather than applied, since applyMaskSlice() silently
- * no-ops with no volume loaded -- see WebGPUDevice::applyMaskSlice's
- * !hasVolume_ guard). Idempotent: a no-op if not currently unloaded.
- */
-function engineReloadVolumeAfterInference(): void {
-  if (!gpuVolumeUnloadedForInference || !currentVolumeForGpuReload) {
-    return;
-  }
-  uploadVolumeToEngine(currentVolumeForGpuReload);
-  gpuVolumeUnloadedForInference = false;
-  const buffered = bufferedMaskSlicesDuringUnload;
-  bufferedMaskSlicesDuringUnload = [];
-  for (const msg of buffered) {
-    engineApplyMaskSlice(msg);
-  }
-}
-
 function engineLoadVolume(msg: VolumeReadyMessage): void {
   const numericId = volumeIdMap.get(msg.volumeId);
   if (numericId === undefined) {
@@ -445,21 +369,23 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
     return;
   }
   const lowMemoryMode = shouldUseLowMemoryMode();
-  const retained: RetainedVolumeForReload = {
-    numericId,
-    bytes: new Uint8Array(msg.data),
-    width: msg.width,
-    height: msg.height,
-    depth: msg.depth,
-    spacingX: msg.spacingX,
-    spacingY: msg.spacingY,
-    spacingZ: msg.spacingZ,
-    lowMemoryMode,
-  };
-  currentVolumeForGpuReload = retained;
-  gpuVolumeUnloadedForInference = false;
-  bufferedMaskSlicesDuringUnload = [];
-  uploadVolumeToEngine(retained);
+  const downsampleFactor = lowMemoryMode ? getDownsampleFactor() : 1;
+  const bytes = new Uint8Array(msg.data);
+  withWasmBuffer(bytes.byteLength, (ptr) => {
+    window.Module.HEAPU8.set(bytes, ptr);
+    window.Module._engine_load_volume(
+      numericId,
+      ptr,
+      bytes.byteLength,
+      msg.width,
+      msg.height,
+      msg.depth,
+      msg.spacingX,
+      msg.spacingY,
+      msg.spacingZ,
+      downsampleFactor,
+    );
+  });
   notifyLowMemoryMode(lowMemoryMode);
   notifyVolumeLoaded(msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
@@ -562,23 +488,6 @@ async function main() {
     }
   };
 
-  // Mobile OOM mitigation, Option D: reload-debounce for
-  // engineUnloadVolumeForInference()/engineReloadVolumeAfterInference().
-  // "inference-started"/"inference-ended" fire once per *flush cycle*
-  // (worker.ts's scheduleBatchFlush(), ~17 times for a 133-slice volume at
-  // its batch size of 8) -- reloading the GPU texture on every single one
-  // of those would be both wasteful and untested (the real-device
-  // confirmation kept the volume unloaded for an entire segmentation run,
-  // not per-flush). A short settle window after the last "inference-ended"
-  // treats the run as finished only once flushes actually stop arriving,
-  // rather than needing an exact slice count (which would depend on the
-  // Parse Worker sending exactly `depth` hu-slices per volume, unverified)
-  // -- and self-heals if a run ends early/fails partway, since the volume
-  // always reloads a beat after activity stops instead of staying
-  // unloaded forever.
-  const RELOAD_DEBOUNCE_MS = 750;
-  let reloadDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-
   inferenceWorker.onmessage = (event: MessageEvent<MaskSliceMessage | { type: string }>) => {
     const msg = event.data;
     if (msg.type === "init-complete") {
@@ -590,27 +499,11 @@ async function main() {
       }
       pendingHuSlices.length = 0;
     } else if (msg.type === "mask-slice") {
-      if (gpuVolumeUnloadedForInference) {
-        bufferedMaskSlicesDuringUnload.push(msg as MaskSliceMessage);
-      } else {
-        engineApplyMaskSlice(msg as MaskSliceMessage);
-      }
+      engineApplyMaskSlice(msg as MaskSliceMessage);
     } else if (msg.type === "inference-started") {
       notifyInferenceStarted();
-      engineUnloadVolumeForInference();
-      if (reloadDebounceTimer !== undefined) {
-        clearTimeout(reloadDebounceTimer);
-        reloadDebounceTimer = undefined;
-      }
     } else if (msg.type === "inference-ended") {
       notifyInferenceEnded();
-      if (reloadDebounceTimer !== undefined) {
-        clearTimeout(reloadDebounceTimer);
-      }
-      reloadDebounceTimer = setTimeout(() => {
-        reloadDebounceTimer = undefined;
-        engineReloadVolumeAfterInference();
-      }, RELOAD_DEBOUNCE_MS);
     }
   };
 
@@ -633,6 +526,7 @@ async function main() {
   setupViewControls();
   setupQualityControls();
   setupLowMemoryModeControl();
+  setupDownsampleFactorControl();
   setupTfDetailControls();
   setupClipControls();
   setupCustomColormapControls();

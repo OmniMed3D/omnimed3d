@@ -94,27 +94,17 @@ public:
     // volumeId is an opaque per-load identifier minted by the caller (the
     // future viewer/-owned orchestration layer, PRD #5.3.2) -- applyMaskSlice
     // uses it to reject stale slices from a previous, already-replaced volume.
-    // lowMemoryMode trades ~1.2ms/frame of extra shading cost for skipping
+    // downsampleFactor: 1 means full resolution; any value > 1 also skips
     // the precomputed gradient volume's memory (a full-volume RGBA16Float
-    // texture, 4x the HU volume's own size) -- intended for memory-
-    // constrained devices (mobile OOM mitigation), decided once per load
-    // by the caller (this Device has no way to see device memory/UA info
-    // itself, which is JS/Shell-only information).
+    // texture, 4x the HU volume's own size, trading ~1.2ms/frame of extra
+    // shading cost to skip it) and shrinks the volume/mask textures
+    // in-plane (X/Y only, depth untouched) by that factor -- intended for
+    // memory-constrained devices (mobile OOM mitigation), picked once per
+    // load by the caller (this Device has no way to see device memory/UA
+    // info itself, which is JS/Shell-only information).
     virtual void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                              uint32_t width, uint32_t height, uint32_t depth,
-                             float spacingX, float spacingY, float spacingZ, bool lowMemoryMode) = 0;
-
-    // Releases the currently loaded volume's GPU-resident textures
-    // (volume/gradient/mask) without discarding any other device state.
-    // Safe to call with no volume loaded (no-op). loadVolume() remains the
-    // only way to get a volume back -- this does not retain the volume's
-    // source bytes itself; the caller (Shell) must hold onto those if it
-    // wants to reload later. Mobile OOM mitigation (Option D): the Shell
-    // uses this to free ~100MB of resident GPU memory for the duration of
-    // an AI inference run, which real-device testing showed is enough,
-    // combined with the Inference Worker's own memory, to exceed iOS
-    // WebKit's per-tab memory ceiling when both are held at once.
-    virtual void unloadVolume() = 0;
+                             float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) = 0;
 
     // Writes one Z-slice into the mask texture (uint8 class indices, PRD
     // #5.3.1) for the given volume. No-ops (with a logged reason) if

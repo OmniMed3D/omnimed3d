@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { float32ToFloat16 } from "../../src/workers/parse-worker/src/halfFloat.js";
 
 /**
- * Mobile OOM mitigation (Option A): `_engine_load_volume`'s new trailing
- * `lowMemoryMode` argument skips baking the precomputed gradient volume
+ * Mobile OOM mitigation (Option A): `_engine_load_volume`'s trailing
+ * `downsampleFactor` argument (> 1) skips baking the precomputed gradient volume
  * (a full-volume RGBA16Float texture, 4x the HU volume's own size --
  * 266MB for the demo CT) in favor of an on-the-fly per-step gradient in
  * the raymarch shader (`computeGradient()`, restored from before issue
@@ -89,7 +89,7 @@ function expectedGradientMarkers(lowMemoryMode: 0 | 1): { extent: RegExp; bake: 
   return lowMemoryMode === 1
     ? {
         extent: /WebGPUDevice::gradientTexture: 1x1x1/,
-        bake: /WebGPUDevice::gradientTexture: bake skipped \(low-memory mode\)/,
+        bake: /WebGPUDevice::gradientTexture: bake skipped \(downsampleFactor=\d+\)/,
       }
     : {
         extent: new RegExp(`WebGPUDevice::gradientTexture: ${VOLUME_SIZE}x${VOLUME_SIZE}x${VOLUME_SIZE}`),
@@ -107,15 +107,21 @@ async function loadSphereVolume(
   const listener = (msg: import("@playwright/test").ConsoleMessage) => consoleLines.push(msg.text());
   page.on("console", listener);
   try {
+    // ABI: loadVolume's trailing arg is a downsample factor (1 = off, N =
+    // the actual in-plane shrink), not a 0/1 bool -- this test's own
+    // lowMemoryMode parameter stays 0/1 (its own on/off concept), 4
+    // matches the Engine/Shell's current default (viewer/src/shell/
+    // deviceTier.ts's DEFAULT_DOWNSAMPLE_FACTOR).
+    const downsampleFactor = lowMemoryMode === 1 ? 4 : 1;
     await page.evaluate(
-      ({ id, size, base64, lowMemory }) => {
+      ({ id, size, base64, factor }) => {
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         const ptr = window.Module._malloc(bytes.length);
         window.Module.HEAPU8.set(bytes, ptr);
-        window.Module._engine_load_volume(id, ptr, bytes.length, size, size, size, 1.0, 1.0, 1.0, lowMemory);
+        window.Module._engine_load_volume(id, ptr, bytes.length, size, size, size, 1.0, 1.0, 1.0, factor);
         window.Module._free(ptr);
       },
-      { id: volumeId, size: VOLUME_SIZE, base64: volumeBase64, lowMemory: lowMemoryMode },
+      { id: volumeId, size: VOLUME_SIZE, base64: volumeBase64, factor: downsampleFactor },
     );
     await expect
       .poll(() => consoleLines.some((line) => new RegExp(`WebGPUDevice::loadVolume: volumeId=${volumeId} `).test(line)))

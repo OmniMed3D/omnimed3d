@@ -75,7 +75,7 @@ test("known-answer synthetic mask renders at the geometrically correct quadrant,
       const huBytes = new Uint8Array(voxelCount * 2); // HU=0 everywhere -> all-zero float16 bits
       const ptr = window.Module._malloc(huBytes.length);
       window.Module.HEAPU8.set(huBytes, ptr);
-      window.Module._engine_load_volume(volumeId, ptr, huBytes.length, size, size, 1, 1.0, 1.0, 1.0, 0);
+      window.Module._engine_load_volume(volumeId, ptr, huBytes.length, size, size, 1, 1.0, 1.0, 1.0, 1);
       window.Module._free(ptr);
     },
     { volumeId: VOLUME_ID, size: VOLUME_SIZE },
