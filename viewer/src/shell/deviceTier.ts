@@ -90,16 +90,23 @@ export function shouldUseLowMemoryMode(): boolean {
 // of that limitation.
 export function setupLowMemoryModeControl(): void {
   const checkbox = document.getElementById("low-memory-mode-enabled") as HTMLInputElement | null;
-  if (!checkbox) {
-    console.error("deviceTier: #low-memory-mode-enabled not found in the DOM");
+  // Downsample Factor only takes effect when this checkbox is on (see this
+  // file's header comment on getDownsampleFactor()'s only call site,
+  // main.ts's engineLoadVolume()) -- shown/hidden in lockstep with it
+  // rather than left visible-but-inert.
+  const downsampleRow = document.getElementById("downsample-factor-row");
+  if (!checkbox || !downsampleRow) {
+    console.error("deviceTier: #low-memory-mode-enabled or #downsample-factor-row not found in the DOM");
     return;
   }
   // Reflects the URL-param/auto-detected starting point (manualOverride
   // is still null at this point in startup), so the checkbox shows what
   // would actually happen before the user has touched it.
   checkbox.checked = shouldUseLowMemoryMode();
+  downsampleRow.hidden = !checkbox.checked;
   checkbox.addEventListener("change", () => {
     setManualLowMemoryOverride(checkbox.checked);
+    downsampleRow.hidden = !checkbox.checked;
   });
 }
 

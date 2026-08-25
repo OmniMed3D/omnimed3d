@@ -24,6 +24,10 @@ async function loadVolumeWithMask(page: import("@playwright/test").Page): Promis
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // TF Detail is a collapsed <details> section by default, nested inside
+  // the outer "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#tf-detail-toggle").click();
 
   const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
   const volumeId = await page.evaluate(() => window.omnimed3dTestHooks.startNewVolume());

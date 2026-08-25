@@ -45,6 +45,7 @@ interface DemoCtManifest {
 export function setupDemoCtControls(
   loadVolumeFromBuffers: (buffers: ArrayBuffer[]) => Promise<string>,
   showLoadError: (message?: string) => void,
+  setReloadAction: (action: (() => void) | null) => void,
 ): void {
   const button = document.getElementById("load-demo-ct") as HTMLButtonElement | null;
   const status = document.getElementById("demo-ct-status");
@@ -54,7 +55,7 @@ export function setupDemoCtControls(
   }
 
   button.addEventListener("click", () => {
-    void loadDemoCt(button, status, loadVolumeFromBuffers, showLoadError);
+    void loadDemoCt(button, status, loadVolumeFromBuffers, showLoadError, setReloadAction);
   });
 }
 
@@ -63,11 +64,19 @@ async function loadDemoCt(
   status: HTMLElement,
   loadVolumeFromBuffers: (buffers: ArrayBuffer[]) => Promise<string>,
   showLoadError: (message?: string) => void,
+  setReloadAction: (action: (() => void) | null) => void,
 ): Promise<void> {
   button.disabled = true;
   setGaugeLabel(button, "Loading…");
   setGaugeProgress(button, 0);
   status.textContent = "";
+  // Registered up front, matching main.ts's loadVolumeFromFiles -- "Reload
+  // Volume" (reloadVolumeControl.ts) redoes this same fetch sequence from
+  // scratch, cheap since it's a fresh fetch() either way, not a retained
+  // in-memory copy.
+  setReloadAction(() => {
+    void loadDemoCt(button, status, loadVolumeFromBuffers, showLoadError, setReloadAction);
+  });
 
   let manifest: DemoCtManifest;
   try {

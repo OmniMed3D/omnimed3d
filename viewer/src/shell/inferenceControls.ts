@@ -35,6 +35,7 @@
  */
 
 import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
+import { shouldUseLowMemoryMode } from "./deviceTier.js";
 
 const MODEL_BASE_PATH = "/models/lungmask_r231";
 
@@ -166,6 +167,16 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
     button.disabled = true;
     setGaugeLabel(button, "Downloading model...");
     setGaugeProgress(button, 0);
+    // User request, 2026-08-26: Low-Memory Mode pauses rendering for the
+    // duration of each inference batch (renderPauseBanner.ts) and runs
+    // against downsampled textures -- the combination reads as "stuck" to
+    // a first-time user without this heads-up. Overwritten by the
+    // init-complete handler below once the model actually finishes
+    // loading, same as this status line always has been.
+    if (shouldUseLowMemoryMode()) {
+      status.textContent =
+        "Low-Memory Mode is on -- segmentation may take longer than usual, since rendering pauses while each batch runs.";
+    }
     const debugForce = debugForceFromUrl();
     inferenceWorker.postMessage({
       type: "init",

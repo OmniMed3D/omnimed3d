@@ -13,9 +13,7 @@ import { expect, test } from "@playwright/test";
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
 
-async function loadVolumeAndSettle(
-  page: import("@playwright/test").Page,
-): Promise<{ engineVolumeId: number }> {
+async function loadVolumeAndSettle(page: import("@playwright/test").Page): Promise<{ engineVolumeId: number }> {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
   async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
@@ -24,6 +22,14 @@ async function loadVolumeAndSettle(
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // Rendering/TF Detail/Clip are collapsed <details> sections nested
+  // inside the outer "Advanced Mode" <details> -- see index.html. Clip's
+  // own toggle is expanded separately, only in the clip-box test below
+  // that actually needs it, but Advanced Mode itself has to be open for
+  // any of the nested toggles below to even be clickable.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#rendering-toggle").click();
+  await page.locator("#tf-detail-toggle").click();
   await page.locator("#dicom-files-input").setInputFiles(ctSmallDcmPath);
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
   await page.waitForTimeout(500);
@@ -119,6 +125,11 @@ test("custom colormap pickers change the rendered frame and mark Custom active (
 
 test("clip box restricts the rendered volume and mask overlay stays aligned (§6.4)", async ({ page }) => {
   const { engineVolumeId } = await loadVolumeAndSettle(page);
+  // Clip is a collapsed <details> section by default -- see index.html.
+  // Needed for #clip-reset's Locator.click() below; the slider updates
+  // above go through page.evaluate()/getElementById directly, which
+  // isn't gated by visibility.
+  await page.locator("#clip-toggle").click();
   const canvas = page.locator("#canvas");
 
   // Apply a mask first so we can confirm it survives clipping without

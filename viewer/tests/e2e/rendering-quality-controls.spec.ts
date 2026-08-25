@@ -22,6 +22,10 @@ async function loadVolumeAndSettle(page: import("@playwright/test").Page): Promi
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
+  // Rendering is a collapsed <details> section by default, nested inside
+  // the outer "Advanced Mode" <details> -- see index.html.
+  await page.locator("#advanced-mode-toggle").click();
+  await page.locator("#rendering-toggle").click();
   await page.locator("#dicom-files-input").setInputFiles(ctSmallDcmPath);
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
   // Lets a few real accumulation frames settle at the default (Medium)

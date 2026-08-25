@@ -151,35 +151,6 @@
           <span id="axial-slice-index-value" class="value"></span>
         </div>
       </div>
-      <!-- REQ-R04 (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
-           §4.1/§4.3): raymarch quality tier + gradient-shading toggle.
-           Quality reuses the preset-buttons pattern (data-quality-tier,
-           qualityControls.ts); Shading is a checkbox since it's a plain
-           on/off, not one of several discrete presets. -->
-      <div class="panel-section">
-        <span class="section-label">Rendering</span>
-        <div class="row preset-buttons quality-buttons">
-          <button type="button" data-quality-tier="0" data-tooltip-key="quality-tier-0">Low</button>
-          <button type="button" data-quality-tier="1" data-tooltip-key="quality-tier-1">Medium</button>
-          <button type="button" data-quality-tier="2" data-tooltip-key="quality-tier-2">High</button>
-        </div>
-        <div class="row checkbox-row">
-          <label for="shading-enabled">Shading</label>
-          <input id="shading-enabled" type="checkbox" checked data-tooltip-key="shading-enabled" />
-        </div>
-        <div class="row checkbox-row">
-          <label for="low-memory-mode-enabled">Low-Memory Mode</label>
-          <input id="low-memory-mode-enabled" type="checkbox" data-tooltip-key="low-memory-mode-enabled" />
-        </div>
-        <div class="row checkbox-row">
-          <label for="downsample-factor">Downsample Factor</label>
-          <select id="downsample-factor">
-            <option value="2">2x</option>
-            <option value="4" selected>4x</option>
-            <option value="8">8x</option>
-          </select>
-        </div>
-      </div>
       <div class="panel-section">
         <span class="section-label">Window &amp; Level</span>
         <!-- Follow-up: #window-center-value/#window-width-value are real
@@ -244,179 +215,276 @@
           <input id="custom-high-color" type="color" value="#ffffff" data-tooltip-key="custom-high-color" />
         </div>
       </div>
-      <!-- §5.3 TF detail controls: previously-fixed constants (extinction)
+      <!-- Progressive disclosure (user request, 2026-08-26, nested one
+           level deeper 2026-08-26 same day): everything below Window &
+           Level is secondary to routine CT viewing, so it's tucked behind
+           one outer "Advanced Mode" <details> -- collapsed by default, a
+           single title row rather than five, for a visually calmer panel.
+           Each section inside is its own nested <details>, unchanged from
+           before -- Advanced Mode only adds one more disclosure level on
+           top, it doesn't replace the per-section ones. All native, no JS:
+           the browser owns expand/collapse via <details>'s own `open`
+           attribute, at both levels independently. #control-panel's
+           existing .panel-section styling (flex column, 8px gap, the
+           divider border via `.panel-section + .panel-section`) applies to
+           <details> exactly like the plain <div> sections above and nests
+           the same way; style.css's `summary.section-label` rule only adds
+           the chevron + its rotation, styled off that same `open`
+           attribute. -->
+      <details class="panel-section">
+        <summary id="advanced-mode-toggle" class="section-label">
+          Advanced Mode<span class="chevron" aria-hidden="true"></span>
+        </summary>
+        <!-- §6.4 clip box: 3 axes, each a min/max pair over the loaded
+             volume's own physical extent (world mm) -- ranges are set
+             per-volume by clipControls.ts's notifyVolumeAabbLoaded(), not
+             fixed like window/level's clinical defaults. -->
+        <details class="panel-section">
+          <summary id="clip-toggle" class="section-label">Clip<span class="chevron" aria-hidden="true"></span></summary>
+          <div class="row">
+            <label for="clip-x-min">X</label>
+            <input
+              id="clip-x-min"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip X minimum"
+              data-tooltip-key="clip-x-min"
+            />
+            <input
+              id="clip-x-max"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip X maximum"
+              data-tooltip-key="clip-x-max"
+            />
+          </div>
+          <div class="row">
+            <label for="clip-y-min">Y</label>
+            <input
+              id="clip-y-min"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip Y minimum"
+              data-tooltip-key="clip-y-min"
+            />
+            <input
+              id="clip-y-max"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip Y maximum"
+              data-tooltip-key="clip-y-max"
+            />
+          </div>
+          <div class="row">
+            <label for="clip-z-min">Z</label>
+            <input
+              id="clip-z-min"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip Z minimum"
+              data-tooltip-key="clip-z-min"
+            />
+            <input
+              id="clip-z-max"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              aria-label="Clip Z maximum"
+              data-tooltip-key="clip-z-max"
+            />
+          </div>
+          <div class="row">
+            <button type="button" id="clip-reset" class="upload-btn secondary" data-tooltip-key="clip-reset">
+              Reset Clip
+            </button>
+          </div>
+        </details>
+        <!-- REQ-R04 (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
+           §4.1/§4.3): raymarch quality tier + gradient-shading toggle.
+           Quality reuses the preset-buttons pattern (data-quality-tier,
+           qualityControls.ts); Shading is a checkbox since it's a plain
+           on/off, not one of several discrete presets. -->
+        <details class="panel-section">
+          <summary id="rendering-toggle" class="section-label">
+            Rendering<span class="chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="row preset-buttons quality-buttons">
+            <button type="button" data-quality-tier="0" data-tooltip-key="quality-tier-0">Low</button>
+            <button type="button" data-quality-tier="1" data-tooltip-key="quality-tier-1">Medium</button>
+            <button type="button" data-quality-tier="2" data-tooltip-key="quality-tier-2">High</button>
+          </div>
+          <div class="row checkbox-row">
+            <label for="shading-enabled">Shading</label>
+            <input id="shading-enabled" type="checkbox" checked data-tooltip-key="shading-enabled" />
+          </div>
+          <div class="row checkbox-row">
+            <label for="low-memory-mode-enabled">Low-Memory Mode</label>
+            <input id="low-memory-mode-enabled" type="checkbox" data-tooltip-key="low-memory-mode-enabled" />
+          </div>
+          <!-- Only meaningful when Low-Memory Mode is on (it's the only thing
+             that reads this value -- see main.ts's engineLoadVolume());
+             deviceTier.ts's setupLowMemoryModeControl() shows/hides this
+             row in sync with that checkbox. -->
+          <div class="row checkbox-row" id="downsample-factor-row" hidden>
+            <label for="downsample-factor">Downsample Factor</label>
+            <select id="downsample-factor">
+              <option value="2">2x</option>
+              <option value="4" selected>4x</option>
+              <option value="8">8x</option>
+            </select>
+          </div>
+          <!-- User request, 2026-08-26: Low-Memory Mode/Downsample Factor
+               above only take effect on the *next* volume load (they
+               control GPU texture size at load time -- see deviceTier.ts),
+               so toggling them with a volume already on screen otherwise
+               looks like nothing happened. reloadVolumeControl.ts owns
+               enabling this once a volume has actually been loaded. -->
+          <div class="row">
+            <button
+              type="button"
+              id="reload-volume"
+              class="upload-btn secondary"
+              disabled
+              data-tooltip-key="reload-volume"
+            >
+              Reload Volume
+            </button>
+          </div>
+        </details>
+        <!-- §5.3 TF detail controls: previously-fixed constants (extinction)
            or nonexistent controls (density scale, threshold, gradient-
            opacity, occlusion), now real sliders/toggle. -->
-      <div class="panel-section">
-        <span class="section-label">TF Detail</span>
-        <div class="row">
-          <label for="extinction">Extinction</label>
-          <input id="extinction" type="range" min="0.1" max="30" step="0.1" data-tooltip-key="extinction" />
-          <input
-            id="extinction-value"
-            class="value"
-            type="number"
-            min="0.1"
-            max="30"
-            step="0.1"
-            aria-label="Extinction value"
-          />
-        </div>
-        <div class="row">
-          <label for="density-scale">Density Scale</label>
-          <input id="density-scale" type="range" min="0" max="5" step="0.05" data-tooltip-key="density-scale" />
-          <input
-            id="density-scale-value"
-            class="value"
-            type="number"
-            min="0"
-            max="5"
-            step="0.05"
-            aria-label="Density Scale value"
-          />
-        </div>
-        <div class="row">
-          <label for="threshold">Threshold</label>
-          <input id="threshold" type="range" min="0" max="0.5" step="0.01" data-tooltip-key="threshold" />
-          <input
-            id="threshold-value"
-            class="value"
-            type="number"
-            min="0"
-            max="0.5"
-            step="0.01"
-            aria-label="Threshold value"
-          />
-        </div>
-        <div class="row">
-          <label for="gradient-opacity">Edge Emphasis</label>
-          <input id="gradient-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="gradient-opacity" />
-          <span id="gradient-opacity-value" class="value"></span>
-        </div>
-        <div class="row checkbox-row">
-          <label for="occlusion-enabled">Occlusion Shading</label>
-          <input id="occlusion-enabled" type="checkbox" data-tooltip-key="occlusion-enabled" />
-        </div>
-        <div class="row">
-          <label for="mask-opacity">Mask Opacity</label>
-          <input id="mask-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="mask-opacity" />
-          <input
-            id="mask-opacity-value"
-            class="value"
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            aria-label="Mask Opacity value"
-          />
-        </div>
-        <div class="row checkbox-row">
-          <label for="mask-overlay-enabled">Show Mask</label>
-          <input id="mask-overlay-enabled" type="checkbox" checked data-tooltip-key="mask-overlay-enabled" />
-        </div>
-      </div>
-      <!-- §6.4 clip box: 3 axes, each a min/max pair over the loaded
-           volume's own physical extent (world mm) -- ranges are set
-           per-volume by clipControls.ts's notifyVolumeAabbLoaded(), not
-           fixed like window/level's clinical defaults. -->
-      <div class="panel-section">
-        <span class="section-label">Clip</span>
-        <div class="row">
-          <label for="clip-x-min">X</label>
-          <input
-            id="clip-x-min"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip X minimum"
-            data-tooltip-key="clip-x-min"
-          />
-          <input
-            id="clip-x-max"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip X maximum"
-            data-tooltip-key="clip-x-max"
-          />
-        </div>
-        <div class="row">
-          <label for="clip-y-min">Y</label>
-          <input
-            id="clip-y-min"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip Y minimum"
-            data-tooltip-key="clip-y-min"
-          />
-          <input
-            id="clip-y-max"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip Y maximum"
-            data-tooltip-key="clip-y-max"
-          />
-        </div>
-        <div class="row">
-          <label for="clip-z-min">Z</label>
-          <input
-            id="clip-z-min"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip Z minimum"
-            data-tooltip-key="clip-z-min"
-          />
-          <input
-            id="clip-z-max"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.1"
-            aria-label="Clip Z maximum"
-            data-tooltip-key="clip-z-max"
-          />
-        </div>
-        <div class="row">
-          <button type="button" id="clip-reset" class="upload-btn secondary" data-tooltip-key="clip-reset">
-            Reset Clip
-          </button>
-        </div>
-      </div>
-      <!-- Raymarch background color (rhi::Device::setBackgroundColor) --
+        <details class="panel-section">
+          <summary id="tf-detail-toggle" class="section-label">
+            TF Detail<span class="chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="row">
+            <label for="extinction">Extinction</label>
+            <input id="extinction" type="range" min="0.1" max="30" step="0.1" data-tooltip-key="extinction" />
+            <input
+              id="extinction-value"
+              class="value"
+              type="number"
+              min="0.1"
+              max="30"
+              step="0.1"
+              aria-label="Extinction value"
+            />
+          </div>
+          <div class="row">
+            <label for="density-scale">Density Scale</label>
+            <input id="density-scale" type="range" min="0" max="5" step="0.05" data-tooltip-key="density-scale" />
+            <input
+              id="density-scale-value"
+              class="value"
+              type="number"
+              min="0"
+              max="5"
+              step="0.05"
+              aria-label="Density Scale value"
+            />
+          </div>
+          <div class="row">
+            <label for="threshold">Threshold</label>
+            <input id="threshold" type="range" min="0" max="0.5" step="0.01" data-tooltip-key="threshold" />
+            <input
+              id="threshold-value"
+              class="value"
+              type="number"
+              min="0"
+              max="0.5"
+              step="0.01"
+              aria-label="Threshold value"
+            />
+          </div>
+          <div class="row">
+            <label for="gradient-opacity">Edge Emphasis</label>
+            <input id="gradient-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="gradient-opacity" />
+            <span id="gradient-opacity-value" class="value"></span>
+          </div>
+          <div class="row checkbox-row">
+            <label for="occlusion-enabled">Occlusion Shading</label>
+            <input id="occlusion-enabled" type="checkbox" data-tooltip-key="occlusion-enabled" />
+          </div>
+          <div class="row">
+            <label for="mask-opacity">Mask Opacity</label>
+            <input id="mask-opacity" type="range" min="0" max="1" step="0.05" data-tooltip-key="mask-opacity" />
+            <input
+              id="mask-opacity-value"
+              class="value"
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              aria-label="Mask Opacity value"
+            />
+          </div>
+          <div class="row checkbox-row">
+            <label for="mask-overlay-enabled">Show Mask</label>
+            <input id="mask-overlay-enabled" type="checkbox" checked data-tooltip-key="mask-overlay-enabled" />
+          </div>
+        </details>
+        <!-- Raymarch background color (rhi::Device::setBackgroundColor) --
            purely cosmetic, no clinical window/level meaning, so plain
            presets rather than an engine-owned enum like the colormap
            presets above. backgroundControls.ts owns the active-state
            highlighting + engine_set_background_color calls. -->
-      <div class="panel-section">
-        <span class="section-label">Background</span>
-        <div class="row preset-buttons">
-          <button type="button" data-background-preset="dark" data-tooltip-key="background-preset-dark">Dark</button>
-          <button type="button" data-background-preset="black" data-tooltip-key="background-preset-black">Black</button>
-          <button type="button" data-background-preset="gray" data-tooltip-key="background-preset-gray">Gray</button>
-          <button type="button" data-background-preset="white" data-tooltip-key="background-preset-white">White</button>
-        </div>
-      </div>
-      <!-- Perf/hardware debug overlay (baseline browser-performance
+        <details class="panel-section">
+          <summary id="background-toggle" class="section-label">
+            Background<span class="chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="row preset-buttons">
+            <button type="button" data-background-preset="dark" data-tooltip-key="background-preset-dark">Dark</button>
+            <button type="button" data-background-preset="black" data-tooltip-key="background-preset-black">
+              Black
+            </button>
+            <button type="button" data-background-preset="gray" data-tooltip-key="background-preset-gray">Gray</button>
+            <button type="button" data-background-preset="white" data-tooltip-key="background-preset-white">
+              White
+            </button>
+          </div>
+        </details>
+        <!-- Perf/hardware debug overlay (baseline browser-performance
            measurement -- there was previously no way to see actual frame
            time or GPU identity in this viewer at all). Off by default --
            this is a developer-facing "test palette", not part of the
            clinical-viewer UI proper. statsOverlay.ts owns #stats-overlay's
            hidden state and its rAF-driven content updates. -->
-      <div class="panel-section">
-        <span class="section-label">Debug</span>
-        <div class="row checkbox-row">
-          <label for="stats-overlay-enabled">Show Stats</label>
-          <input id="stats-overlay-enabled" type="checkbox" data-tooltip-key="stats-overlay-enabled" />
-        </div>
-      </div>
+        <details class="panel-section">
+          <summary id="debug-toggle" class="section-label">
+            Debug<span class="chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="row checkbox-row">
+            <label for="stats-overlay-enabled">Show Stats</label>
+            <input id="stats-overlay-enabled" type="checkbox" data-tooltip-key="stats-overlay-enabled" />
+          </div>
+        </details>
+      </details>
+      <!-- User request, 2026-08-26: the last thing inside Advanced Mode
+           has nothing below it but #control-panel's own bottom padding --
+           not always enough clearance above a mobile browser's own bottom
+           chrome to comfortably tap. A sibling of the outer Advanced Mode
+           <details>, not nested inside it (sized further at the existing
+           640px breakpoint below): nesting it inside would make it
+           disappear along with the rest of Advanced Mode's content
+           whenever that section is collapsed (its default state), which is
+           exactly when this clearance matters most -- at that point
+           Advanced Mode's own title row is the last visible thing in the
+           panel. A dedicated spacer is also more robust than tuning the
+           shared panel padding, which every other section's bottom edge
+           also depends on. -->
+      <div id="debug-section-spacer" aria-hidden="true"></div>
     </div>
 
     <!-- Draggable like #control-panel (panelDrag.ts's setupPanelDrag is
