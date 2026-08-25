@@ -77,7 +77,9 @@ export async function runBatch<TMeta>(
 ): Promise<MaskSliceMessage[]> {
   if (requests.length === 0) return [];
 
+  console.log("[AI-DIAG] runBatch: preprocess starting, n =", requests.length);
   const preprocessed = requests.map((request) => adapter.preprocess(request.slice));
+  console.log("[AI-DIAG] runBatch: preprocess done");
   const itemDims = preprocessed[0]!.tensor.dims;
   const itemSize = preprocessed[0]!.tensor.data.length;
 
@@ -86,8 +88,12 @@ export async function runBatch<TMeta>(
     batchedData.set(tensor.data as Float32Array, i * itemSize);
   });
   const batchedInput = new ort.Tensor("float32", batchedData, [requests.length, ...itemDims.slice(1)]);
+  console.log("[AI-DIAG] runBatch: batch tensor built, dims =", batchedInput.dims);
 
+  console.log("[AI-DIAG] runBatch: infer() starting");
+  const inferStart = performance.now();
   const batchedLogits = await adapter.infer(session, batchedInput);
+  console.log("[AI-DIAG] runBatch: infer() resolved in", (performance.now() - inferStart).toFixed(0), "ms");
   const outputItemSize = batchedLogits.data.length / requests.length;
   const outputItemDims = [1, ...batchedLogits.dims.slice(1)];
 
