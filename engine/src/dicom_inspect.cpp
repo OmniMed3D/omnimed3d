@@ -58,5 +58,14 @@ int main(int argc, char** argv) {
     std::printf("  Slice Thickness:                %g\n", image->sliceThickness);
     std::printf("  Rescale Slope / Intercept:      %g / %g\n", image->rescaleSlope, image->rescaleIntercept);
     std::printf("  Pixel Data Length:              %zu bytes\n", image->pixelDataLength);
+    std::printf("  HasOrientation/HasPosition:     %d / %d\n", image->hasImageOrientationPatient,
+                 image->hasImagePositionPatient);
+    std::printf("  ImageOrientationPatient:        %g %g %g / %g %g %g\n", image->imageOrientationPatient[0],
+                 image->imageOrientationPatient[1], image->imageOrientationPatient[2],
+                 image->imageOrientationPatient[3], image->imageOrientationPatient[4],
+                 image->imageOrientationPatient[5]);
+    std::printf("  ImagePositionPatient:           %g %g %g\n", image->imagePositionPatient[0],
+                 image->imagePositionPatient[1], image->imagePositionPatient[2]);
+    std::printf("  InstanceNumber:                 %d\n", image->instanceNumber);
     return 0;
 }

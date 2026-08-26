@@ -1,9 +1,9 @@
 # ADR-0002: `dicom-parser/` pixel data decoding — uncompressed transfer syntaxes only
 
-| Field  | Value      |
-| ------ | ---------- |
-| Status | Accepted   |
-| Date   | 2026-08-12 |
+| Field  | Value                                                          |
+| ------ | -------------------------------------------------------------- |
+| Status | Accepted (undefined-length-sequence scope revisited 2026-08-27, see below) |
+| Date   | 2026-08-12                                                     |
 
 ## Context
 
@@ -44,29 +44,47 @@ project's designated test/training dataset, LIDC-IDRI (`docs/prd/PRD.md`
 
 A related, smaller scope boundary: elements with an undefined length
 (`0xFFFFFFFF`, used by `SQ` sequences and encapsulated/compressed pixel
-data) are detected and rejected with `DicomParseError::UnsupportedSequenceEncoding`
-rather than parsed. Correctly skipping such elements requires nested
-Sequence/Item delimiter scanning (a real DICOM structural feature,
-independent of pixel compression) — out of scope here; failing loudly on
-an unexpected undefined-length element is preferred over silently
-misparsing everything downstream of it.
+data) were originally detected and rejected outright with
+`DicomParseError::UnsupportedSequenceEncoding` rather than parsed, on the
+grounds that correctly skipping them requires nested Sequence/Item
+delimiter scanning (a real DICOM structural feature, independent of pixel
+compression) — deferred as out of scope for the initial pass.
+
+**Revisited 2026-08-27:** this trigger fired for real. A user-reported
+UPENN-GBM MR series (`omnimed3d_tests/Brain/upenn_gbm/`) failed to load
+entirely — every sampled file hit `UnsupportedSequenceEncoding` on an
+undefined-length `SQ` element (e.g. Referenced Image Sequence) that
+appears before Rows/Columns/PixelData in the dataset, across both
+Implicit and Explicit VR Little Endian files. `DicomFile::parseImageInfo`
+now implements the Sequence/Item delimiter scan this ADR originally
+deferred (`skipUndefinedLengthSequence`/`skipItemDataset` in
+`dicom-parser/src/DicomFile.cpp`, recursive to handle arbitrarily nested
+sequences) and skips well-formed undefined-length sequences instead of
+rejecting them outright. `UnsupportedSequenceEncoding` is now reserved for
+a genuinely malformed/truncated sequence structure, not merely the
+presence of one. The compressed-transfer-syntax boundary itself (below)
+is unchanged by this revision — only the undefined-length-element
+handling changed, and only for sequences reachable while walking the main
+dataset (not encapsulated/compressed PixelData, which the
+transfer-syntax check above still rejects before this code path is ever
+reached).
 
 ## Consequences
 
 - Real-world DICOM files using JPEG 2000/JPEG-LS/RLE compressed pixel data
   will fail to decode through this library. Files must be uncompressed
-  (Explicit or Implicit VR Little Endian) to work end-to-end.
+  (Explicit or Implicit VR Little Endian) to work end-to-end. This part of
+  the original decision is unchanged.
 - Files containing `SQ` elements with undefined length elsewhere in the
   dataset (common even in otherwise-uncompressed CT/MR studies, e.g.
-  "Referenced Image Sequence") will also fail via
-  `UnsupportedSequenceEncoding`, even though their pixel data itself would
-  otherwise be supported. `engine/tests/fixtures/CT_small.dcm` happens to
-  encode its one `SQ` element with a *defined* length, so it isn't affected
-  — this is a real gap for other real-world files, not just a theoretical
-  one.
-- If a genuine need for compressed-transfer-syntax or undefined-length
-  support surfaces (e.g. a real LIDC-IDRI file that doesn't parse), revisit
-  this decision then rather than pre-building support speculatively now.
+  "Referenced Image Sequence") are no longer rejected — see "Revisited
+  2026-08-27" above. `engine/tests/fixtures/CT_small.dcm` happens to
+  encode its one `SQ` element with a *defined* length, so this gap was
+  invisible in that fixture until a real MR series surfaced it.
+- If a genuine need for compressed-transfer-syntax support surfaces,
+  revisit that part of this decision then rather than pre-building support
+  speculatively now — the undefined-length-sequence part no longer needs
+  a separate trigger, it's done.
 
 ## Alternatives Considered
 

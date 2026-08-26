@@ -32,10 +32,12 @@ enum class DicomParseError {
 
     // Errors specific to parseImageInfo() -- main dataset / pixel data.
     UnsupportedTransferSyntax,   // not Explicit or Implicit VR Little Endian
-    UnsupportedSequenceEncoding, // undefined-length (0xFFFFFFFF) element hit;
-                                  // full nested Sequence/Item delimiter
-                                  // scanning is out of scope, so this fails
-                                  // loudly instead of misparsing
+    UnsupportedSequenceEncoding, // an undefined-length (0xFFFFFFFF) SQ
+                                  // element's Item/delimiter structure was
+                                  // malformed or truncated -- well-formed
+                                  // undefined-length sequences are skipped,
+                                  // not rejected (see docs/adr/0002's
+                                  // "revisit this decision" note)
     UnsupportedPixelFormat,      // SamplesPerPixel != 1, PhotometricInterpretation
                                   // not MONOCHROME1/2, or PixelData has an
                                   // undefined/encapsulated length (compressed)
@@ -83,6 +85,25 @@ struct DicomImageInfo {
     double imagePositionPatient[3] = {0, 0, 0};
     bool hasImageOrientationPatient = false;
     bool hasImagePositionPatient = false;
+
+    // VOI LUT display window (DICOM PS3.3 C.11.2) -- the scanner/PACS's own
+    // recommendation for how to map pixel values (after Rescale
+    // Slope/Intercept, i.e. the same units as the HU the caller computes)
+    // to a display range. Real clinical viewers read this per-image rather
+    // than guessing a fixed window; a caller applying a generic modality
+    // preset instead (e.g. a CT Hounsfield-Unit window against MR data
+    // whose intensity scale isn't HU at all) can produce a wildly
+    // wrong-looking image even though nothing failed to parse -- bug
+    // report, 2026-08-27 (UPENN-GBM brain MR rendered as a blown-out white
+    // block under the app's CT "Brain" preset). Both tags are multi-valued
+    // per spec (multiple VOI LUT windows); only the first is exposed here,
+    // same simplification as pixelSpacing/rescaleSlope. Presence flags for
+    // the same reason as imageOrientationPatient/imagePositionPatient --
+    // 0 is a legitimate real value too.
+    double windowCenter = 0.0;
+    double windowWidth = 0.0;
+    bool hasWindowCenter = false;
+    bool hasWindowWidth = false;
 
     // View into the caller's original buffer -- never a copy (ADR-0004's
     // zero-copy philosophy). Valid only as long as that buffer is alive.
