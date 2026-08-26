@@ -53,8 +53,20 @@
  * turning it into a 10th, dynamic preset (`FROM_FILE_PRESET_ID`, "From
  * File") instead of an auto-applied override: the value is *stored*
  * durably (survives switching to/from other presets or manual drags) and
- * only *applied* when the user actually picks it, so the initial view
- * still starts on the ordinary default (Soft Tissue) preset.
+ * only *applied* when the user actually picks it.
+ *
+ * User feedback, 2026-08-27 (follow-up to the above, same day): with
+ * FROM_FILE_THRESHOLD now suppressing the background/air haze (see its own
+ * comment), starting a volume that *has* a file window/level on plain Soft
+ * Tissue was reported as still showing a solid, undifferentiated box in 3D
+ * Orbit on first load of the UPENN-GBM brain MR demo -- Soft Tissue's
+ * threshold is 0, and a CT-calibrated window has no reason to clip a
+ * non-HU (e.g. MR) volume's background correctly. Since a present file
+ * window/level is this codebase's own signal for "likely non-HU data" (see
+ * setFileWindowLevel's own comment), setFileWindowLevel now applies "From
+ * File" as that volume's starting preset instead of leaving Soft Tissue
+ * selected -- a volume with no file window/level (the common CT case)
+ * still starts on Soft Tissue, unchanged.
  */
 
 const DEFAULT_WINDOW_CENTER = 40;
@@ -159,6 +171,30 @@ export const CUSTOM_PRESET_ID = 8;
 // same pattern as Custom.
 export const FROM_FILE_PRESET_ID = 9;
 
+// User feedback, 2026-08-27 (3D Orbit follow-up to the "From File" window/
+// level preset): every fixed CT preset except Lung/Bone leaves threshold
+// at 0 because real CT air (~-1000 HU) already clamps to n=0 on its own,
+// far below any of those windows' floors -- no explicit cutoff is needed.
+// That safety margin doesn't exist for non-HU data (e.g. MR): its raw
+// background/air value is a small *positive* number near the noise floor
+// (magnitude images can't be negative), which lands as a *mid-range* n
+// under a plausible window instead of clamping to 0 -- so in 3D Orbit,
+// background/air renders with real, visible opacity instead of staying
+// transparent (the same window/threshold interaction that made Stroke
+// render like Bone and Bone render like Soft Tissue against this app's
+// UPENN-GBM demo, diagnosed 2026-08-27). "From File"'s window comes from
+// the series' own DICOM VOI LUT, which has no comparable per-file
+// threshold recommendation to read -- this is a fixed approximation, not
+// a per-file-calibrated value: 0.15 is chosen to sit comfortably above
+// where a typical file-provided window's own floor tends to land relative
+// to a near-zero background (empirically, roughly 0.1-0.125 for this
+// project's own UPENN-GBM test series), without cutting into real tissue
+// signal, which typically extends well past that. Revisit if a real file
+// still shows a visibly hazy background under "From File" in 3D Orbit --
+// same "revisit when a real case demonstrates the need" trigger as
+// docs/adr/0002-dicom-parser-uncompressed-pixel-data.md's own precedent.
+const FROM_FILE_THRESHOLD = 0.15;
+
 // Mirrors kColormapPresets[presetId].threshold (WebGPUDevice.cpp) -- kept
 // in sync here for the same reason PRESET_WINDOW_LEVELS is: setColormapPreset()
 // applies this natively (no readback export), but the #threshold slider
@@ -177,6 +213,9 @@ const PRESET_THRESHOLDS: Record<number, number> = {
   5: 0, // Abdomen/Liver
   6: 0, // Stroke
   7: 0, // Subdural
+  // "From File" -- see FROM_FILE_THRESHOLD's own comment above for why
+  // this one isn't 0 like most of the fixed CT presets above.
+  [FROM_FILE_PRESET_ID]: FROM_FILE_THRESHOLD,
 };
 
 // The engine's own default-on-load preset (kDefaultColormapPreset in
@@ -255,6 +294,22 @@ function applyWindowLevel(center: number, width: number): void {
 // point of this feature).
 let currentFileWindowLevel: { center: number; width: number } | null = null;
 
+// Shared by the preset-select change handler's "From File" branch and
+// setFileWindowLevel's own auto-select (2026-08-27 follow-up, see this
+// module's header comment) -- both need to apply the file's window/level,
+// its threshold, and mark the preset active in exactly the same way.
+function applyFromFilePreset(center: number, width: number): void {
+  applyWindowLevel(center, width);
+  const thresholdInput = document.getElementById("threshold") as HTMLInputElement | null;
+  const thresholdLabel = document.getElementById("threshold-value") as HTMLInputElement | null;
+  if (thresholdInput && thresholdLabel) {
+    thresholdInput.value = String(FROM_FILE_THRESHOLD);
+    thresholdLabel.value = String(FROM_FILE_THRESHOLD);
+  }
+  window.Module._engine_set_threshold(FROM_FILE_THRESHOLD);
+  setActivePreset(FROM_FILE_PRESET_ID);
+}
+
 // Called by main.ts on every volume load (2026-08-27 bug report: UPENN-GBM
 // brain MR rendered as a blown-out white block under the app's CT "Brain"
 // preset, center 40/width 80 HU -- MR pixel values aren't Hounsfield
@@ -294,6 +349,7 @@ export function setFileWindowLevel(center: number | undefined, width: number | u
     option.disabled = false;
     option.title = `Center ${center} / Width ${width} -- this series' own DICOM VOI LUT window`;
   }
+  applyFromFilePreset(center, width);
 }
 
 export function setupWindowLevelControls(): void {
@@ -342,7 +398,10 @@ export function setupWindowLevelControls(): void {
     // else in this file -- the fixed-preset branch below intentionally
     // relies on engine_set_colormap_preset having already set window/level
     // natively, only mirroring it into the sliders, so it doesn't need a
-    // second explicit engine_set_window_level call).
+    // second explicit engine_set_window_level call). Same reasoning for
+    // threshold, applied explicitly here instead of arriving for free --
+    // see FROM_FILE_THRESHOLD's own comment for why 3D Orbit needs one at
+    // all for non-HU data.
     if (presetId === FROM_FILE_PRESET_ID) {
       if (!currentFileWindowLevel) {
         console.error('windowLevelControls: "From File" selected but no file window/level is stored, ignoring');
@@ -350,8 +409,7 @@ export function setupWindowLevelControls(): void {
       }
       center = currentFileWindowLevel.center;
       width = currentFileWindowLevel.width;
-      applyWindowLevel(center, width);
-      setActivePreset(presetId);
+      applyFromFilePreset(center, width);
       return;
     }
     window.Module._engine_set_colormap_preset(presetId);
