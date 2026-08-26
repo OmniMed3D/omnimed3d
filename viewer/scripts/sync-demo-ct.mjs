@@ -1,14 +1,13 @@
-// Copies each LIDC-IDRI demo CT series into
-// viewer/src/shell/public/demo-ct/<series-id>/, Vite's convention for
-// pre-built assets served as-is (not bundled). Copies rather than symlinks
-// for Windows/Mac portability, mirroring sync-engine-wasm.mjs's own
-// approach. Source is test-data/lidc_idri/<series-id>/*.dcm (repo root, not
-// under engine/ -- a shared/cross-module resource, see
-// test-data/lidc_idri/README.md), tracked via Git LFS -- NOT committed a
-// second time under public/, the same "gitignored, script-regenerated"
-// pattern sync-engine-wasm.mjs uses for engine/build_wasm/, chosen
-// specifically to avoid double-storing ~271MB of LFS data across all three
-// series.
+// Copies each demo CT/MR series into viewer/src/shell/public/demo-ct/
+// <series-id>/, Vite's convention for pre-built assets served as-is (not
+// bundled). Copies rather than symlinks for Windows/Mac portability,
+// mirroring sync-engine-wasm.mjs's own approach. Source is
+// test-data/<collection>/<series-id>/*.dcm (repo root, not under engine/
+// -- a shared/cross-module resource, see each collection's own README),
+// tracked via Git LFS -- NOT committed a second time under public/, the
+// same "gitignored, script-regenerated" pattern sync-engine-wasm.mjs uses
+// for engine/build_wasm/, chosen specifically to avoid double-storing
+// that much LFS data across every series.
 //
 // Also writes a manifest.json alongside each series' copied files: the
 // source filenames are UUIDs (TCIA/IDC bulk-download convention), not a
@@ -18,17 +17,28 @@
 // assembleSeries() re-sorts by DICOM geometry, not array/fetch order), but
 // each manifest's file list is still sorted for a reproducible, diffable
 // output across runs.
+//
+// 2026-08-27: the third "Load Demo CT" button was replaced with a UPENN-GBM
+// brain MR series (a different TCIA collection, own directory/README/
+// license, see test-data/upenn_gbm/README.md) -- COLLECTIONS below maps
+// each series to its own source collection directory instead of assuming
+// every series lives under test-data/lidc_idri/ like before.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const sourceRoot = join(__dirname, "..", "..", "test-data", "lidc_idri");
+const testDataRoot = join(__dirname, "..", "..", "test-data");
 const destRoot = join(__dirname, "..", "src", "shell", "public", "demo-ct");
 
 // demoCtControls.ts's toggle buttons (index.html's [data-demo-ct-id]) --
-// keep this list in sync with that markup.
-const SERIES_IDS = ["LIDC-IDRI-0001", "LIDC-IDRI-0002", "LIDC-IDRI-0003"];
+// keep this list in sync with that markup. Each entry's `collection` is
+// the test-data/<collection>/ directory its series lives under.
+const SERIES = [
+  { seriesId: "LIDC-IDRI-0001", collection: "lidc_idri" },
+  { seriesId: "LIDC-IDRI-0002", collection: "lidc_idri" },
+  { seriesId: "UPENN-GBM-00001", collection: "upenn_gbm" },
+];
 
 // A real slice is several hundred KB; an un-pulled Git LFS pointer stub is
 // ~130 bytes. This guards against silently copying pointer stubs (which the
@@ -36,8 +46,8 @@ const SERIES_IDS = ["LIDC-IDRI-0001", "LIDC-IDRI-0002", "LIDC-IDRI-0003"];
 // `git lfs pull` hasn't actually run yet.
 const MIN_REAL_FILE_BYTES = 10 * 1024;
 
-for (const seriesId of SERIES_IDS) {
-  const sourceDir = join(sourceRoot, seriesId);
+for (const { seriesId, collection } of SERIES) {
+  const sourceDir = join(testDataRoot, collection, seriesId);
   const destDir = join(destRoot, seriesId);
 
   if (!existsSync(sourceDir)) {

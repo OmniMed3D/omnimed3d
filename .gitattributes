@@ -13,6 +13,12 @@
 # precedent as dicom-parser/ (see .github/CODEOWNERS). See
 # test-data/lidc_idri/README.md for citation/attribution.
 test-data/lidc_idri/**/*.dcm filter=lfs diff=lfs merge=lfs -text
+# Demo brain MR series (2026-08-27, replacing the third Load Demo CT
+# button): one real, de-identified UPENN-GBM patient series (T2 SAG
+# SPACE), CC BY 4.0 -- see test-data/upenn_gbm/README.md for citation/
+# attribution. Same "shared resource, LFS to avoid bloating .git"
+# reasoning as the LIDC-IDRI line above.
+test-data/upenn_gbm/**/*.dcm filter=lfs diff=lfs merge=lfs -text
 viewer/src/shell/public/models/lungmask_r231_fp16.onnx filter=lfs diff=lfs merge=lfs -text
 # Minimal committed subset of ai-pipeline/quantization/calibration_data/'s
 # LIDC-IDRI-derived test fixtures (see .gitignore's exception there and
