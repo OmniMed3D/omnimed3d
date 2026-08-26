@@ -335,31 +335,48 @@ std::optional<DicomMetaInfo> DicomFile::parseFromBuffer(std::byte const* data, s
     DicomMetaInfo info;
 
     // First element must be (0002,0000) UL FileMetaInformationGroupLength --
-    // its value is the byte length of everything else in group 0002.
+    // its value is the byte length of everything else in group 0002. Some
+    // real-world files (e.g. TCIA's TCGA-GBM MR series -- bug report,
+    // 2026-08-27) omit this element entirely and go straight to
+    // (0002,0010) TransferSyntaxUID, even though DICOM PS3.10 nominally
+    // requires it. Confirmed via a raw hex dump of those files: right
+    // after "DICM" comes group=0002/element=0010 directly, no
+    // group=0002/element=0000 first. Rather than reject those files
+    // outright, fall back to scanning group 0002 element-by-element until
+    // the group number changes, the same way most real DICOM readers
+    // tolerate this.
     if (offset + 8 > size) {
         return fail(DicomParseError::Truncated);
     }
     uint16_t const firstGroup = readU16LE(data + offset);
     uint16_t const firstElement = readU16LE(data + offset + 2);
-    if (firstGroup != 0x0002 || firstElement != 0x0000) {
+    if (firstGroup != 0x0002) {
         return fail(DicomParseError::MissingGroupLength);
     }
-    uint16_t const groupLengthValueLen = readU16LE(data + offset + 6);
-    if (offset + 8 + groupLengthValueLen > size) {
-        return fail(DicomParseError::Truncated);
-    }
-    info.metaGroupLength = readU32LE(data + offset + 8);
-    offset += 8 + groupLengthValueLen;
 
-    size_t const groupEnd = offset + info.metaGroupLength;
-    if (groupEnd > size) {
-        return fail(DicomParseError::Truncated);
+    bool hasExplicitGroupEnd = false;
+    size_t groupEnd = size;
+    if (firstElement == 0x0000) {
+        uint16_t const groupLengthValueLen = readU16LE(data + offset + 6);
+        if (offset + 8 + groupLengthValueLen > size) {
+            return fail(DicomParseError::Truncated);
+        }
+        info.metaGroupLength = readU32LE(data + offset + 8);
+        offset += 8 + groupLengthValueLen;
+        groupEnd = offset + info.metaGroupLength;
+        if (groupEnd > size) {
+            return fail(DicomParseError::Truncated);
+        }
+        hasExplicitGroupEnd = true;
     }
 
     while (offset < groupEnd) {
         auto const header = readExplicitElementHeader(data, offset, size);
         if (!header) {
             return fail(DicomParseError::Truncated);
+        }
+        if (!hasExplicitGroupEnd && header->group != 0x0002) {
+            break;
         }
         if (header->valueOffset + header->valueLength > size) {
             return fail(DicomParseError::Truncated);
@@ -379,7 +396,7 @@ std::optional<DicomMetaInfo> DicomFile::parseFromBuffer(std::byte const* data, s
         offset = header->valueOffset + header->valueLength;
     }
 
-    info.dataSetOffset = groupEnd;
+    info.dataSetOffset = offset;
     return info;
 }
 

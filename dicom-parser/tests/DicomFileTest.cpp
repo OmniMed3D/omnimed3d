@@ -11,6 +11,7 @@
 #include "dicom-parser/DicomFile.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -134,6 +135,69 @@ void testMissingMagic() {
     check(error == dicom_parser::DicomParseError::MissingMagic, "missing magic reports MissingMagic");
 }
 
+// Bug fix, 2026-08-27 (user report: TCIA's TCGA-GBM MR series failed to
+// load entirely, while the LIDC-IDRI CT series in the same test folder
+// loaded fine). Hand-built rather than a checked-in fixture file -- this
+// is deliberately the minimal buffer that reproduces the bug: a File Meta
+// group with no (0002,0000) group-length element at all, just a single
+// (0002,0010) TransferSyntaxUID, exactly matching what a real hex dump of
+// the TCGA-GBM files showed (see DicomFile.cpp's own comment on this
+// fallback). Preamble is left all-zero -- parseFromBuffer never reads it
+// beyond checking size, only the "DICM" magic right after it matters.
+std::vector<std::byte> buildMissingGroupLengthBuffer() {
+    std::vector<uint8_t> bytes(128, 0);  // preamble
+    auto const appendStr = [&](char const* s) {
+        for (char const* p = s; *p != '\0'; ++p) {
+            bytes.push_back(static_cast<uint8_t>(*p));
+        }
+    };
+    auto const appendU16LE = [&](uint16_t v) {
+        bytes.push_back(static_cast<uint8_t>(v & 0xFF));
+        bytes.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    };
+
+    appendStr("DICM");
+
+    // (0002,0010) UI TransferSyntaxUID = "1.2.840.10008.1.2" (Implicit VR
+    // Little Endian), NUL-padded to an even length (18 bytes) per the UI
+    // VR's own padding rule.
+    appendU16LE(0x0002);
+    appendU16LE(0x0010);
+    appendStr("UI");
+    appendU16LE(18);
+    appendStr("1.2.840.10008.1.2");
+    bytes.push_back(0);  // pad to even length
+
+    // First main-dataset element (0008,0005) SpecificCharacterSet, VR=CS,
+    // zero-length -- only its header needs to be valid; parseFromBuffer
+    // breaks as soon as it sees a non-0002 group, before touching a value.
+    appendU16LE(0x0008);
+    appendU16LE(0x0005);
+    appendStr("CS");
+    appendU16LE(0);
+
+    std::vector<std::byte> result(bytes.size());
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        result[i] = static_cast<std::byte>(bytes[i]);
+    }
+    return result;
+}
+
+void testMissingGroupLengthFallback() {
+    auto const buffer = buildMissingGroupLengthBuffer();
+    dicom_parser::DicomParseError error{};
+    auto const meta = dicom_parser::DicomFile::parseFromBuffer(buffer.data(), buffer.size(), &error);
+    check(meta.has_value(), "parseFromBuffer tolerates a File Meta group with no (0002,0000) group-length element");
+    if (!meta) {
+        return;
+    }
+    checkEq(meta->transferSyntaxUID, "1.2.840.10008.1.2", "transferSyntaxUID (fallback scan)");
+    checkEq(meta->mediaStorageSOPClassUID, "", "mediaStorageSOPClassUID absent, left empty (fallback scan)");
+    // 132 (preamble+DICM) + 26 (the one TransferSyntaxUID element) -- see
+    // buildMissingGroupLengthBuffer()'s own comment for the byte layout.
+    checkEqU(meta->dataSetOffset, 158, "dataSetOffset (fallback scan stops at the first non-0002 group)");
+}
+
 void testUnsupportedTransferSyntax() {
     // Transfer-syntax dispatch happens before any buffer access, so this is
     // safe to call with an empty buffer -- exercises the rejection path for
@@ -151,6 +215,7 @@ int main() {
     testCtSmallHappyPath();
     testBufferTooSmall();
     testMissingMagic();
+    testMissingGroupLengthFallback();
     testUnsupportedTransferSyntax();
 
     if (g_failures == 0) {
