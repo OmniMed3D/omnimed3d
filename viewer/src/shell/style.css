@@ -844,9 +844,10 @@ button.upload-btn:disabled:hover {
 .gauge-fill {
   position: absolute;
   inset: 0;
-  width: 0%;
+  transform: scaleX(0);
+  transform-origin: left;
   background: rgba(255, 255, 255, 0.28);
-  transition: width 0.2s ease;
+  transition: transform 0.2s ease;
   pointer-events: none;
 }
 

@@ -22,11 +22,11 @@ export function setGaugeProgress(button: HTMLButtonElement, fraction: number | n
     // indeterminate striped animation communicates "still working"
     // without claiming a specific, unearned percentage.
     fill.classList.add("gauge-indeterminate");
-    fill.style.width = "100%";
+    fill.style.transform = "scaleX(1)";
     return;
   }
   fill.classList.remove("gauge-indeterminate");
-  fill.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
+  fill.style.transform = `scaleX(${Math.max(0, Math.min(1, fraction))})`;
 }
 
 export function setGaugeLabel(button: HTMLButtonElement, text: string): void {
