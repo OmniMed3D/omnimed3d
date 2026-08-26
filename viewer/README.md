@@ -39,14 +39,36 @@ npm run dev           # vite dev server, src/shell/ (foreground)
 ```
 
 To run the dev server in the background instead of tying up a terminal
-(`scripts/dev-server.ps1`, Windows only -- tracks the process via a PID
-file so it can be stopped cleanly, child processes included):
+(`scripts/dev-server.ps1`/`.sh` -- tracks the process via a PID file so
+it can be stopped cleanly, child processes included):
 
 ```powershell
-npm run dev:start    # starts in the background, prints the URL
-npm run dev:status   # is it running?
-npm run dev:stop     # stops it (and its child node/vite processes)
+npm run dev:start    # Windows
+npm run dev:status
+npm run dev:stop
 ```
+
+```zsh
+npm run dev:start:mac   # macOS/Linux
+npm run dev:status:mac
+npm run dev:stop:mac
+```
+
+For local iteration on the engine specifically, `dev:full`/`dev:full:mac`
+(`scripts/dev-full.ps1`/`.sh`) collapses the whole edit-rebuild-reload
+loop into one command: rebuild the engine's WASM target
+(`engine/scripts/wasm-build.ps1`/`.sh`), run `sync-engine-wasm` (below),
+then start the dev server the same way `dev:start`/`dev:start:mac`
+does -- so `dev:status`/`dev:stop` still apply afterward.
+
+```powershell
+npm run dev:full         # Windows
+npm run dev:full:mac     # macOS/Linux
+```
+
+Neither variant runs `sync-demo-ct` (below) -- that only needs
+re-running when the demo DICOM data itself changes, not on every engine
+rebuild.
 
 `parse-worker`'s tests load a real compiled WASM artifact
 (`dicom-parser`'s `dicom_parser_wasm.mjs`), so the WASM build has to exist
@@ -57,19 +79,22 @@ model-fixture tests similarly need `ai-pipeline/quantization/calibration_data/`
 generated locally first (gitignored, not part of a fresh clone) — see
 `src/workers/inference-worker/scripts/export_reference_fixtures.py`.
 
-The "Load Demo CT" toggle (`src/shell/demoCtControls.ts`) needs
-[`../test-data/lidc_idri/`](../test-data/lidc_idri/README.md) — three real
-patient CT series checked in via **Git LFS**, not a plain blob (~271MB
-combined).
+The "Load Demo CT" toggle (`src/shell/demoCtControls.ts`) needs real
+patient data checked in via **Git LFS**, not a plain blob — two LIDC-IDRI
+lung CT series ([`../test-data/lidc_idri/`](../test-data/lidc_idri/README.md))
+and one UPENN-GBM brain MR series
+([`../test-data/upenn_gbm/`](../test-data/upenn_gbm/README.md)), each
+under its own license (CC BY 3.0 / CC BY 4.0 respectively — see each
+directory's own README).
 If `git lfs` isn't installed on your machine, a normal `git clone`/`git
-pull` still succeeds but leaves small text _pointer_ files in that
-directory instead of real DICOM data — install it
+pull` still succeeds but leaves small text _pointer_ files in those
+directories instead of real DICOM data — install it
 ([git-lfs.com](https://git-lfs.com)) and re-pull (or run `git lfs pull`)
-before continuing. Then, same as `sync-engine-wasm` above, copy it into
+before continuing. Then, same as `sync-engine-wasm` below, copy it into
 the Shell's servable path:
 
 ```zsh
-npm run sync-demo-ct   # copies test-data/lidc_idri/* into src/shell/public/demo-ct/
+npm run sync-demo-ct   # copies each collection's demo series into src/shell/public/demo-ct/
 ```
 
 This script itself checks for the pointer-file case (any source file

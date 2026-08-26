@@ -98,6 +98,28 @@ See [`.github/CODEOWNERS`](.github/CODEOWNERS) for the exact review-routing rule
 
 Each module owns its own build; see its README for full detail. Quick pointers:
 
+**Fastest path for local iteration** (after the one-time prerequisite
+setup below — vcpkg, Emscripten, `npm install`): a single command
+rebuilds the engine's WASM target, syncs it into the viewer, and starts
+the dev server, instead of running each step by hand.
+
+```sh
+cd viewer
+npm run sync-demo-ct   # one-time, or whenever the demo DICOM data changes
+npm run dev:full       # Windows
+npm run dev:full:mac   # macOS/Linux
+```
+
+`dev:full`/`dev:full:mac` (`viewer/scripts/dev-full.ps1`/`.sh`) chains
+`engine/scripts/wasm-build.ps1`/`.sh` (the two-step Emscripten
+configure+build below, collapsed into one call) →
+`npm run sync-engine-wasm` → the same backgrounded dev server
+`dev:start`/`dev:start:mac` uses — see
+[`viewer/README.md`](viewer/README.md#building-and-testing) for
+`dev:status`/`dev:stop` and what each step does individually. It does
+**not** run `sync-demo-ct` — that only needs re-running when the demo
+DICOM data itself changes, not on every engine rebuild.
+
 **Engine** (C++20, needs [vcpkg](https://vcpkg.io) and, for the browser build, [Emscripten](https://emscripten.org)):
 
 ```sh
