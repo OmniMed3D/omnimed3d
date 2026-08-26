@@ -17,11 +17,11 @@ workspace didn't exist until now (it was deferred to whoever scaffolded
 the Shell) and each package's own `package.json` for what it still owns
 independently (its own dependencies, `typecheck`/`test` scripts).
 
-| Directory                       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Owner                                                          |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `src/shell/`                    | Real message routing and Engine WASM wiring: mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). As of issue #34, also the real Web Application Shell UI (REQ-R06): a file picker (`filePicker.ts`), mouse-driven orbit camera (`cameraControls.ts`), and a window/level panel (`windowLevelControls.ts`). As of issue #37, also a 3D-orbit/2D-axial-slice view-mode toggle plus a slice slider (`viewControls.ts`), completing PRD §9's rotate/zoom/slice-pan success criterion. As of issue #40, the canvas is responsive (`canvasResize.ts`, a `ResizeObserver`-driven `engine_resize`) instead of a fixed 640x480 box, and a WebGPU-unavailable browser/device shows a plain-language error (`#engine-error`) instead of an indefinite "loading" state. As of issue #42, a loading indicator (`loadingIndicator.ts`) shows between file selection and the volume rendering, and interactive touch targets meet a 44px minimum at the mobile breakpoint. A subsequent visual-polish pass added: a teal design-token system replacing scattered hardcoded colors (`style.css`'s `:root`); a draggable, collapsible control panel (`panelDrag.ts`, runtime-only position/state, resets on reload); a "Load Demo Model" button (`inferenceControls.ts`) wiring the previously test-hooks-only Inference Worker init path into the real UI; direct numeric entry for Window Center/Width alongside their sliders (`windowLevelControls.ts`'s `bindRangeWithNumericEntry`); a plain-language `#load-error` message on an unparseable file (`worker.ts`'s caught-and-reported `parse-error` message, since a throw inside its `async onmessage` doesn't reach the main thread's `onerror`); and folder-picker junk-file filtering (`filePicker.ts`'s `isLikelyNonDicom`, deny-list based since real DICOM files often have no extension) — `window.omnimed3dTestHooks` stays available alongside all of these for `tests/e2e/`, sharing the same underlying Worker instances. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
-| `src/workers/parse-worker/`     | DICOM parsing (REQ-A05) — loads the shared [`dicom-parser`](../dicom-parser/README.md) WASM build, converts pixel data to Hounsfield Units, and produces both a per-slice output for the Inference Worker and an assembled volume for the rendering engine.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
-| `src/workers/inference-worker/` | AI segmentation inference (REQ-A03/A09/A16/A17) — runs a model adapter's preprocess/infer/postprocess over each Hounsfield-Unit slice the Parse Worker produces, emitting the REQ-C01 mask contract.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | AI track (`CODEOWNERS` path override on this specific subtree) |
+| Directory | What it does | Owner |
+| --- | --- | --- |
+| `src/shell/` | Real message routing and Engine WASM wiring: mints/tracks `volumeId`, routes `hu-slice` → Inference Worker, `volume-ready` → `engine_load_volume`, `mask-slice` → `engine_apply_mask_slice` (discarding stale-`volumeId` slices per PRD §5.3.2), all verified against real Workers in a real browser (`tests/e2e/`). As of issue #34, also the real Web Application Shell UI (REQ-R06): a file picker (`filePicker.ts`), mouse-driven orbit camera (`cameraControls.ts`), and a window/level panel (`windowLevelControls.ts`). As of issue #37, also a 3D-orbit/2D-axial-slice view-mode toggle plus a slice slider (`viewControls.ts`), completing PRD §9's rotate/zoom/slice-pan success criterion. As of issue #40, the canvas is responsive (`canvasResize.ts`, a `ResizeObserver`-driven `engine_resize`) instead of a fixed 640x480 box, and a WebGPU-unavailable browser/device shows a plain-language error (`#engine-error`) instead of an indefinite "loading" state. As of issue #42, a loading indicator (`loadingIndicator.ts`) shows between file selection and the volume rendering, and interactive touch targets meet a 44px minimum at the mobile breakpoint. A subsequent visual-polish pass added: a teal design-token system replacing scattered hardcoded colors (`style.css`'s `:root`); a draggable, collapsible control panel (`panelDrag.ts`, runtime-only position/state, resets on reload); a "Load Demo Model" button (`inferenceControls.ts`) wiring the previously test-hooks-only Inference Worker init path into the real UI; direct numeric entry for Window Center/Width alongside their sliders (`windowLevelControls.ts`'s `bindRangeWithNumericEntry`); a plain-language `#load-error` message on an unparseable file (`worker.ts`'s caught-and-reported `parse-error` message, since a throw inside its `async onmessage` doesn't reach the main thread's `onerror`); and folder-picker junk-file filtering (`filePicker.ts`'s `isLikelyNonDicom`, deny-list based since real DICOM files often have no extension) — `window.omnimed3dTestHooks` stays available alongside all of these for `tests/e2e/`, sharing the same underlying Worker instances. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
+| `src/workers/parse-worker/` | DICOM parsing (REQ-A05) — loads the shared [`dicom-parser`](../dicom-parser/README.md) WASM build, converts pixel data to Hounsfield Units, and produces both a per-slice output for the Inference Worker and an assembled volume for the rendering engine. See its own [README](src/workers/parse-worker/README.md) for the message contracts and testing setup. | Engine track (blanket `/viewer/` rule in `.github/CODEOWNERS`) |
+| `src/workers/inference-worker/` | AI segmentation inference (REQ-A03/A09/A16/A17) — runs a model adapter's preprocess/infer/postprocess over each Hounsfield-Unit slice the Parse Worker produces, emitting the REQ-C01 mask contract. See its own [README](src/workers/inference-worker/README.md) for the adapter protocol, layout, and testing setup. | AI track (`CODEOWNERS` path override on this specific subtree) |
 
 ## Building and testing
 
@@ -39,14 +39,36 @@ npm run dev           # vite dev server, src/shell/ (foreground)
 ```
 
 To run the dev server in the background instead of tying up a terminal
-(`scripts/dev-server.ps1`, Windows only -- tracks the process via a PID
-file so it can be stopped cleanly, child processes included):
+(`scripts/dev-server.ps1`/`.sh` -- tracks the process via a PID file so
+it can be stopped cleanly, child processes included):
 
 ```powershell
-npm run dev:start    # starts in the background, prints the URL
-npm run dev:status   # is it running?
-npm run dev:stop     # stops it (and its child node/vite processes)
+npm run dev:start    # Windows
+npm run dev:status
+npm run dev:stop
 ```
+
+```zsh
+npm run dev:start:mac   # macOS/Linux
+npm run dev:status:mac
+npm run dev:stop:mac
+```
+
+For local iteration on the engine specifically, `dev:full`/`dev:full:mac`
+(`scripts/dev-full.ps1`/`.sh`) collapses the whole edit-rebuild-reload
+loop into one command: rebuild the engine's WASM target
+(`engine/scripts/wasm-build.ps1`/`.sh`), run `sync-engine-wasm` (below),
+then start the dev server the same way `dev:start`/`dev:start:mac`
+does -- so `dev:status`/`dev:stop` still apply afterward.
+
+```powershell
+npm run dev:full         # Windows
+npm run dev:full:mac     # macOS/Linux
+```
+
+Neither variant runs `sync-demo-ct` (below) -- that only needs
+re-running when the demo DICOM data itself changes, not on every engine
+rebuild.
 
 `parse-worker`'s tests load a real compiled WASM artifact
 (`dicom-parser`'s `dicom_parser_wasm.mjs`), so the WASM build has to exist
@@ -57,19 +79,22 @@ model-fixture tests similarly need `ai-pipeline/quantization/calibration_data/`
 generated locally first (gitignored, not part of a fresh clone) — see
 `src/workers/inference-worker/scripts/export_reference_fixtures.py`.
 
-The "Load Demo CT" toggle (`src/shell/demoCtControls.ts`) needs
-[`../test-data/lidc_idri/`](../test-data/lidc_idri/README.md) — three real
-patient CT series checked in via **Git LFS**, not a plain blob (~271MB
-combined).
+The "Load Demo CT" toggle (`src/shell/demoCtControls.ts`) needs real
+patient data checked in via **Git LFS**, not a plain blob — two LIDC-IDRI
+lung CT series ([`../test-data/lidc_idri/`](../test-data/lidc_idri/README.md))
+and one UPENN-GBM brain MR series
+([`../test-data/upenn_gbm/`](../test-data/upenn_gbm/README.md)), each
+under its own license (CC BY 3.0 / CC BY 4.0 respectively — see each
+directory's own README).
 If `git lfs` isn't installed on your machine, a normal `git clone`/`git
-pull` still succeeds but leaves small text _pointer_ files in that
-directory instead of real DICOM data — install it
+pull` still succeeds but leaves small text _pointer_ files in those
+directories instead of real DICOM data — install it
 ([git-lfs.com](https://git-lfs.com)) and re-pull (or run `git lfs pull`)
-before continuing. Then, same as `sync-engine-wasm` above, copy it into
+before continuing. Then, same as `sync-engine-wasm` below, copy it into
 the Shell's servable path:
 
 ```zsh
-npm run sync-demo-ct   # copies test-data/lidc_idri/* into src/shell/public/demo-ct/
+npm run sync-demo-ct   # copies each collection's demo series into src/shell/public/demo-ct/
 ```
 
 This script itself checks for the pointer-file case (any source file
@@ -163,78 +188,20 @@ Playwright's bundled build).
   console log rather than forwarded, until a model is initialized.
 - Mobile touch/pinch input for the camera — mouse-driven controls only
   (issue #34's explicit scope boundary).
-- Aspect-ratio-correct letterboxing for the 2D axial slice view (issue
-  #37) when voxel spacing is non-square — the MVP fills the canvas
-  edge-to-edge, matching the 3D raymarch pipeline's own fixed-canvas,
-  no-DPR-correction posture.
-- Sagittal/coronal slice axes for the 2D slice view (issue #37) — axial
-  only, matching REQ-R02 and the Parse Worker's own axial-only scope
-  below.
+- Aspect-ratio-correct letterboxing for the 2D axial slice view when
+  voxel spacing is non-square — the raymarch pipeline itself has no
+  DPR-correction posture either.
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
-  exists yet (see "DICOM orientation normalization" below); only
-  synthetic hand-computed cases are verified so far.
-- Sagittal/coronal DICOM acquisitions (slice normal does not resolve to
-  the patient Z axis) — still rejected with `UnsupportedOrientationError`.
-  Axial-but-tilted (oblique) acquisitions, where the normal is Z but
-  row/column cosines aren't axis-aligned, are supported as of 2026-08-27
-  via whole-series trilinear resampling onto a canonical grid (bug
-  report: UPENN-GBM brain MR, routinely angled a few to ~20 degrees off
-  axial to align with the AC-PC line) — see "DICOM orientation
-  normalization" below.
-
-## DICOM orientation normalization
-
-`src/workers/parse-worker/src/orientation.ts` normalizes every slice's
-pixel data to one canonical convention before it leaves the Parse
-Worker, regardless of which of DICOM's several equally-valid
-acquisition conventions (HFS/FFS/HFP/FFP, etc.) the source series used.
-Both `hu-slice` and `volume-ready` output are guaranteed to already be
-in this orientation — downstream consumers (Inference Worker, Engine)
-need no orientation-handling code of their own, only this assumption:
-
-- Column-index-increasing = patient **Left** (+X)
-- Row-index-increasing = patient **Posterior** (+Y)
-- Slice-index-increasing = patient **Superior** (+Z)
-
-i.e. **LPS**, matching common medical-imaging tooling's default (e.g.
-ITK). This is derived from each file's `ImageOrientationPatient` (0020,0037)
-and `ImagePositionPatient` (0020,0032) tags — both always expressed in
-patient LPS space regardless of `PatientPosition` (which describes how
-the patient was fed into the scanner, not a different coordinate
-convention for these tags).
-
-Scope: the slice normal (`cross(rowCosine, columnCosine)`) must resolve
-to the patient Z axis — sagittal/coronal acquisitions are rejected
-outright (`UnsupportedOrientationError`), not silently misparsed. Within
-that, two paths exist:
-
-- **Axis-aligned fast path** (`computeOrientationTransform` +
-  `applyTransform`): row/column are any axis-aligned permutation of
-  ±X/±Y (covering realistic HFS/FFS/HFP/FFP variation), handled with a
-  per-slice transpose/flip, no resampling needed.
-- **Oblique-resample fallback** (added 2026-08-27, bug report: UPENN-GBM
-  brain MR — real neuro MR is routinely angled a few to ~20 degrees off
-  axial to align with the AC-PC line): when row/column aren't
-  axis-aligned but the normal still is Z, `assembleSeries` catches the
-  fast path's `UnsupportedOrientationError` and instead resamples the
-  _whole series_ onto a canonical-axis-aligned grid via trilinear
-  interpolation (`computeObliqueResampleGrid`/`canonicalToSourceIndex` in
-  orientation.ts, the resampling loop itself in pipeline.ts's
-  `assembleObliqueSeries`). Output voxel spacing reuses the source's own
-  pixel/slice spacing magnitudes unchanged (only re-orienting axes, not
-  rescaling) — a reasonable approximation for the moderate tilt angles
-  real protocols use, not a physically-exact resample for arbitrary
-  rotation. This path only exists for whole-series assembly
-  (`assembleSeries`/`parse-series`); the single-file streaming path
-  (`parseSliceToHu`/`parse-file`) has no series-wide context to resample
-  against, so it still throws `UnsupportedOrientationError` for an
-  oblique slice.
-
-If a slice is missing either tag, its pixel data passes through
-unchanged (`console.warn`), and `assembleSeries` falls back to ordering
-by `InstanceNumber` instead of true geometric position — see
-[`dicom-parser/README.md`](../dicom-parser/README.md#data-model) for
-that fallback's own caveats. The result's `orderingMethod` field
-(`"geometric"`, `"oblique-resample"`, or `"instanceNumber"`) reports
-which path was taken.
+  exists yet; only synthetic hand-computed cases and the real UPENN-GBM
+  series are verified so far (see
+  `src/workers/parse-worker/src/orientation.ts`'s own module doc comment
+  for the full scope of what's normalized and how).
+- Sagittal/coronal _reconstruction_ (MPR) is supported for the assembled
+  volume (Axial/Sagittal/Coronal/Native view modes), but only the
+  whole-series assembly path (`assembleSeries`/`parse-series`) can
+  resample a non-axial _acquisition_ onto a canonical grid — the
+  single-file streaming path (`parseSliceToHu`/`parse-file`, no
+  series-wide context to resample against) still throws
+  `UnsupportedOrientationError` for a genuinely oblique/sagittal/coronal
+  slice.
