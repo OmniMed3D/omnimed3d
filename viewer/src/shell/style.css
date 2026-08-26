@@ -282,18 +282,16 @@ canvas {
    unstyled white text sitting directly on the canvas) a single quiet
    corner treatment -- small, monospace, faint -- so it reads as
    intentional instrument telemetry rather than leftover debug output.
-   #status/#shell-status/#log keep their own ids and behavior unchanged. */
+   #status/#shell-status/#log keep their own ids and behavior unchanged.
+   User request, 2026-08-27: hidden from view entirely -- this was
+   internal-only load-progress telemetry ("running" / "shell: ready for
+   input") that never needed a permanent on-screen presence for a real
+   user. display:none rather than deleting the elements/JS that write to
+   them: 20+ e2e specs synchronize on #shell-status's textContent via
+   Playwright's toHaveText(), which reads DOM text regardless of visible
+   layout -- only the *visible* CSS treatment needed to go. */
 #debug-readout {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 12px;
-  max-width: 46ch;
-  font-family: var(--font-mono);
-  font-size: 12px; /* legibility pass: 11px was borderline for a quick glance at arm's length */
-  line-height: 1.5;
-  color: var(--text-faint);
+  display: none;
 }
 
 #log:empty {
