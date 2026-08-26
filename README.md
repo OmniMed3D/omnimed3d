@@ -44,6 +44,43 @@ is host the static files (HTML/JS/WASM/models) — see
 mask-data contract (REQ-C01) that lets the rendering and AI sides stay
 decoupled.
 
+## Current scope & limitations
+
+- **AI segmentation is lung-only.** The shipped model is `lungmask`
+  (R231, Apache-2.0) — a single-organ model (PRD REQ-A01). Multi-organ /
+  multi-class segmentation is a tracked future goal, not available
+  today.
+- **iOS and desktop Safari: AI inference is not practically usable.** A
+  WebKit-specific bug in ONNX Runtime Web's WebGPU backend causes
+  unbounded memory growth and crashes on real devices (see
+  `viewer/src/workers/inference-worker/docs/adr/0003-webkit-routing.md`),
+  so those browsers are routed to a WASM+INT8-only fallback with no GPU
+  acceleration — measured at ~2.3s/slice, versus this project's
+  <500ms/slice target elsewhere. Volume rendering and viewing work
+  normally on iOS/Safari; only AI segmentation is affected.
+- **Fully-supported browser target: Google Chrome** (Desktop + Mobile,
+  PRD REQ-R07). Other Chromium browsers and Android generally work the
+  same way; Firefox and desktop Safari are not yet supported (see
+  Roadmap below).
+
+### Roadmap (not implemented yet)
+
+Tracked in [`docs/prd/PRD.md`](docs/prd/PRD.md) as P1/P2 requirements or
+deferred-but-revisitable scope (§7.2) — listed here for visibility, not
+a committed schedule:
+
+- Multi-class / multi-organ segmentation (REQ-A14), and a second model
+  architecture (e.g. spleen) as an architecture-reuse proof point.
+- Firefox and desktop Safari support (REQ-R11).
+- Measurement tools (distance/angle/volume) and collaboration tools
+  (snapshot export, annotations) — REQ-R09/R10.
+- An optional backend adapter (Orthanc + FastAPI) for PACS
+  integration/batch processing in enterprise environments — REQ-A07/A12.
+  Explicitly optional; the core product stays Pure On-Device.
+- Chunked streaming parsing for multi-gigabyte DICOM series.
+- Automated hardware fallback across WebNN → WebGPU → WASM (REQ-C02) —
+  WebGPU/WASM only today.
+
 ## Monorepo layout
 
 | Path                                          | What it is                                                                                                                                                                                                                                                  | Owner                                               |

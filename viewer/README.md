@@ -163,25 +163,22 @@ Playwright's bundled build).
   console log rather than forwarded, until a model is initialized.
 - Mobile touch/pinch input for the camera — mouse-driven controls only
   (issue #34's explicit scope boundary).
-- Aspect-ratio-correct letterboxing for the 2D axial slice view (issue
-  #37) when voxel spacing is non-square — the MVP fills the canvas
-  edge-to-edge, matching the 3D raymarch pipeline's own fixed-canvas,
-  no-DPR-correction posture.
-- Sagittal/coronal slice axes for the 2D slice view (issue #37) — axial
-  only, matching REQ-R02 and the Parse Worker's own axial-only scope
-  below.
+- Aspect-ratio-correct letterboxing for the 2D axial slice view when
+  voxel spacing is non-square — the raymarch pipeline itself has no
+  DPR-correction posture either.
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
   exists yet (see "DICOM orientation normalization" below); only
-  synthetic hand-computed cases are verified so far.
-- Sagittal/coronal DICOM acquisitions (slice normal does not resolve to
-  the patient Z axis) — still rejected with `UnsupportedOrientationError`.
-  Axial-but-tilted (oblique) acquisitions, where the normal is Z but
-  row/column cosines aren't axis-aligned, are supported as of 2026-08-27
-  via whole-series trilinear resampling onto a canonical grid (bug
-  report: UPENN-GBM brain MR, routinely angled a few to ~20 degrees off
-  axial to align with the AC-PC line) — see "DICOM orientation
-  normalization" below.
+  synthetic hand-computed cases and the real UPENN-GBM series described
+  there are verified so far.
+- Sagittal/coronal _reconstruction_ (MPR) is supported for the assembled
+  volume (Axial/Sagittal/Coronal/Native view modes), but only the
+  whole-series assembly path (`assembleSeries`/`parse-series`) can
+  resample a non-axial _acquisition_ onto a canonical grid — the
+  single-file streaming path (`parseSliceToHu`/`parse-file`, no
+  series-wide context to resample against) still throws
+  `UnsupportedOrientationError` for a genuinely oblique/sagittal/coronal
+  slice. See "DICOM orientation normalization" below.
 
 ## DICOM orientation normalization
 
@@ -204,32 +201,39 @@ patient LPS space regardless of `PatientPosition` (which describes how
 the patient was fed into the scanner, not a different coordinate
 convention for these tags).
 
-Scope: the slice normal (`cross(rowCosine, columnCosine)`) must resolve
-to the patient Z axis — sagittal/coronal acquisitions are rejected
-outright (`UnsupportedOrientationError`), not silently misparsed. Within
-that, two paths exist:
+Scope: two paths exist, and which one handles a given series depends on
+whether it's assembled as a whole series or streamed slice-by-slice.
 
 - **Axis-aligned fast path** (`computeOrientationTransform` +
-  `applyTransform`): row/column are any axis-aligned permutation of
-  ±X/±Y (covering realistic HFS/FFS/HFP/FFP variation), handled with a
-  per-slice transpose/flip, no resampling needed.
-- **Oblique-resample fallback** (added 2026-08-27, bug report: UPENN-GBM
-  brain MR — real neuro MR is routinely angled a few to ~20 degrees off
-  axial to align with the AC-PC line): when row/column aren't
-  axis-aligned but the normal still is Z, `assembleSeries` catches the
-  fast path's `UnsupportedOrientationError` and instead resamples the
-  _whole series_ onto a canonical-axis-aligned grid via trilinear
-  interpolation (`computeObliqueResampleGrid`/`canonicalToSourceIndex` in
-  orientation.ts, the resampling loop itself in pipeline.ts's
-  `assembleObliqueSeries`). Output voxel spacing reuses the source's own
-  pixel/slice spacing magnitudes unchanged (only re-orienting axes, not
-  rescaling) — a reasonable approximation for the moderate tilt angles
-  real protocols use, not a physically-exact resample for arbitrary
-  rotation. This path only exists for whole-series assembly
-  (`assembleSeries`/`parse-series`); the single-file streaming path
-  (`parseSliceToHu`/`parse-file`) has no series-wide context to resample
-  against, so it still throws `UnsupportedOrientationError` for an
-  oblique slice.
+  `applyTransform`): the slice normal (`cross(rowCosine, columnCosine)`)
+  must resolve to the patient Z axis, and row/column must be an
+  axis-aligned permutation of ±X/±Y (covering realistic HFS/FFS/HFP/FFP
+  variation) — handled with a per-slice transpose/flip, no resampling
+  needed. Anything else throws `UnsupportedOrientationError`.
+- **Oblique-resample fallback** (whole-series assembly only —
+  `assembleSeries`/`parse-series`): when the fast path throws, whether
+  because row/column aren't axis-aligned _or_ because the slice normal
+  isn't Z at all (a genuinely sagittal or coronal acquisition, e.g.
+  "T2 SAG SPACE"), `assembleSeries` catches the error and instead
+  resamples the _whole series_ onto a canonical-axis-aligned grid via
+  trilinear interpolation (`computeObliqueResampleGrid`/
+  `canonicalToSourceIndex` in orientation.ts, the resampling loop itself
+  in pipeline.ts's `assembleObliqueSeries`). This is normal-agnostic by
+  design — `dominantAxisIndex` assigns each _output_ axis's spacing from
+  whichever _source_ direction (row/column/normal) actually dominates it,
+  rather than assuming the near-axial-tilt case's fixed mapping. Output
+  voxel spacing reuses the source's own pixel/slice spacing magnitudes
+  unchanged (only re-orienting axes, not rescaling) — a reasonable
+  approximation, not a physically-exact resample for arbitrary rotation.
+  The single-file streaming path (`parseSliceToHu`/`parse-file`) has no
+  series-wide context to resample against, so it still throws
+  `UnsupportedOrientationError` for a non-axis-aligned slice regardless
+  of which check failed.
+
+Once assembled, the volume can be viewed along any of the three
+canonical axes (Axial/Sagittal/Coronal view modes) or as the original
+per-file slices, unresampled (Native view mode) — `viewControls.ts` owns
+the view-mode toggle and per-mode slice-index memory.
 
 If a slice is missing either tag, its pixel data passes through
 unchanged (`console.warn`), and `assembleSeries` falls back to ordering
