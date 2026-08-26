@@ -137,6 +137,14 @@ void engine_set_threshold(float threshold) {
     g_device.setThreshold(threshold);
 }
 
+// Debug/tuning export (§5.3 follow-up, 2026-08-27) -- see
+// WebGPUDevice::setThresholdMax's own header comment: not wired to a UI
+// slider yet, callable from the browser console for now.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_threshold_max(float thresholdMax) {
+    g_device.setThresholdMax(thresholdMax);
+}
+
 // Clip box (world mm) -- see rhi::Device::setClipBox's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_clip_box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {

@@ -27,7 +27,8 @@ struct RaymarchUBO
     float4 clipMin;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
     float4 clipMax;          // xyz, world mm -- raymarch traversal bound (clip box, §6.4)
     float4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
-    float4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1), w unused
+    float4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1),
+                             // w=thresholdMax (upper cutoff, §5.3 follow-up -- see fragmentMain's own comment)
     float4 backgroundColor;  // xyz=RGB, w unused -- see kBackgroundColor's former header comment below
 };
 
@@ -260,6 +261,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float threshold = ubo.tfParams.x;
     const float gradientOpacityStrength = ubo.tfParams.y;
     const bool lowMemoryMode = ubo.tfParams.z > 0.5;
+    const float thresholdMax = ubo.tfParams.w;
     const float3 boxSize = ubo.aabbMax.xyz - ubo.aabbMin.xyz;
 
     uint maskW, maskH, maskD;
@@ -390,11 +392,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         // this step) replaces the single-point n used previously.
         float alpha = 1.0 - exp(-extinction * sBar * stepSize);
 
-        // Threshold cutoff (§5.3): density below this contributes no
-        // opacity, independent of window/level -- lets background/noise
-        // be cut out. Gated on the step's own n, not sBar, so it reflects
-        // the actual sampled point rather than a pre-integrated average.
-        if (n < threshold)
+        // Threshold band (§5.3, upper bound added as a follow-up): density
+        // outside [threshold, thresholdMax] contributes no opacity,
+        // independent of window/level -- lets background/noise (below
+        // threshold) or an occluding denser layer in front of the target
+        // tissue (above thresholdMax) be cut out. Gated on the step's own
+        // n, not sBar, so it reflects the actual sampled point rather than
+        // a pre-integrated average. thresholdMax defaults to 1.0 (no upper
+        // cutoff), so any preset/caller that never touches it keeps the
+        // exact prior lower-bound-only behavior.
+        if (n < threshold || n > thresholdMax)
         {
             alpha = 0.0;
         }

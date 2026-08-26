@@ -48,6 +48,12 @@ public:
     void setExtinction(float extinction) override;
     void setDensityScale(float scale) override;
     void setThreshold(float threshold) override;
+    // Not part of the rhi::Device interface (yet) -- a debug/tuning knob
+    // for the upper half of the threshold band (§5.3 follow-up,
+    // 2026-08-27), set today only via setColormapPreset()'s per-preset
+    // defaults. Promote to the interface (+ a WASM export + a UI slider)
+    // if this ever needs to be user-adjustable rather than preset-only.
+    void setThresholdMax(float thresholdMax);
     void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) override;
     void setGradientOpacityStrength(float strength) override;
     void setOcclusionEnabled(bool enabled) override;
@@ -430,6 +436,14 @@ private:
     float extinction_ = 8.0F;
     float densityScale_ = 1.0F;
     float threshold_ = 0.0F;
+    // Upper cutoff paired with threshold_ (§5.3 follow-up, 2026-08-27) --
+    // 1.0 means "no upper cutoff" (every preset except Lung leaves this
+    // alone; see ColormapPreset::thresholdMax's own comment for why Lung
+    // needs the opposite-direction cutoff threshold_ alone can't provide).
+    // No public setter/WASM export -- set only by setColormapPreset(),
+    // the same way windowCenter_/windowWidth_ are, not exposed as its own
+    // slider.
+    float thresholdMax_ = 1.0F;
     float gradientOpacityStrength_ = 0.0F;
     bool occlusionEnabled_ = false;
 
