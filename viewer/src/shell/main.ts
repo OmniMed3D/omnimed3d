@@ -24,6 +24,7 @@
  * see docs/prd/CHANGELOG.md's own correction of the same mistake).
  */
 import { setupFilePicker } from "./filePicker.js";
+import { setupDragAndDrop } from "./dragAndDropControls.js";
 import { setupCameraControls } from "./cameraControls.js";
 import { setupWindowLevelControls } from "./windowLevelControls.js";
 import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
@@ -554,6 +555,7 @@ async function main() {
   const debugMode = new URLSearchParams(location.search).get("debug") === "1";
 
   setupFilePicker(loadVolumeFromFiles);
+  setupDragAndDrop(loadVolumeFromFiles);
   setupCameraControls();
   setupWindowLevelControls();
   setupViewControls();

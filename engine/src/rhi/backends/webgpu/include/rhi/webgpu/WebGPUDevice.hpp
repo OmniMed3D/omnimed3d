@@ -153,14 +153,11 @@ private:
     // can't just be reused at a new size). Releases the previous
     // texture/view/bind group first if this isn't the first call.
     void createAccumulationResources();
-    // Writes one colormap preset's color ramp into lutTexture_ -- see the
-    // .cpp definition's header comment.
-    void writeLutPreset(uint32_t presetId);
-    // Bakes one colormap preset's pre-integrated (front,back) table into
-    // preintegratedLutTexture_ -- see the .cpp definition's header comment.
-    void writePreintegratedLut(uint32_t presetId);
-    // Shared low/high-color LUT writers underlying both writeLutPreset()
-    // and setCustomColormap() (§5.3's Custom preset) -- see the .cpp
+    // Writes a color ramp into lutTexture_, and bakes the matching
+    // pre-integrated (front,back) table into preintegratedLutTexture_ --
+    // shared by setColormapPreset() (every fixed preset writes the same
+    // plain grayscale pair, see ColormapPreset's own comment) and
+    // setCustomColormap() (§5.3's Custom preset) -- see the .cpp
     // definitions' header comments.
     void writeLutColors(ColorRGB lowColor, ColorRGB highColor);
     void writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor);

@@ -30,7 +30,10 @@ export type LoadVolumeFromFiles = (files: File[]) => Promise<string>;
 const IGNORED_FILENAMES = new Set(["Thumbs.db", ".DS_Store", "DICOMDIR"]);
 const IGNORED_EXTENSIONS = [".txt", ".json", ".xml", ".pdf", ".jpg", ".jpeg", ".png", ".zip"];
 
-function isLikelyNonDicom(file: File): boolean {
+// Exported for dragAndDropControls.ts -- a dropped folder/file selection
+// needs the exact same junk-file filtering the two <input> pickers get,
+// not a second copy of this deny-list to keep in sync by hand.
+export function isLikelyNonDicom(file: File): boolean {
   const name = file.name.split(/[/\\]/).pop() ?? file.name;
   if (IGNORED_FILENAMES.has(name)) {
     return true;

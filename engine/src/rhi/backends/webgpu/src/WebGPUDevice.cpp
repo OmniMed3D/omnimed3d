@@ -143,21 +143,29 @@ static_assert(sizeof(AxialSliceUBO) == 48);
 constexpr uint32_t kViewModeOrbit3D = 0;
 constexpr uint32_t kViewModeAxialSlice2D = 1;
 
+// User request, 2026-08-27 (revised same day: "실제 병원 CT 판독화면대로
+// 그레이 스케일로 가자" -- match real clinical reading screens): every
+// fixed preset now shares one plain grayscale LUT (kGrayscaleLow/High
+// below) -- real radiology workstations never tint by window, so the
+// per-preset color ramp this struct used to carry (lowColor/highColor,
+// docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) was this
+// app's own invention, not a clinical convention, and is removed here
+// rather than kept as unused dead weight. Custom (§5.3, id 8) is
+// unaffected -- it never read from this struct, and still lets a user
+// pick any two colors via setCustomColormap()/writeLutColors() directly.
+// Grayscale itself is also removed as a *separate* preset here -- once
+// nothing carries a color tint, it was byte-for-byte identical to Soft
+// Tissue (same center/width, and now the same colorless LUT too), so
+// keeping both was two buttons for one behavior. Soft Tissue is the new
+// kDefaultColormapPreset.
+//
 // Baseline clinical window/level presets (REQ-R03) -- center/width values
 // sourced from Mini-Engine-reference's medical-volume primer doc, per PRD
 // Appendix A's explicit "referencing Mini-Engine's preset values"
-// instruction. lowColor/highColor (docs/current/
-// RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) give each preset its own
-// LUT color ramp instead of the original shared grayscale -- alpha still
-// ramps linearly with normalized density regardless of preset (see
-// writeLutPreset()), so only hue/tint distinguishes presets, not opacity
-// behavior. ColorRGB itself now lives in WebGPUDevice.hpp -- shared with
-// setCustomColormap()'s (§5.3) writeLutColors()/writePreintegratedLutColors().
+// instruction.
 struct ColormapPreset {
     float center;
     float width;
-    ColorRGB lowColor;
-    ColorRGB highColor;
     // User request, 2026-08-27: per-preset default Threshold band (§5.3's
     // `n < threshold || n > thresholdMax -> alpha = 0` cutoff,
     // volume_raymarch.slang), applied by setColormapPreset() below.
@@ -230,17 +238,35 @@ struct ColormapPreset {
     float thresholdMax;
 };
 
-constexpr std::array<ColormapPreset, 5> kColormapPresets{{
-    {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}, 0.25F, 0.45F},  // 0: Lung -- cool blue
-    {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}, 0.4F, 1.0F},    // 1: Bone -- warm ivory
-    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}, 0.0F, 1.0F},      // 2: Soft Tissue -- warm red
-    {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}, 0.0F, 1.0F},       // 3: Brain -- neutral warm gray
-    {40.0F, 400.0F, {12, 12, 12}, {245, 245, 245}, 0.0F, 1.0F},      // 4: Grayscale (default) -- no
-                                                                      // color tint, same window/level
-                                                                      // as Soft Tissue, traditional
-                                                                      // CT-film look
+// User request, 2026-08-27 (clinical preset expansion): 4 more real
+// clinical windows (Mediastinum/Abdomen-Liver/Stroke/Subdural), sourced
+// from standard radiology window/level references, the same way the
+// original ones were sourced from Mini-Engine's medical-volume primer
+// (PRD Appendix A). None of these 4 get a nonzero threshold/thresholdMax
+// default -- unlike Bone/Lung (see ColormapPreset's own comment above),
+// there is no real per-preset 3D-Orbit tuning data for these yet, and a
+// guessed value would repeat exactly the mistake that comment warns
+// against for Brain.
+constexpr std::array<ColormapPreset, 8> kColormapPresets{{
+    {-600.0F, 1500.0F, 0.25F, 0.45F},  // 0: Lung
+    {300.0F, 1500.0F, 0.4F, 1.0F},     // 1: Bone
+    {40.0F, 400.0F, 0.0F, 1.0F},       // 2: Soft Tissue (default)
+    {40.0F, 80.0F, 0.0F, 1.0F},        // 3: Brain
+    {50.0F, 350.0F, 0.0F, 1.0F},       // 4: Mediastinum
+    {50.0F, 400.0F, 0.0F, 1.0F},       // 5: Abdomen/Liver
+    {32.0F, 8.0F, 0.0F, 1.0F},         // 6: Stroke (very narrow window -- early ischemia has only
+                                       // ~1-3 HU of contrast against normal parenchyma)
+    {70.0F, 200.0F, 0.0F, 1.0F},       // 7: Subdural
 }};
-constexpr uint32_t kDefaultColormapPreset = 4;
+constexpr uint32_t kDefaultColormapPreset = 2;  // Soft Tissue
+
+// Every fixed preset's LUT ramp -- see this file's own "match real
+// clinical reading screens" comment above ColormapPreset. Not `alpha=t`
+// specific to grayscale -- shape(s)=s in writePreintegratedLutColors()
+// (identity, unrelated to color) still governs opacity; only hue is
+// fixed here.
+constexpr ColorRGB kGrayscaleLow{12, 12, 12};
+constexpr ColorRGB kGrayscaleHigh{245, 245, 245};
 
 // REQ-R04 quality/step-count tiers -- WebGPUDevice::setQualityTier().
 // stepsAcrossDiagonal sizes stepSize (diagonal / this); maxSteps is a
@@ -572,21 +598,15 @@ void WebGPUDevice::createSamplerAndLut() {
     setColormapPreset(kDefaultColormapPreset);
 }
 
-// Writes kColormapPresets[presetId]'s color ramp into lutTexture_ (§4.2) --
-// r/g/b lerp from lowColor to highColor across the ramp, alpha keeps the
-// original linear-with-density ramp (a=t) regardless of preset, so only
-// hue changes, not the existing opacity-vs-density behavior. Called from
-// createSamplerAndLut() (initial default preset) and setColormapPreset()
-// (every subsequent preset click) -- presetId is assumed already
-// bounds-checked by the caller.
-void WebGPUDevice::writeLutPreset(uint32_t presetId) {
-    ColormapPreset const& preset = kColormapPresets[presetId];
-    writeLutColors(preset.lowColor, preset.highColor);
-}
-
-// Shared by writeLutPreset() (the 4 fixed presets) and setCustomColormap()
-// (§5.3's 5th, user-defined preset) -- see writeLutPreset()'s own header
-// comment for the ramp/alpha semantics, unchanged here.
+// Writes a color ramp into lutTexture_ (§4.2) -- r/g/b lerp from lowColor
+// to highColor across the ramp, alpha keeps the original
+// linear-with-density ramp (a=t) regardless of color, so only hue
+// changes, not the existing opacity-vs-density behavior. Called from
+// createSamplerAndLut() (startup) and setColormapPreset() (every preset
+// click, with kGrayscaleLow/High -- see ColormapPreset's own comment on
+// why every fixed preset shares one plain grayscale ramp now) and from
+// setCustomColormap() (§5.3's 8th, user-defined preset, id 8, with
+// whatever the color pickers currently hold).
 void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
     std::array<uint8_t, kLutSize * 4> lutData{};
     for (uint32_t i = 0; i < kLutSize; ++i) {
@@ -633,17 +653,8 @@ void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
 //         longer factor apart cleanly.
 // Degenerates to the original single-point classification exactly when
 // front==back (no segment to integrate over). Only rebaked on a preset
-// (or future custom-color) change, not per frame or per window/level
-// change -- see setColormapPreset().
-void WebGPUDevice::writePreintegratedLut(uint32_t presetId) {
-    ColormapPreset const& preset = kColormapPresets[presetId];
-    writePreintegratedLutColors(preset.lowColor, preset.highColor);
-}
-
-// Shared by writePreintegratedLut() (the 4 fixed presets) and
-// setCustomColormap() (§5.3's 5th, user-defined preset) -- see
-// writePreintegratedLut()'s own header comment for the bake algorithm,
-// unchanged here.
+// (or custom-color) change, not per frame or per window/level change --
+// see setColormapPreset()/setCustomColormap().
 void WebGPUDevice::writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor) {
     auto classColor = [lowColor, highColor](float s) -> glm::vec3 {
         return glm::vec3{
@@ -1720,8 +1731,12 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
     windowWidth_ = preset.width;
     threshold_ = preset.threshold;
     thresholdMax_ = preset.thresholdMax;
-    writeLutPreset(presetId);
-    writePreintegratedLut(presetId);
+    // Every fixed preset shares one plain grayscale ramp now (see
+    // ColormapPreset's own comment) -- rewritten here regardless of which
+    // preset this call, since a prior Custom selection (setCustomColormap())
+    // may have left both LUTs holding whatever colors the user picked.
+    writeLutColors(kGrayscaleLow, kGrayscaleHigh);
+    writePreintegratedLutColors(kGrayscaleLow, kGrayscaleHigh);
     markAccumulationDirty();
 }
 

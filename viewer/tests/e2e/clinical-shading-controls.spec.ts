@@ -107,7 +107,7 @@ test("custom colormap pickers change the rendered frame and mark Custom active (
   await loadVolumeAndSettle(page);
   const canvas = page.locator("#canvas");
 
-  await page.locator('[data-colormap-preset="2"]').click(); // known starting point
+  await page.locator("#colormap-preset-select").selectOption("2"); // known starting point
   await page.waitForTimeout(300);
   const beforeCustom = await canvas.screenshot();
 
@@ -119,8 +119,10 @@ test("custom colormap pickers change the rendered frame and mark Custom active (
   const afterCustom = await canvas.screenshot();
   expect(beforeCustom.equals(afterCustom)).toBe(false);
 
-  await expect(page.locator("#custom-preset-button")).toHaveClass(/active/);
-  await expect(page.locator('[data-colormap-preset="2"]')).not.toHaveClass(/active/);
+  // Custom (id 8, CUSTOM_PRESET_ID) is the <select>'s own value once
+  // active -- no more per-button .active class (2026-08-27, clinical
+  // preset expansion: button grid -> <select>).
+  await expect(page.locator("#colormap-preset-select")).toHaveValue("8");
 });
 
 test("clip box restricts the rendered volume and mask overlay stays aligned (§6.4)", async ({ page }) => {

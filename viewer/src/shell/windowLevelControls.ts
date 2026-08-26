@@ -1,15 +1,33 @@
 /**
  * Clinical window/level UI (issue #34, REQ-R06) -- two range sliders
- * (center/width) plus baseline preset buttons, calling the engine's
+ * (center/width) plus a baseline preset `<select>`, calling the engine's
  * `engine_set_window_level`/`engine_set_colormap_preset` WASM exports
  * directly and synchronously on every input event (no queueing needed --
- * see cameraControls.ts's comment on why). Preset button order/values
+ * see cameraControls.ts's comment on why). Preset `<option>` order/values
  * must match `kColormapPresets` in
  * engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp exactly (0=Lung,
- * 1=Bone, 2=Soft Tissue, 3=Brain, 4=Grayscale). Custom (id 5) is a 6th,
+ * 1=Bone, 2=Soft Tissue (default), 3=Brain, 4=Mediastinum, 5=Abdomen/Liver,
+ * 6=Stroke, 7=Subdural). Custom (`CUSTOM_PRESET_ID`, 8) is a 9th,
  * user-defined colormap layered on top -- see customColormapControls.ts.
  *
- * Sliders initialize to the Grayscale preset's values (40/400) to
+ * User request, 2026-08-27 (clinical preset expansion): switched from a
+ * button grid to a single `<select>` -- the fixed presets plus Custom
+ * stopped fitting comfortably as a row of buttons once 4 new ones
+ * (Mediastinum/Abdomen-Liver/Stroke/Subdural) were added.
+ *
+ * User request, 2026-08-27 (revised same day: "실제 병원 CT 판독화면대로
+ * 그레이 스케일로 가자" -- match real clinical reading screens): every
+ * fixed preset lost its per-preset color tint (WebGPUDevice.cpp's
+ * ColormapPreset no longer carries lowColor/highColor at all), which made
+ * the old separate Grayscale preset byte-for-byte identical to Soft
+ * Tissue (same center/width, now the same colorless LUT too) -- removed
+ * as a redundant 9th button/option rather than kept as a confusing exact
+ * duplicate. Soft Tissue (index 2, unchanged) is the new default;
+ * Mediastinum/Abdomen-Liver/Stroke/Subdural each shift down by one index
+ * (5->4, 6->5, 7->6, 8->7) to close the gap Grayscale's removal left at 4,
+ * and Custom moves from 9 to 8.
+ *
+ * Sliders initialize to the Soft Tissue preset's values (40/400) to
  * match `WebGPUDevice`'s own default-on-load preset -- no read-back
  * export from the engine exists (or is needed) to sync this; both sides
  * just agree on the same default independently, the same way
@@ -96,18 +114,28 @@ function bindRangeWithNumericEntry(
 
 // Preset center/width values, indexed by presetId -- must match
 // WebGPUDevice.cpp's kColormapPresets exactly (0=Lung, 1=Bone, 2=Soft
-// Tissue, 3=Brain, 4=Grayscale). Kept in sync here (rather than read back
-// from the engine, which has no readback export) so a preset click can
-// update the slider UI/labels to match, not just the engine's own state --
-// without this, the sliders silently went stale after a preset click and
-// the next manual drag would overwrite the preset with the pre-click values.
+// Tissue, 3=Brain, 4=Mediastinum, 5=Abdomen/Liver, 6=Stroke, 7=Subdural).
+// Kept in sync here (rather than read back from the engine, which has no
+// readback export) so a preset click can update the slider UI/labels to
+// match, not just the engine's own state -- without this, the sliders
+// silently went stale after a preset click and the next manual drag would
+// overwrite the preset with the pre-click values.
 const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = {
   0: { center: -600, width: 1500 }, // Lung
   1: { center: 300, width: 1500 }, // Bone
-  2: { center: 40, width: 400 }, // Soft Tissue
+  2: { center: 40, width: 400 }, // Soft Tissue (default)
   3: { center: 40, width: 80 }, // Brain
-  4: { center: 40, width: 400 }, // Grayscale
+  4: { center: 50, width: 350 }, // Mediastinum
+  5: { center: 50, width: 400 }, // Abdomen/Liver
+  6: { center: 32, width: 8 }, // Stroke
+  7: { center: 70, width: 200 }, // Subdural
 };
+
+// Custom (§5.3) isn't one of kColormapPresets' 0-7 indices -- it's the
+// 9th <option> in #colormap-preset-select, handled specially below (its
+// color application is owned by customColormapControls.ts, which also
+// imports this constant to mark itself active the same way).
+export const CUSTOM_PRESET_ID = 8;
 
 // Mirrors kColormapPresets[presetId].threshold (WebGPUDevice.cpp) -- kept
 // in sync here for the same reason PRESET_WINDOW_LEVELS is: setColormapPreset()
@@ -123,13 +151,16 @@ const PRESET_THRESHOLDS: Record<number, number> = {
   1: 0.4, // Bone
   2: 0, // Soft Tissue
   3: 0, // Brain
-  4: 0, // Grayscale
+  4: 0, // Mediastinum
+  5: 0, // Abdomen/Liver
+  6: 0, // Stroke
+  7: 0, // Subdural
 };
 
 // The engine's own default-on-load preset (kDefaultColormapPreset in
-// WebGPUDevice.cpp) -- Grayscale. Marked active on setup so the UI
+// WebGPUDevice.cpp) -- Soft Tissue. Marked active on setup so the UI
 // agrees with engine state from the first frame, not just after a click.
-const DEFAULT_PRESET_ID = 4;
+const DEFAULT_PRESET_ID = 2;
 
 // Visual polish pass: presets get the same selected-state feedback the
 // view-mode toggle already had (critique heuristic #4, Consistency).
@@ -138,17 +169,24 @@ const DEFAULT_PRESET_ID = 4;
 // has diverged from it, so claiming one is still "selected" would
 // misrepresent state (the same class of bug the preset/slider desync fix
 // closed). Exported (not a setupWindowLevelControls()-local closure) so
-// customColormapControls.ts's §5.3 Custom preset (id 4, also carrying
-// `data-colormap-preset` so it's included in the same querySelectorAll
-// here) can drive the same active-state feedback when a custom color is
-// picked, without duplicating this query/toggle logic.
+// customColormapControls.ts's §5.3 Custom preset (CUSTOM_PRESET_ID, 8)
+// can drive the same active-state feedback when a custom color is
+// picked, without duplicating this logic.
 let activePresetId: number | null = DEFAULT_PRESET_ID;
 
+// User request, 2026-08-27 (clinical preset expansion): the preset picker
+// is a native <select> now, not a button grid -- the fixed presets plus
+// Custom no longer fit comfortably as a row of buttons. "Active" state is
+// just the select's own displayed value; a null presetId (manually
+// dragged Center/Width, matching a preset by coincidence or not) shows
+// the blank/disabled placeholder <option value=""> instead of any real
+// preset, the same way no button used to read as selected.
 export function setActivePreset(presetId: number | null): void {
   activePresetId = presetId;
-  document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]").forEach((button) => {
-    button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
-  });
+  const select = document.getElementById("colormap-preset-select") as HTMLSelectElement | null;
+  if (select) {
+    select.value = presetId === null ? "" : String(presetId);
+  }
 }
 
 // User request, 2026-08-27: "Reset TF Detail" (tfDetailControls.ts) should
@@ -173,7 +211,7 @@ export function setupWindowLevelControls(): void {
   const centerLabel = document.getElementById("window-center-value") as HTMLInputElement | null;
   const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
   const widthLabel = document.getElementById("window-width-value") as HTMLInputElement | null;
-  const presetButtons = document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]");
+  const presetSelect = document.getElementById("colormap-preset-select") as HTMLSelectElement | null;
 
   bindRangeWithNumericEntry("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
     center = value;
@@ -186,45 +224,48 @@ export function setupWindowLevelControls(): void {
     applyWindowLevel();
   });
 
-  presetButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      const presetId = Number(button.dataset["colormapPreset"]);
-      // Custom (§5.3, id 5) isn't one of kColormapPresets' 0-4 indices --
-      // its color application is owned by customColormapControls.ts (the
-      // color pickers call engine_set_custom_lut_colors directly), and it
-      // doesn't imply a specific window/level. This handler only needs to
-      // give it the same active-state feedback the other 5 presets get.
-      if (presetId === 5) {
-        setActivePreset(presetId);
-        return;
-      }
-      window.Module._engine_set_colormap_preset(presetId);
+  if (!presetSelect) {
+    console.error("windowLevelControls: #colormap-preset-select not found in the DOM");
+    return;
+  }
 
-      const preset = PRESET_WINDOW_LEVELS[presetId];
-      if (!preset) {
-        return;
-      }
-      center = preset.center;
-      width = preset.width;
-      if (centerInput && centerLabel) {
-        centerInput.value = String(center);
-        centerLabel.value = String(center);
-      }
-      if (widthInput && widthLabel) {
-        widthInput.value = String(width);
-        widthLabel.value = String(width);
-      }
-
-      const presetThreshold = PRESET_THRESHOLDS[presetId];
-      const thresholdInput = document.getElementById("threshold") as HTMLInputElement | null;
-      const thresholdLabel = document.getElementById("threshold-value") as HTMLInputElement | null;
-      if (presetThreshold !== undefined && thresholdInput && thresholdLabel) {
-        thresholdInput.value = String(presetThreshold);
-        thresholdLabel.value = String(presetThreshold);
-      }
-
+  presetSelect.addEventListener("change", () => {
+    const presetId = Number(presetSelect.value);
+    // Custom (§5.3, id 8) isn't one of kColormapPresets' 0-7 indices --
+    // its color application is owned by customColormapControls.ts (the
+    // color pickers call engine_set_custom_lut_colors directly), and it
+    // doesn't imply a specific window/level. This handler only needs to
+    // give it the same active-state feedback the other presets get.
+    if (presetId === CUSTOM_PRESET_ID) {
       setActivePreset(presetId);
-    });
+      return;
+    }
+    window.Module._engine_set_colormap_preset(presetId);
+
+    const preset = PRESET_WINDOW_LEVELS[presetId];
+    if (!preset) {
+      return;
+    }
+    center = preset.center;
+    width = preset.width;
+    if (centerInput && centerLabel) {
+      centerInput.value = String(center);
+      centerLabel.value = String(center);
+    }
+    if (widthInput && widthLabel) {
+      widthInput.value = String(width);
+      widthLabel.value = String(width);
+    }
+
+    const presetThreshold = PRESET_THRESHOLDS[presetId];
+    const thresholdInput = document.getElementById("threshold") as HTMLInputElement | null;
+    const thresholdLabel = document.getElementById("threshold-value") as HTMLInputElement | null;
+    if (presetThreshold !== undefined && thresholdInput && thresholdLabel) {
+      thresholdInput.value = String(presetThreshold);
+      thresholdLabel.value = String(presetThreshold);
+    }
+
+    setActivePreset(presetId);
   });
 
   setActivePreset(DEFAULT_PRESET_ID);
