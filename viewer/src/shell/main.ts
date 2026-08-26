@@ -26,8 +26,8 @@
 import { setupFilePicker } from "./filePicker.js";
 import { setupDragAndDrop } from "./dragAndDropControls.js";
 import { setupCameraControls } from "./cameraControls.js";
-import { setupWindowLevelControls } from "./windowLevelControls.js";
-import { setupViewControls, notifyVolumeLoaded } from "./viewControls.js";
+import { setFileWindowLevel, setupWindowLevelControls } from "./windowLevelControls.js";
+import { setupViewControls, notifyVolumeLoaded, notifyNativeVolumeLoaded } from "./viewControls.js";
 import { applyStartupAutoTier, setupQualityControls } from "./qualityControls.js";
 import { setupTfDetailControls } from "./tfDetailControls.js";
 import { setupClipControls, notifyVolumeAabbLoaded } from "./clipControls.js";
@@ -67,6 +67,19 @@ interface EngineModule {
     spacingZ: number,
     downsampleFactor: number,
   ): void;
+  // MPR + native-slice feature (2026-08-27 user request) -- see
+  // rhi::Device::loadNativeVolume's header comment. No downsampleFactor.
+  _engine_load_native_volume(
+    volumeId: number,
+    dataPtr: number,
+    byteLength: number,
+    width: number,
+    height: number,
+    depth: number,
+    spacingX: number,
+    spacingY: number,
+    spacingZ: number,
+  ): void;
   _engine_apply_mask_slice(
     volumeId: number,
     sliceIndex: number,
@@ -79,8 +92,13 @@ interface EngineModule {
   _engine_set_colormap_preset(presetId: number): void;
   _engine_orbit_camera(deltaYawPixels: number, deltaPitchPixels: number): void;
   _engine_zoom_camera(wheelDeltaSign: number): void;
+  // mode: 0=Orbit3D, 1=Slice2D (Axial/Sagittal/Coronal, see
+  // _engine_set_slice_axis), 2=NativeSlice2D.
   _engine_set_view_mode(mode: number): void;
-  _engine_set_axial_slice_index(index: number): void;
+  _engine_set_slice_index(index: number): void;
+  // axis: 0=Axial, 1=Sagittal, 2=Coronal (MPR, 2026-08-27 user request).
+  _engine_set_slice_axis(axis: number): void;
+  _engine_set_native_slice_index(index: number): void;
   _engine_resize(width: number, height: number): void;
   _engine_set_quality_tier(tier: number): void;
   _engine_set_shading_enabled(enabled: number): void;
@@ -160,6 +178,29 @@ interface HuSliceMessage {
 
 interface VolumeReadyMessage {
   type: "volume-ready";
+  volumeId: string;
+  width: number;
+  height: number;
+  depth: number;
+  spacingX: number;
+  spacingY: number;
+  spacingZ: number;
+  data: ArrayBuffer;
+  // Bug report, 2026-08-27: mirrors pipeline.ts's VolumeReadyMessage --
+  // this local interface had silently drifted out of sync with it (no
+  // typecheck script exists for this package; Vite/esbuild transpile
+  // main.ts without type-checking it, so a missing field here doesn't
+  // fail any build, only weakens editor/tsc feedback). Keep these two
+  // definitions in sync by hand when either changes.
+  windowCenter?: number;
+  windowWidth?: number;
+}
+
+// MPR + native-slice feature (2026-08-27 user request) -- mirrors
+// pipeline.ts's NativeVolumeReadyMessage, same hand-sync caveat as
+// VolumeReadyMessage above.
+interface NativeVolumeReadyMessage {
+  type: "native-volume-ready";
   volumeId: string;
   width: number;
   height: number;
@@ -414,14 +455,56 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
     );
   });
   notifyLowMemoryMode(lowMemoryMode);
-  notifyVolumeLoaded(msg.depth);
+  notifyVolumeLoaded(msg.width, msg.height, msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
   notifyVolumeLoadedForInference(msg.volumeId, msg.depth);
+  // Bug report, 2026-08-27 (revised same day): the file's own VOI LUT
+  // window (pipeline.ts's assembleSeries, from the first slice) is the
+  // only reliable per-series display hint for data that isn't in
+  // Hounsfield Units at all (e.g. MR), but *auto-applying* it here turned
+  // out wrong -- it permanently discarded whatever the user had picked as
+  // soon as a new volume loaded, and looks bad as the first-seen 3D Orbit
+  // view (a 2D-slice-tuned window, raymarched). Just store it (always,
+  // even when undefined, to clear a stale value from a previous volume
+  // that didn't carry one) -- setFileWindowLevel wires it into the "From
+  // File" preset option instead, so the user opts in rather than having
+  // it forced on them.
+  setFileWindowLevel(msg.windowCenter, msg.windowWidth);
   scheduleAutoTierCheck();
   setLoading(false);
   // Visual polish pass: the empty-canvas hint has served its purpose
   // once a volume has actually rendered.
   document.getElementById("empty-hint")!.hidden = true;
+}
+
+// MPR + native-slice feature (2026-08-27 user request) -- loads the DICOM
+// series' own original per-file slices into a second, independent GPU
+// texture (rhi::Device::loadNativeVolume) for the NativeSlice2D view mode.
+// Deliberately minimal compared to engineLoadVolume: no downsampling, no
+// low-memory-mode bookkeeping, no mask/inference notification -- this view
+// has no cinematic rendering or AI mask overlay path to feed.
+function engineLoadNativeVolume(msg: NativeVolumeReadyMessage): void {
+  const numericId = volumeIdMap.get(msg.volumeId);
+  if (numericId === undefined) {
+    console.error(`Shell: native-volume-ready for unknown volumeId=${msg.volumeId}, ignoring`);
+    return;
+  }
+  const bytes = new Uint8Array(msg.data);
+  withWasmBuffer(bytes.byteLength, (ptr) => {
+    window.Module.HEAPU8.set(bytes, ptr);
+    window.Module._engine_load_native_volume(
+      numericId,
+      ptr,
+      bytes.byteLength,
+      msg.width,
+      msg.height,
+      msg.depth,
+      msg.spacingX,
+      msg.spacingY,
+      msg.spacingZ,
+    );
+  });
+  notifyNativeVolumeLoaded(msg.depth);
 }
 
 function engineApplyMaskSlice(msg: MaskSliceMessage): void {
@@ -499,7 +582,9 @@ async function main() {
   parseWorker.postMessage({ type: "init", wasmModulePath });
   await parseWorkerReady;
 
-  parseWorker.onmessage = (event: MessageEvent<HuSliceMessage | VolumeReadyMessage | ParseErrorMessage>) => {
+  parseWorker.onmessage = (
+    event: MessageEvent<HuSliceMessage | VolumeReadyMessage | NativeVolumeReadyMessage | ParseErrorMessage>,
+  ) => {
     const msg = event.data;
     if (msg.type === "hu-slice") {
       if (inferenceWorkerReady) {
@@ -509,6 +594,8 @@ async function main() {
       }
     } else if (msg.type === "volume-ready") {
       engineLoadVolume(msg);
+    } else if (msg.type === "native-volume-ready") {
+      engineLoadNativeVolume(msg);
     } else if (msg.type === "parse-error") {
       console.error("Shell: Parse Worker reported a parse error", msg.message);
       showLoadError();

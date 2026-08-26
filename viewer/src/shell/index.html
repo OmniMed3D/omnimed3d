@@ -164,19 +164,31 @@
         </div>
         <p id="demo-model-status" class="hint-text"></p>
       </div>
-      <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D axial-slice
-           view-mode toggle + slice slider. viewControls.ts owns showing/
-           hiding #axial-slice-row based on the active mode. -->
+      <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D slice
+           view-mode toggle + slice slider. MPR + native-slice feature
+           (2026-08-27 user request): Axial/Sagittal/Coronal all share
+           data-view-mode="1" (Slice2D), disambiguated by data-slice-axis;
+           Native (data-view-mode="2") shows the DICOM series' own
+           original per-file slices instead, independent of the 3D
+           reconstruction the other modes show. viewControls.ts owns
+           showing/hiding #slice-index-row based on the active mode. -->
       <div class="panel-section">
         <span class="section-label">View</span>
         <div class="row preset-buttons view-mode-buttons">
-          <button type="button" data-view-mode="0" data-tooltip-key="view-mode-0">3D Orbit</button>
-          <button type="button" data-view-mode="1" data-tooltip-key="view-mode-1">2D Slice</button>
+          <button type="button" data-view-mode="0" data-tooltip-key="view-mode-orbit">3D Orbit</button>
+          <button type="button" data-view-mode="1" data-slice-axis="0" data-tooltip-key="view-mode-axial">Axial</button>
+          <button type="button" data-view-mode="1" data-slice-axis="1" data-tooltip-key="view-mode-sagittal">
+            Sagittal
+          </button>
+          <button type="button" data-view-mode="1" data-slice-axis="2" data-tooltip-key="view-mode-coronal">
+            Coronal
+          </button>
+          <button type="button" data-view-mode="2" data-tooltip-key="view-mode-native">Native</button>
         </div>
-        <div class="row" id="axial-slice-row" hidden>
-          <label for="axial-slice-index">Slice</label>
-          <input id="axial-slice-index" type="range" min="0" max="0" step="1" data-tooltip-key="axial-slice-index" />
-          <span id="axial-slice-index-value" class="value"></span>
+        <div class="row" id="slice-index-row" hidden>
+          <label for="slice-index">Slice</label>
+          <input id="slice-index" type="range" min="0" max="0" step="1" data-tooltip-key="slice-index" />
+          <span id="slice-index-value" class="value"></span>
         </div>
       </div>
       <div class="panel-section">
@@ -254,6 +266,14 @@
               Subdural
             </option>
             <option value="8" title="Set with the color pickers below; doesn't change window/level">Custom</option>
+            <option
+              id="from-file-preset-option"
+              value="9"
+              disabled
+              title="The loaded series' own recommended display window (DICOM VOI LUT) -- unavailable until a series carrying one is loaded"
+            >
+              From File
+            </option>
           </select>
         </div>
         <div class="row">

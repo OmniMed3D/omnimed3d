@@ -67,7 +67,9 @@ test("known-answer synthetic mask renders at the geometrically correct quadrant,
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
-  await page.locator('[data-view-mode="1"]').click();
+  // MPR feature (2026-08-27): Axial/Sagittal/Coronal now share
+  // data-view-mode="1", disambiguated by data-slice-axis.
+  await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
 
   await page.evaluate(
     ({ volumeId, size }) => {

@@ -373,17 +373,19 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   await page.waitForTimeout(500);
   const orbitShot = await canvas.screenshot();
 
-  // Switch to 2D Slice -- a genuinely different pipeline/output, so this
+  // Switch to 2D Slice (Axial -- MPR feature, 2026-08-27, added Sagittal/
+  // Coronal buttons sharing data-view-mode="1", disambiguated by
+  // data-slice-axis) -- a genuinely different pipeline/output, so this
   // must differ regardless of mask state.
-  await page.locator('[data-view-mode="1"]').click();
+  await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
   await page.waitForTimeout(300);
   const sliceDefaultShot = await canvas.screenshot();
   expect(orbitShot.equals(sliceDefaultShot)).toBe(false);
 
   // depth=3 -> slider max=2, default index=floor(3/2)=1 (engine's own
   // depth/2 default, mirrored client-side by viewControls.ts).
-  await expect(page.locator("#axial-slice-index")).toHaveAttribute("max", "2");
-  await expect(page.locator("#axial-slice-index")).toHaveValue("1");
+  await expect(page.locator("#slice-index")).toHaveAttribute("max", "2");
+  await expect(page.locator("#slice-index")).toHaveValue("1");
 
   // The three slices are byte-identical HU data (same file loaded 3x), so
   // moving the slider alone wouldn't guarantee a visual diff -- apply a
@@ -410,7 +412,7 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   }, engineVolumeId);
   await waitForLine(/WebGPUDevice::applyMaskSlice: volumeId=\d+ slice=0 applied/);
 
-  const sliceSlider = page.locator("#axial-slice-index");
+  const sliceSlider = page.locator("#slice-index");
   await sliceSlider.fill("0");
   await sliceSlider.dispatchEvent("input");
   await page.waitForTimeout(300);

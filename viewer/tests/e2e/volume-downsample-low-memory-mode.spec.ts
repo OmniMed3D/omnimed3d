@@ -56,7 +56,9 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
-  await page.locator('[data-view-mode="1"]').click();
+  // MPR feature (2026-08-27): Axial/Sagittal/Coronal now share
+  // data-view-mode="1", disambiguated by data-slice-axis.
+  await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
   await page.locator("#panel-collapse-toggle").click();
 
   async function loadAndCheckQuadrant(volumeId: number, downsampleFactor: number): Promise<void> {
@@ -124,8 +126,8 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
 
   const TEST_DOWNSAMPLE_FACTOR = 4; // matches the Shell's current default
   await loadAndCheckQuadrant(802, TEST_DOWNSAMPLE_FACTOR);
-  const downsampledExtent = consoleLines.find(
-    (line) => /WebGPUDevice::volumeTexture: \d+x\d+x\d+ \(downsampleFactor=4\)/.test(line),
+  const downsampledExtent = consoleLines.find((line) =>
+    /WebGPUDevice::volumeTexture: \d+x\d+x\d+ \(downsampleFactor=4\)/.test(line),
   );
   expect(downsampledExtent).toBeTruthy();
   // Ceiling-divided by the requested factor -- asserts the *actual* chosen

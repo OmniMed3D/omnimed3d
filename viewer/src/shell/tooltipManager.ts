@@ -43,9 +43,16 @@ const TOOLTIP_TEXT: Record<string, string> = {
   "colormap-preset-select": "Clinical window/level preset. Hover an option for its exact HU values.",
   "custom-low-color": "Low end of the custom color gradient.",
   "custom-high-color": "High end of the custom color gradient.",
-  "view-mode-0": "3D orbit camera view of the full volume.",
-  "view-mode-1": "Single 2D axial cross-section, scrubbed by the Slice slider below.",
-  "axial-slice-index": "Which Z slice the 2D Slice view shows.",
+  "view-mode-orbit": "3D orbit camera view of the full volume.",
+  "view-mode-axial":
+    "Single 2D axial cross-section (fixes Z) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-sagittal":
+    "Single 2D sagittal cross-section (fixes X) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-coronal":
+    "Single 2D coronal cross-section (fixes Y) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-native":
+    "The DICOM series' own original per-file slices, in their native acquisition order -- independent of the 3D reconstruction the other views show.",
+  "slice-index": "Which slice the current 2D view shows.",
   "quality-tier-0": "192 ray-march steps across the volume (256 max) -- faster, coarser image.",
   "quality-tier-1": "384 ray-march steps across the volume (512 max, default) -- balanced.",
   "quality-tier-2": "768 ray-march steps across the volume (1024 max) -- slower, sharper image.",

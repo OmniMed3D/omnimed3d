@@ -41,6 +41,20 @@
  * than the skin/fat surface in 3D Orbit; without this sync the slider
  * would silently disagree with engine state after a preset click, same
  * class of bug PRESET_WINDOW_LEVELS already exists to avoid.
+ *
+ * User feedback, 2026-08-27 (MPR + native-slice follow-up): the loaded
+ * series' own VOI LUT window (see setFileWindowLevel below) used to be
+ * *applied* automatically on load, landing on the blank "Custom
+ * window/level" state -- two problems: (1) picking any other preset
+ * afterward, or dragging a slider, permanently lost that value with no way
+ * back, and (2) a per-slice DICOM window often looks wrong as the *first*
+ * screen (3D Orbit's raymarch, not the 2D slice view it was tuned for) --
+ * e.g. an MR window renders as a blown-out white block in 3D. Fixed by
+ * turning it into a 10th, dynamic preset (`FROM_FILE_PRESET_ID`, "From
+ * File") instead of an auto-applied override: the value is *stored*
+ * durably (survives switching to/from other presets or manual drags) and
+ * only *applied* when the user actually picks it, so the initial view
+ * still starts on the ordinary default (Soft Tissue) preset.
  */
 
 const DEFAULT_WINDOW_CENTER = 40;
@@ -137,6 +151,14 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
 // imports this constant to mark itself active the same way).
 export const CUSTOM_PRESET_ID = 8;
 
+// "From File" (MPR + native-slice follow-up, 2026-08-27) -- the 10th
+// <option>, also not one of kColormapPresets' fixed indices. Unlike every
+// other entry here, its center/width value is per-volume (set by
+// setFileWindowLevel, not a compile-time constant), so it can't live in
+// PRESET_WINDOW_LEVELS -- handled specially in the change handler below,
+// same pattern as Custom.
+export const FROM_FILE_PRESET_ID = 9;
+
 // Mirrors kColormapPresets[presetId].threshold (WebGPUDevice.cpp) -- kept
 // in sync here for the same reason PRESET_WINDOW_LEVELS is: setColormapPreset()
 // applies this natively (no readback export), but the #threshold slider
@@ -201,11 +223,84 @@ export function getActiveThresholdDefault(): number | undefined {
   return activePresetId === null ? undefined : PRESET_THRESHOLDS[activePresetId];
 }
 
+// Updates the center/width sliders + labels and calls the engine --
+// shared by the preset-select change handler and setFileWindowLevel's
+// caller (the "From File" branch) so both apply a window/level value the
+// exact same way. Does NOT touch setActivePreset -- callers decide what
+// "active" means for their own case (a fixed preset id, FROM_FILE_PRESET_ID,
+// or null for a manual drag).
+function applyWindowLevel(center: number, width: number): void {
+  const centerInput = document.getElementById("window-center") as HTMLInputElement | null;
+  const centerLabel = document.getElementById("window-center-value") as HTMLInputElement | null;
+  const widthInput = document.getElementById("window-width") as HTMLInputElement | null;
+  const widthLabel = document.getElementById("window-width-value") as HTMLInputElement | null;
+
+  if (centerInput && centerLabel) {
+    centerInput.value = String(center);
+    centerLabel.value = String(center);
+  }
+  if (widthInput && widthLabel) {
+    widthInput.value = String(width);
+    widthLabel.value = String(width);
+  }
+
+  window.Module._engine_set_window_level(center, width);
+}
+
+// The current volume's own VOI LUT window, if any -- set by
+// setFileWindowLevel below, read by the "From File" preset branch. Stored
+// independently of activePresetId/the sliders' own live values so it
+// survives the user picking a different preset or dragging a slider (see
+// this module's header comment for why that durability is the whole
+// point of this feature).
+let currentFileWindowLevel: { center: number; width: number } | null = null;
+
+// Called by main.ts on every volume load (2026-08-27 bug report: UPENN-GBM
+// brain MR rendered as a blown-out white block under the app's CT "Brain"
+// preset, center 40/width 80 HU -- MR pixel values aren't Hounsfield
+// Units, so every fixed CT-calibrated preset is meaningless against them).
+// `center`/`width` come from `VolumeReadyMessage.windowCenter`/`windowWidth`
+// (the series' own DICOM VOI LUT window, PS3.3 C.11.2) -- `undefined` when
+// the loaded series carries none, which disables the "From File" option
+// and clears any previous volume's stale stored value rather than leaving
+// it selectable for a series it no longer describes.
+//
+// Deliberately does NOT apply the value or touch the active preset --
+// see this module's header comment (2026-08-27 follow-up) for why an
+// auto-applied override was the wrong design (loses the value permanently
+// once the user picks anything else, and looks wrong as the first-seen 3D
+// Orbit view). The user opts in via the "From File" option instead.
+export function setFileWindowLevel(center: number | undefined, width: number | undefined): void {
+  const option = document.getElementById("from-file-preset-option") as HTMLOptionElement | null;
+  if (center === undefined || width === undefined) {
+    currentFileWindowLevel = null;
+    if (option) {
+      option.disabled = true;
+      option.title =
+        "The loaded series' own recommended display window (DICOM VOI LUT) -- unavailable until a series carrying one is loaded";
+    }
+    // If "From File" was active for a previous volume that this new one
+    // has no equivalent for, its value is now stale/meaningless -- fall
+    // back to the blank manual-drag state rather than silently keep
+    // showing "From File" selected next to numbers that no longer mean
+    // anything.
+    if (activePresetId === FROM_FILE_PRESET_ID) {
+      setActivePreset(null);
+    }
+    return;
+  }
+  currentFileWindowLevel = { center, width };
+  if (option) {
+    option.disabled = false;
+    option.title = `Center ${center} / Width ${width} -- this series' own DICOM VOI LUT window`;
+  }
+}
+
 export function setupWindowLevelControls(): void {
   let center = DEFAULT_WINDOW_CENTER;
   let width = DEFAULT_WINDOW_WIDTH;
 
-  const applyWindowLevel = () => window.Module._engine_set_window_level(center, width);
+  const applyCurrentWindowLevel = () => window.Module._engine_set_window_level(center, width);
 
   const centerInput = document.getElementById("window-center") as HTMLInputElement | null;
   const centerLabel = document.getElementById("window-center-value") as HTMLInputElement | null;
@@ -216,12 +311,12 @@ export function setupWindowLevelControls(): void {
   bindRangeWithNumericEntry("window-center", "window-center-value", DEFAULT_WINDOW_CENTER, (value) => {
     center = value;
     setActivePreset(null);
-    applyWindowLevel();
+    applyCurrentWindowLevel();
   });
   bindRangeWithNumericEntry("window-width", "window-width-value", DEFAULT_WINDOW_WIDTH, (value) => {
     width = value;
     setActivePreset(null);
-    applyWindowLevel();
+    applyCurrentWindowLevel();
   });
 
   if (!presetSelect) {
@@ -237,6 +332,25 @@ export function setupWindowLevelControls(): void {
     // doesn't imply a specific window/level. This handler only needs to
     // give it the same active-state feedback the other presets get.
     if (presetId === CUSTOM_PRESET_ID) {
+      setActivePreset(presetId);
+      return;
+    }
+    // "From File" (2026-08-27 follow-up) -- unlike every fixed preset,
+    // there's no engine_set_colormap_preset equivalent that natively knows
+    // this per-volume value, so this branch calls engine_set_window_level
+    // itself via the shared applyWindowLevel helper (also used nowhere
+    // else in this file -- the fixed-preset branch below intentionally
+    // relies on engine_set_colormap_preset having already set window/level
+    // natively, only mirroring it into the sliders, so it doesn't need a
+    // second explicit engine_set_window_level call).
+    if (presetId === FROM_FILE_PRESET_ID) {
+      if (!currentFileWindowLevel) {
+        console.error('windowLevelControls: "From File" selected but no file window/level is stored, ignoring');
+        return;
+      }
+      center = currentFileWindowLevel.center;
+      width = currentFileWindowLevel.width;
+      applyWindowLevel(center, width);
       setActivePreset(presetId);
       return;
     }

@@ -43,7 +43,7 @@
  */
 
 import { notifyInteractionEnd, notifyInteractionStart } from "./qualityControls";
-import { getViewMode, stepAxialSlice, VIEW_MODE_AXIAL_SLICE_2D } from "./viewControls.js";
+import { getViewMode, stepSlice, VIEW_MODE_SLICE_2D, VIEW_MODE_NATIVE_SLICE_2D } from "./viewControls.js";
 
 export function setupCameraControls(): void {
   const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
@@ -100,8 +100,9 @@ export function setupCameraControls(): void {
       // only the sign is forwarded rather than the raw magnitude.
       event.preventDefault();
       const notches = Math.sign(event.deltaY);
-      if (getViewMode() === VIEW_MODE_AXIAL_SLICE_2D) {
-        stepAxialSlice(notches);
+      const viewMode = getViewMode();
+      if (viewMode === VIEW_MODE_SLICE_2D || viewMode === VIEW_MODE_NATIVE_SLICE_2D) {
+        stepSlice(notches);
         return;
       }
       window.Module._engine_zoom_camera(notches);
