@@ -46,7 +46,7 @@ test("Load Demo CT loads a real volume and shows CC BY 3.0 attribution", async (
 
   await expect(page.locator("#load-demo-ct")).toBeEnabled();
   await expect(page.locator("#load-demo-ct")).toHaveClass(/active/);
-  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Patient 1");
+  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Lung1");
   await expect(page.locator("#demo-ct-status")).toContainText("LIDC-IDRI");
   await expect(page.locator("#demo-ct-status")).toContainText("CC BY 3.0");
 
@@ -74,5 +74,5 @@ test("a missing demo-ct manifest shows a sync-demo-ct hint, not a generic error"
   // The button must re-enable so the user isn't stuck after a failure.
   await expect(page.locator("#load-demo-ct")).toBeEnabled();
   await expect(page.locator("#load-demo-ct")).not.toHaveClass(/active/);
-  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Patient 1");
+  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Lung1");
 });

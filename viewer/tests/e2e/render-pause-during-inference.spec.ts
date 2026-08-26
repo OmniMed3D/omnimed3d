@@ -61,7 +61,13 @@ test("in low-memory mode, a real hu-slice inference pauses rendering, then resum
       window.omnimed3dTestHooks.inferenceWorker.addEventListener("message", function ack(e: MessageEvent) {
         if (e.data.type === "init-complete") {
           window.omnimed3dTestHooks.inferenceWorker.removeEventListener("message", ack);
-          resolve(window.omnimed3dTestHooks.startNewVolume());
+          // User feedback, 2026-08-27: a new volume no longer auto-arms
+          // for segmentation (main.ts's segmentationArmedVolumeId) --
+          // explicit arm required, matching a real "Run Segmentation"
+          // click, before this volume's hu-slice actually forwards.
+          const id = window.omnimed3dTestHooks.startNewVolume();
+          window.omnimed3dTestHooks.armSegmentationForCurrentVolume();
+          resolve(id);
         }
       });
       window.omnimed3dTestHooks.inferenceWorker.postMessage({ type: "init", modelPath: "/dummy-lungmask.onnx" });
@@ -111,7 +117,13 @@ test("outside low-memory mode, a real hu-slice inference does not pause renderin
       window.omnimed3dTestHooks.inferenceWorker.addEventListener("message", function ack(e: MessageEvent) {
         if (e.data.type === "init-complete") {
           window.omnimed3dTestHooks.inferenceWorker.removeEventListener("message", ack);
-          resolve(window.omnimed3dTestHooks.startNewVolume());
+          // User feedback, 2026-08-27: a new volume no longer auto-arms
+          // for segmentation (main.ts's segmentationArmedVolumeId) --
+          // explicit arm required, matching a real "Run Segmentation"
+          // click, before this volume's hu-slice actually forwards.
+          const id = window.omnimed3dTestHooks.startNewVolume();
+          window.omnimed3dTestHooks.armSegmentationForCurrentVolume();
+          resolve(id);
         }
       });
       window.omnimed3dTestHooks.inferenceWorker.postMessage({ type: "init", modelPath: "/dummy-lungmask.onnx" });

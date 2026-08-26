@@ -32,6 +32,22 @@
  * module scope, matching filePicker.ts's setupFilePicker(loadVolumeFromFiles)
  * pattern of passing the one capability a module needs rather than
  * hoisting more shared state.
+ *
+ * User feedback, 2026-08-27: previously, once the model was loaded once,
+ * every *subsequent* new volume load ran segmentation on it immediately
+ * too -- no way to just look at a newly loaded file without triggering a
+ * (potentially slow, and on Low-Memory Mode, render-pausing) inference
+ * pass. The button is now two-phase instead of one-shot: the first click
+ * downloads/initializes the model as before and arms whatever volume is
+ * currently loaded (matching the previously-expected "load the model, it
+ * segments what I'm looking at" flow) -- but every subsequent new volume
+ * load re-enables the button (relabeled "Run Segmentation" via
+ * `armedForCurrentVolume`) instead of leaving the old run's "Segmentation
+ * complete" state showing, requiring an explicit click (which just arms
+ * the new volume -- no re-download, the model's already loaded) before
+ * that volume's hu-slices are actually forwarded to the Inference Worker.
+ * The actual forwarding gate lives in main.ts (segmentationArmedVolumeId)
+ * -- `armSegmentationForCurrentVolume` is what flips it.
  */
 
 import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
@@ -57,6 +73,15 @@ function debugForceFromUrl(): "wasm-int8" | "gpu-fp16" | undefined {
 let gaugeButton: HTMLButtonElement | null = null;
 let modelLoaded = false;
 
+// Whether the *currently loaded* volume has been armed for segmentation
+// (see this module's header comment, 2026-08-27) -- distinct from
+// modelLoaded, which only tracks whether the model itself is ready.
+// Starts false even after the model loads for the first time; the
+// init-complete handler below sets it true immediately (auto-arming
+// whatever volume is current at that moment), and notifyVolumeLoadedForInference
+// resets it false on every subsequent new volume.
+let armedForCurrentVolume = false;
+
 // Per-volume segmentation progress. Reset on every new volume load
 // (notifyVolumeLoadedForInference), independent of whether the model has
 // finished loading yet -- the total is known as soon as a volume is,
@@ -80,6 +105,14 @@ function renderGauge(): void {
     // phase, so there's nothing for this function to render yet.
     return;
   }
+  if (!armedForCurrentVolume) {
+    // A new volume loaded after the model was already active, or the
+    // model just finished loading but no volume exists yet to arm -- see
+    // this module's header comment for why this no longer auto-runs.
+    setGaugeLabel(gaugeButton, "Run Segmentation");
+    setGaugeProgress(gaugeButton, 0);
+    return;
+  }
   if (progressTotal <= 0) {
     setGaugeLabel(gaugeButton, "Segmentation model loaded");
     setGaugeProgress(gaugeButton, 1);
@@ -99,6 +132,15 @@ export function notifyVolumeLoadedForInference(volumeId: string, totalSlices: nu
   progressVolumeId = volumeId;
   progressTotal = totalSlices;
   progressCompleted = 0;
+  if (modelLoaded) {
+    // 2026-08-27: a new volume never auto-arms just because the model is
+    // already active -- re-enable the button so the user can explicitly
+    // request it for *this* volume instead.
+    armedForCurrentVolume = false;
+    if (gaugeButton) {
+      gaugeButton.disabled = false;
+    }
+  }
   renderGauge();
 }
 
@@ -111,7 +153,7 @@ export function notifyMaskSliceApplied(volumeId: string): void {
   renderGauge();
 }
 
-export function setupInferenceControls(inferenceWorker: Worker): void {
+export function setupInferenceControls(inferenceWorker: Worker, armSegmentationForCurrentVolume: () => void): void {
   const button = document.getElementById("load-demo-model") as HTMLButtonElement | null;
   const status = document.getElementById("demo-model-status");
   if (!button || !status) {
@@ -149,6 +191,13 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
       }
       if (event.data.type === "init-complete") {
         modelLoaded = true;
+        // Auto-arms whatever volume is current right now -- matches the
+        // previously-expected "load the model, it segments what I'm
+        // looking at" first-time flow (see this module's header comment).
+        // A *subsequent* new volume load resets armedForCurrentVolume via
+        // notifyVolumeLoadedForInference instead of re-running this.
+        armedForCurrentVolume = true;
+        armSegmentationForCurrentVolume();
         button.disabled = true;
         const variant = event.data.gpuDetected ? "FP16, WebGPU" : "INT8, WASM";
         // usedFallback (recover-from-WebGPU-failure issue) means gpuDetected
@@ -164,6 +213,16 @@ export function setupInferenceControls(inferenceWorker: Worker): void {
   );
 
   button.addEventListener("click", () => {
+    if (modelLoaded) {
+      // 2026-08-27: the model's already loaded (this is a re-enabled
+      // "Run Segmentation" click for a volume that loaded after it) --
+      // just arm this volume, no re-download/re-init needed.
+      armedForCurrentVolume = true;
+      button.disabled = true;
+      armSegmentationForCurrentVolume();
+      renderGauge();
+      return;
+    }
     button.disabled = true;
     setGaugeLabel(button, "Downloading model...");
     setGaugeProgress(button, 0);

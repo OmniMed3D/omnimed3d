@@ -123,16 +123,28 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     // header comment. +0.5 samples the fixed axis's texel center,
     // matching how uv.x/uv.y already land mid-texel for a full-resolution
     // sample grid.
+    //
+    // Fixed 2026-08-27 (user-reported vertical flip in Sagittal/Coronal):
+    // pipeline.ts's geometricSortKey sorts the volume's Z axis so that an
+    // increasing Z texel index moves toward patient Superior (head) --
+    // see pipeline.ts's own comment on that key. uv.y is screen-top=0,
+    // screen-bottom=1 (see this shader's header comment on Axial). Using
+    // uv.y directly as the Z coordinate therefore put Inferior (feet) at
+    // the screen top and Superior (head) at the bottom -- backwards from
+    // the radiological convention of head-up. depthV inverts that so
+    // Superior renders at the top, matching Axial's own row-0-is-top
+    // convention instead of contradicting it.
+    float depthV = 1.0 - uv.y;
     float3 uvw;
-    if (sliceAxis == 1) // Sagittal: fix X, uv.x -> Y (rows), uv.y -> Z (depth)
+    if (sliceAxis == 1) // Sagittal: fix X, uv.x -> Y (rows), depthV -> Z (depth)
     {
         float sliceX = (sliceIndex + 0.5) / float(volW);
-        uvw = float3(sliceX, uv.x, uv.y);
+        uvw = float3(sliceX, uv.x, depthV);
     }
-    else if (sliceAxis == 2) // Coronal: fix Y, uv.x -> X (columns), uv.y -> Z (depth)
+    else if (sliceAxis == 2) // Coronal: fix Y, uv.x -> X (columns), depthV -> Z (depth)
     {
         float sliceY = (sliceIndex + 0.5) / float(volH);
-        uvw = float3(uv.x, sliceY, uv.y);
+        uvw = float3(uv.x, sliceY, depthV);
     }
     else // Axial (default): fix Z, uv.x -> X (columns), uv.y -> Y (rows)
     {
@@ -158,11 +170,11 @@ float4 fragmentMain(VertexOutput input) : SV_Target
         int3 texel;
         if (sliceAxis == 1)
         {
-            texel = int3(int(sliceIndex), int(uv.x * float(maskH)), int(uv.y * float(maskD)));
+            texel = int3(int(sliceIndex), int(uv.x * float(maskH)), int(depthV * float(maskD)));
         }
         else if (sliceAxis == 2)
         {
-            texel = int3(int(uv.x * float(maskW)), int(sliceIndex), int(uv.y * float(maskD)));
+            texel = int3(int(uv.x * float(maskW)), int(sliceIndex), int(depthV * float(maskD)));
         }
         else
         {
