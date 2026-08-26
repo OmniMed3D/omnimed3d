@@ -193,9 +193,10 @@ Playwright's bundled build).
   DPR-correction posture either.
 - Anatomical verification of orientation normalization against a real
   multi-slice series with known left/right anatomy — no suitable fixture
-  exists yet (see "DICOM orientation normalization" below); only
-  synthetic hand-computed cases and the real UPENN-GBM series described
-  there are verified so far.
+  exists yet; only synthetic hand-computed cases and the real UPENN-GBM
+  series are verified so far (see
+  `src/workers/parse-worker/src/orientation.ts`'s own module doc comment
+  for the full scope of what's normalized and how).
 - Sagittal/coronal _reconstruction_ (MPR) is supported for the assembled
   volume (Axial/Sagittal/Coronal/Native view modes), but only the
   whole-series assembly path (`assembleSeries`/`parse-series`) can
@@ -203,62 +204,4 @@ Playwright's bundled build).
   single-file streaming path (`parseSliceToHu`/`parse-file`, no
   series-wide context to resample against) still throws
   `UnsupportedOrientationError` for a genuinely oblique/sagittal/coronal
-  slice. See "DICOM orientation normalization" below.
-
-## DICOM orientation normalization
-
-`src/workers/parse-worker/src/orientation.ts` normalizes every slice's
-pixel data to one canonical convention before it leaves the Parse
-Worker, regardless of which of DICOM's several equally-valid
-acquisition conventions (HFS/FFS/HFP/FFP, etc.) the source series used.
-Both `hu-slice` and `volume-ready` output are guaranteed to already be
-in this orientation — downstream consumers (Inference Worker, Engine)
-need no orientation-handling code of their own, only this assumption:
-
-- Column-index-increasing = patient **Left** (+X)
-- Row-index-increasing = patient **Posterior** (+Y)
-- Slice-index-increasing = patient **Superior** (+Z)
-
-i.e. **LPS**, matching common medical-imaging tooling's default (e.g.
-ITK). This is derived from each file's `ImageOrientationPatient` (0020,0037)
-and `ImagePositionPatient` (0020,0032) tags — both always expressed in
-patient LPS space regardless of `PatientPosition` (which describes how
-the patient was fed into the scanner, not a different coordinate
-convention for these tags).
-
-Scope: two paths exist, and which one handles a given series depends on
-whether it's assembled as a whole series or streamed slice-by-slice.
-
-- **Axis-aligned fast path** (`computeOrientationTransform` +
-  `applyTransform`): the slice normal (`cross(rowCosine, columnCosine)`)
-  must resolve to the patient Z axis, and row/column must be an
-  axis-aligned permutation of ±X/±Y (covering realistic HFS/FFS/HFP/FFP
-  variation) — handled with a per-slice transpose/flip, no resampling
-  needed. Anything else throws `UnsupportedOrientationError`.
-- **Oblique-resample fallback** (whole-series assembly only —
-  `assembleSeries`/`parse-series`): when the fast path throws, whether
-  because row/column aren't axis-aligned _or_ because the slice normal
-  isn't Z at all (a genuinely sagittal or coronal acquisition, e.g.
-  "T2 SAG SPACE"), `assembleSeries` catches the error and instead
-  resamples the _whole series_ onto a canonical-axis-aligned grid via
-  trilinear interpolation (`computeObliqueResampleGrid`/
-  `canonicalToSourceIndex` in orientation.ts, the resampling loop itself
-  in pipeline.ts's `assembleObliqueSeries`). This is normal-agnostic by
-  design — `dominantAxisIndex` assigns each _output_ axis's spacing from
-  whichever _source_ direction (row/column/normal) actually dominates it,
-  rather than assuming the near-axial-tilt case's fixed mapping. Output
-  voxel spacing reuses the source's own pixel/slice spacing magnitudes
-  unchanged (only re-orienting axes, not rescaling) — a reasonable
-  approximation, not a physically-exact resample for arbitrary rotation.
-  The single-file streaming path (`parseSliceToHu`/`parse-file`) has no
-  series-wide context to resample against, so it still throws
-  `UnsupportedOrientationError` for a non-axis-aligned slice regardless
-  of which check failed.
-
-If a slice is missing either tag, its pixel data passes through
-unchanged (`console.warn`), and `assembleSeries` falls back to ordering
-by `InstanceNumber` instead of true geometric position — see
-[`dicom-parser/README.md`](../dicom-parser/README.md#data-model) for
-that fallback's own caveats. The result's `orderingMethod` field
-(`"geometric"`, `"oblique-resample"`, or `"instanceNumber"`) reports
-which path was taken.
+  slice.
