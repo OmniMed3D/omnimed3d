@@ -163,6 +163,7 @@ declare global {
       inferenceWorker: Worker;
       startNewVolume(): string;
       currentVolumeId(): string | null;
+      armSegmentationForCurrentVolume(): void;
     };
   }
 }
@@ -303,6 +304,18 @@ let inferenceWorkerReady = false;
 // correctness bug.
 const pendingHuSlices: HuSliceMessage[] = [];
 
+// User feedback, 2026-08-27: once a segmentation model was loaded, every
+// *subsequent* new volume load immediately ran inference on it too, with
+// no way to just look at a new file without triggering a (potentially
+// slow, and on Low-Memory Mode, render-pausing) segmentation pass. hu-slice
+// only forwards to the Inference Worker when its volumeId matches this --
+// set by armSegmentationForCurrentVolume() (main(), called from
+// inferenceControls.ts's button both on the model's first successful load
+// and on every subsequent explicit "run it on this volume too" click), and
+// reset to null by mintVolumeId() on every new volume so a freshly loaded
+// one never inherits the previous volume's armed state.
+let segmentationArmedVolumeId: string | null = null;
+
 // Issue #69: runs once, after the first volume actually renders --
 // checked here rather than at engine-ready time because an empty canvas
 // renders trivially fast on any device and says nothing about real
@@ -335,6 +348,12 @@ function mintVolumeId(): string {
   const id = crypto.randomUUID();
   volumeIdMap.set(id, nextNumericVolumeId++);
   currentVolumeId = id;
+  // A new volume never inherits the previous one's armed-for-segmentation
+  // state (see segmentationArmedVolumeId's own comment) -- discards
+  // whatever was buffered for the volume being replaced, too, rather than
+  // letting pendingHuSlices grow across every load nobody ever segments.
+  segmentationArmedVolumeId = null;
+  pendingHuSlices.length = 0;
   return id;
 }
 
@@ -587,7 +606,7 @@ async function main() {
   ) => {
     const msg = event.data;
     if (msg.type === "hu-slice") {
-      if (inferenceWorkerReady) {
+      if (inferenceWorkerReady && msg.volumeId === segmentationArmedVolumeId) {
         inferenceWorker.postMessage(msg, [msg.data]);
       } else {
         pendingHuSlices.push(msg);
@@ -602,16 +621,44 @@ async function main() {
     }
   };
 
+  // User feedback, 2026-08-27: called once the model first finishes loading
+  // (inferenceControls.ts arms whatever volume is currently loaded at that
+  // moment automatically, matching the previously-expected "load the model,
+  // it segments what I'm looking at" flow) and again on every subsequent
+  // explicit "run it on this volume too" button click (a *new* volume load
+  // no longer arms itself -- see segmentationArmedVolumeId's own comment).
+  // Flushes whatever hu-slices for this volume already arrived and got
+  // buffered (e.g. the volume finished parsing before this arm call, or
+  // before the model itself finished loading) rather than waiting for more
+  // to arrive, which may never happen once a series' full slice set has
+  // already been posted.
+  function armSegmentationForCurrentVolume(): void {
+    if (!currentVolumeId) {
+      console.log("Shell: armSegmentationForCurrentVolume called with no volume loaded, ignoring");
+      return;
+    }
+    segmentationArmedVolumeId = currentVolumeId;
+    if (!inferenceWorkerReady) {
+      return; // nothing to flush yet -- the model itself hasn't finished loading
+    }
+    const toForward = pendingHuSlices.filter((pending) => pending.volumeId === segmentationArmedVolumeId);
+    const remaining = pendingHuSlices.filter((pending) => pending.volumeId !== segmentationArmedVolumeId);
+    pendingHuSlices.length = 0;
+    pendingHuSlices.push(...remaining);
+    for (const pending of toForward) {
+      inferenceWorker.postMessage(pending, [pending.data]);
+    }
+  }
+
   inferenceWorker.onmessage = (event: MessageEvent<MaskSliceMessage | { type: string }>) => {
     const msg = event.data;
     if (msg.type === "init-complete") {
+      // No pendingHuSlices flush here -- armSegmentationForCurrentVolume()
+      // (called by inferenceControls.ts's own init-complete listener,
+      // registered after this one) owns flushing, and only for whichever
+      // volume it actually arms; flushing everything here regardless of
+      // segmentationArmedVolumeId would forward stale-volume slices too.
       inferenceWorkerReady = true;
-      // Flush anything that arrived before the model finished loading --
-      // see pendingHuSlices's own comment for why this exists.
-      for (const pending of pendingHuSlices) {
-        inferenceWorker.postMessage(pending, [pending.data]);
-      }
-      pendingHuSlices.length = 0;
     } else if (msg.type === "mask-slice") {
       engineApplyMaskSlice(msg as MaskSliceMessage);
     } else if (msg.type === "inference-started") {
@@ -633,6 +680,12 @@ async function main() {
     inferenceWorker,
     startNewVolume: mintVolumeId,
     currentVolumeId: () => currentVolumeId,
+    // User feedback, 2026-08-27: segmentation no longer auto-arms a newly
+    // loaded volume just because the model is already active (see
+    // segmentationArmedVolumeId's own comment) -- tests that want a
+    // hu-slice round trip for a given volume must arm it explicitly here,
+    // same as a real user clicking "Run Segmentation" would.
+    armSegmentationForCurrentVolume,
   };
 
   // Issue #69: ?debug=1 starts the stats overlay visible and the control
@@ -657,7 +710,7 @@ async function main() {
   setupPanelDrag("control-panel", "panel-drag-grip");
   setupPanelCollapse(debugMode);
   setupPanelDrag("stats-overlay", "stats-overlay-drag-handle");
-  setupInferenceControls(inferenceWorker);
+  setupInferenceControls(inferenceWorker, armSegmentationForCurrentVolume);
   setupDemoCtControls(loadVolumeFromBuffers, showLoadError, setReloadAction);
   setupTooltips();
   setupStatsOverlay(debugMode);

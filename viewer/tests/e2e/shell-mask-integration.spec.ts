@@ -75,12 +75,20 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
   // before minting a volume / sending anything downstream of it --
   // sending hu-slice before this resolves races the load (found via real
   // browser e2e testing; see worker.ts's "init-complete" comment).
+  // User feedback, 2026-08-27: a new volume no longer auto-arms for
+  // segmentation just because the model is already active (main.ts's
+  // segmentationArmedVolumeId) -- armSegmentationForCurrentVolume()
+  // (armed here explicitly, matching a real "Run Segmentation" click)
+  // is required before any hu-slice for this volume actually forwards to
+  // the Inference Worker.
   const volumeIdA = await page.evaluate(() => {
     return new Promise<string>((resolve) => {
       window.omnimed3dTestHooks.inferenceWorker.addEventListener("message", function ack(e: MessageEvent) {
         if (e.data.type === "init-complete") {
           window.omnimed3dTestHooks.inferenceWorker.removeEventListener("message", ack);
-          resolve(window.omnimed3dTestHooks.startNewVolume());
+          const id = window.omnimed3dTestHooks.startNewVolume();
+          window.omnimed3dTestHooks.armSegmentationForCurrentVolume();
+          resolve(id);
         }
       });
       window.omnimed3dTestHooks.inferenceWorker.postMessage({
@@ -140,8 +148,16 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
 
   // Stale-volumeId rejection (PRD §5.3.2): mint a second volume, load it
   // (making it "current"), then send a mask-producing hu-slice still
-  // carrying the FIRST volumeId. The Shell's own guard (main.ts's
-  // engineApplyMaskSlice) must discard it before it ever reaches WASM.
+  // carrying the FIRST volumeId. User feedback, 2026-08-27 (segmentation
+  // arming): volumeIdB is deliberately left *unarmed* here (a real new
+  // volume load no longer auto-arms), which now closes this gap one layer
+  // earlier than before -- the hu-slice is never even forwarded to the
+  // Inference Worker in the first place (main.ts's hu-slice routing only
+  // forwards for the armed volumeId, and volumeIdA's arming doesn't carry
+  // over to B), so there's no round trip left for engineApplyMaskSlice's
+  // own stale-volumeId guard to discard. Asserting no new mask ever lands
+  // for either volume verifies that stronger guarantee directly, instead
+  // of the old "goes through, then gets discarded" path.
   const volumeIdB = await page.evaluate(() => window.omnimed3dTestHooks.startNewVolume());
   await page.evaluate(
     ({ base64, volumeId }) => {
@@ -164,9 +180,15 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
     },
     { base64: ctSmallBase64, volumeId: volumeIdA },
   );
-  await waitForLine(/Shell: discarding mask-slice for stale volumeId=/);
-  // The stale slice must never have reached the Engine at all.
+  // No arm call for volumeIdB, and volumeIdA is no longer the armed
+  // volume either (mintVolumeId() reset it when B was minted) -- give the
+  // (real, async) Inference Worker round trip a window it would need if
+  // the slice *had* been forwarded, then confirm it wasn't: no new
+  // mask-slice for volumeId=1, and no mask-slice for volumeId=2 (which
+  // was never armed) either.
+  await page.waitForTimeout(2000);
   expect(countLines(/WebGPUDevice::applyMaskSlice: volumeId=1 .* applied/)).toBe(staleAppliedCountBefore);
+  expect(countLines(/WebGPUDevice::applyMaskSlice: volumeId=2 .* applied/)).toBe(0);
 });
 
 test("raymarch pass actually draws real DICOM data, not just the flat clear color (issue #29)", async ({ page }) => {
