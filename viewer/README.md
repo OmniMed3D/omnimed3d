@@ -255,11 +255,6 @@ whether it's assembled as a whole series or streamed slice-by-slice.
   `UnsupportedOrientationError` for a non-axis-aligned slice regardless
   of which check failed.
 
-Once assembled, the volume can be viewed along any of the three
-canonical axes (Axial/Sagittal/Coronal view modes) or as the original
-per-file slices, unresampled (Native view mode) — `viewControls.ts` owns
-the view-mode toggle and per-mode slice-index memory.
-
 If a slice is missing either tag, its pixel data passes through
 unchanged (`console.warn`), and `assembleSeries` falls back to ordering
 by `InstanceNumber` instead of true geometric position — see
