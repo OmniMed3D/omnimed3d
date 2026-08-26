@@ -44,6 +44,16 @@
       <p>Select a DICOM file or folder to begin.</p>
     </div>
 
+    <!-- User request, 2026-08-27: drag-and-drop DICOM loading
+         (dragAndDropControls.ts), alongside empty-hint above -- shown
+         only while a drag carrying files is over the page (dragDepth
+         counter), regardless of whether a volume is already loaded
+         (dropping should work to load a *replacement* series too, unlike
+         empty-hint's one-time first-load-only role). -->
+    <div id="drop-overlay" hidden>
+      <p>Drop DICOM files or a folder to load</p>
+    </div>
+
     <!-- Issue #40: shown only if the engine never becomes ready within
          waitForEngineReady()'s timeout (e.g. no WebGPU adapter on this
          browser/device) -- see main.ts. Hidden by default. -->
@@ -154,19 +164,31 @@
         </div>
         <p id="demo-model-status" class="hint-text"></p>
       </div>
-      <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D axial-slice
-           view-mode toggle + slice slider. viewControls.ts owns showing/
-           hiding #axial-slice-row based on the active mode. -->
+      <!-- Issue #37 (PRD §9 slice-panning gap): 3D orbit / 2D slice
+           view-mode toggle + slice slider. MPR + native-slice feature
+           (2026-08-27 user request): Axial/Sagittal/Coronal all share
+           data-view-mode="1" (Slice2D), disambiguated by data-slice-axis;
+           Native (data-view-mode="2") shows the DICOM series' own
+           original per-file slices instead, independent of the 3D
+           reconstruction the other modes show. viewControls.ts owns
+           showing/hiding #slice-index-row based on the active mode. -->
       <div class="panel-section">
         <span class="section-label">View</span>
         <div class="row preset-buttons view-mode-buttons">
-          <button type="button" data-view-mode="0" data-tooltip-key="view-mode-0">3D Orbit</button>
-          <button type="button" data-view-mode="1" data-tooltip-key="view-mode-1">2D Slice</button>
+          <button type="button" data-view-mode="0" data-tooltip-key="view-mode-orbit">3D Orbit</button>
+          <button type="button" data-view-mode="1" data-slice-axis="0" data-tooltip-key="view-mode-axial">Axial</button>
+          <button type="button" data-view-mode="1" data-slice-axis="1" data-tooltip-key="view-mode-sagittal">
+            Sagittal
+          </button>
+          <button type="button" data-view-mode="1" data-slice-axis="2" data-tooltip-key="view-mode-coronal">
+            Coronal
+          </button>
+          <button type="button" data-view-mode="2" data-tooltip-key="view-mode-native">Native</button>
         </div>
-        <div class="row" id="axial-slice-row" hidden>
-          <label for="axial-slice-index">Slice</label>
-          <input id="axial-slice-index" type="range" min="0" max="0" step="1" data-tooltip-key="axial-slice-index" />
-          <span id="axial-slice-index-value" class="value"></span>
+        <div class="row" id="slice-index-row" hidden>
+          <label for="slice-index">Slice</label>
+          <input id="slice-index" type="range" min="0" max="0" step="1" data-tooltip-key="slice-index" />
+          <span id="slice-index-value" class="value"></span>
         </div>
       </div>
       <div class="panel-section">
@@ -202,29 +224,57 @@
             aria-label="Window Width value"
           />
         </div>
-        <div class="row preset-buttons">
-          <!-- data-colormap-preset values must match WebGPUDevice.cpp's kColormapPresets order. -->
-          <button type="button" data-colormap-preset="0" data-tooltip-key="colormap-preset-0">Lung</button>
-          <button type="button" data-colormap-preset="1" data-tooltip-key="colormap-preset-1">Bone</button>
-          <button type="button" data-colormap-preset="2" data-tooltip-key="colormap-preset-2">Soft Tissue</button>
-          <button type="button" data-colormap-preset="3" data-tooltip-key="colormap-preset-3">Brain</button>
-          <button type="button" data-colormap-preset="4" data-tooltip-key="colormap-preset-4">Grayscale</button>
-        </div>
-        <!-- §5.3 Custom preset: a 6th colormap, not one of
-             WebGPUDevice's fixed kColormapPresets indices -- the color
-             pickers call engine_set_custom_lut_colors directly (not
-             engine_set_colormap_preset, which only accepts 0-4), so this
-             button is a visual-state indicator only, not a click target
-             that itself changes anything (colorControls.ts). -->
-        <div class="row preset-buttons">
-          <button
-            type="button"
-            data-colormap-preset="5"
-            id="custom-preset-button"
-            data-tooltip-key="custom-preset-button"
+        <!-- User request, 2026-08-27 (clinical preset expansion, then
+             revised same day to match a real clinical reading screen --
+             see ColormapPreset's own comment in WebGPUDevice.cpp): a
+             <select> instead of a button grid -- the fixed clinical
+             presets plus Custom stopped fitting comfortably as a row of
+             buttons, and every fixed preset now shares one plain
+             grayscale LUT (no more per-preset color tint), which also
+             made the old separate Grayscale option redundant with Soft
+             Tissue (removed). <option value> order must match
+             WebGPUDevice.cpp's kColormapPresets order exactly; value="8"
+             (Custom) isn't one of that array's indices (see
+             customColormapControls.ts's own comment). value="" is a
+             disabled placeholder shown only when no preset matches the
+             current Center/Width (manually dragged) --
+             windowLevelControls.ts's setActivePreset(null). -->
+        <div class="row">
+          <select
+            id="colormap-preset-select"
+            class="select-input"
+            aria-label="Colormap preset"
+            data-tooltip-key="colormap-preset-select"
           >
-            Custom
-          </button>
+            <option value="" disabled>Custom window/level</option>
+            <option value="0" title="Center -600 HU, Width 1500 HU -- aerated lung fields + chest wall">Lung</option>
+            <option value="1" title="Center 300 HU, Width 1500 HU -- cortical/trabecular bone">Bone</option>
+            <option
+              value="2"
+              selected
+              title="Center 40 HU, Width 400 HU -- general soft tissue (default; no color tint, matching a real clinical reading screen)"
+            >
+              Soft Tissue
+            </option>
+            <option value="3" title="Center 40 HU, Width 80 HU -- gray/white matter contrast">Brain</option>
+            <option value="4" title="Center 50 HU, Width 350 HU -- mediastinum: heart, vessels, nodes">
+              Mediastinum
+            </option>
+            <option value="5" title="Center 50 HU, Width 400 HU -- abdominal organs / liver">Abdomen/Liver</option>
+            <option value="6" title="Center 32 HU, Width 8 HU -- very narrow; early ischemia screening">Stroke</option>
+            <option value="7" title="Center 70 HU, Width 200 HU -- extra-axial hemorrhage near the skull">
+              Subdural
+            </option>
+            <option value="8" title="Set with the color pickers below; doesn't change window/level">Custom</option>
+            <option
+              id="from-file-preset-option"
+              value="9"
+              disabled
+              title="The loaded series' own recommended display window (DICOM VOI LUT) -- unavailable until a series carrying one is loaded"
+            >
+              From File
+            </option>
+          </select>
         </div>
         <div class="row">
           <label for="custom-low-color">Low Color</label>

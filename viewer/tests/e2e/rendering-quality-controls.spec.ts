@@ -74,15 +74,24 @@ test("shading toggle changes the rendered frame (§4.3)", async ({ page }) => {
   expect(unshadedShot.equals(reshadedShot)).toBe(false);
 });
 
-test("colormap presets render visibly different colors, not just window/level (§4.2)", async ({ page }) => {
+// User request, 2026-08-27: every fixed preset lost its per-preset color
+// tint (grayscale-only now, matching a real clinical reading screen --
+// see ColormapPreset's own comment, WebGPUDevice.cpp) -- this test used
+// to assert that specifically ("not just window/level," comparing Lung's
+// cool blue against Bone's warm ivory). Renamed/reworded rather than
+// deleted: switching presets still visibly changes the render (different
+// window/level *and*, for these two, a different threshold band --
+// Bone's skeleton vs. Lung's aerated fields), just never because of color
+// anymore.
+test("colormap presets render visibly different windows (§4.2)", async ({ page }) => {
   await loadVolumeAndSettle(page);
   const canvas = page.locator("#canvas");
 
-  await page.locator('[data-colormap-preset="0"]').click(); // Lung -- cool blue
+  await page.locator("#colormap-preset-select").selectOption("0"); // Lung
   await page.waitForTimeout(300);
   const lungShot = await canvas.screenshot();
 
-  await page.locator('[data-colormap-preset="1"]').click(); // Bone -- warm ivory
+  await page.locator("#colormap-preset-select").selectOption("1"); // Bone
   await page.waitForTimeout(300);
   const boneShot = await canvas.screenshot();
   expect(lungShot.equals(boneShot)).toBe(false);

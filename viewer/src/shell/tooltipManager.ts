@@ -32,17 +32,27 @@
 const TOOLTIP_TEXT: Record<string, string> = {
   "window-center": "Shifts the visible HU range up or down (window center).",
   "window-width": "Widens or narrows the visible HU range (window width).",
-  "colormap-preset-0": "Lung window preset: center -600 HU, width 1500 HU.",
-  "colormap-preset-1": "Bone window preset: center 300 HU, width 1500 HU.",
-  "colormap-preset-2": "Soft Tissue window preset: center 40 HU, width 400 HU.",
-  "colormap-preset-3": "Brain window preset: center 40 HU, width 80 HU.",
-  "colormap-preset-4": "Grayscale window preset (default): center 40 HU, width 400 HU, no color tint.",
-  "custom-preset-button": "Custom colormap -- set with the color pickers below; doesn't change window/level.",
+  // User request, 2026-08-27 (clinical preset expansion): the fixed
+  // presets + Custom used to be individual buttons, each with its own
+  // data-tooltip-key entry here. Now they're <option>s inside one
+  // <select> (#colormap-preset-select) -- this custom mouseenter-driven
+  // tooltip overlay can't attach to a native option list the browser
+  // renders itself, so each <option> carries a plain `title` attribute
+  // instead (native per-item hover text, index.html), and this single
+  // entry covers the closed/focused <select> element itself.
+  "colormap-preset-select": "Clinical window/level preset. Hover an option for its exact HU values.",
   "custom-low-color": "Low end of the custom color gradient.",
   "custom-high-color": "High end of the custom color gradient.",
-  "view-mode-0": "3D orbit camera view of the full volume.",
-  "view-mode-1": "Single 2D axial cross-section, scrubbed by the Slice slider below.",
-  "axial-slice-index": "Which Z slice the 2D Slice view shows.",
+  "view-mode-orbit": "3D orbit camera view of the full volume.",
+  "view-mode-axial":
+    "Single 2D axial cross-section (fixes Z) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-sagittal":
+    "Single 2D sagittal cross-section (fixes X) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-coronal":
+    "Single 2D coronal cross-section (fixes Y) of the reconstructed volume, scrubbed by the Slice slider below.",
+  "view-mode-native":
+    "The DICOM series' own original per-file slices, in their native acquisition order -- independent of the 3D reconstruction the other views show.",
+  "slice-index": "Which slice the current 2D view shows.",
   "quality-tier-0": "192 ray-march steps across the volume (256 max) -- faster, coarser image.",
   "quality-tier-1": "384 ray-march steps across the volume (512 max, default) -- balanced.",
   "quality-tier-2": "768 ray-march steps across the volume (1024 max) -- slower, sharper image.",

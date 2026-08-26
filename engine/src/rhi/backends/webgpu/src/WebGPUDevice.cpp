@@ -124,7 +124,10 @@ static_assert(sizeof(RaymarchUBO) == 336);
 // shader field for field" comment above untrue for whichever shader
 // didn't declare all its fields.
 struct AxialSliceUBO {
-    glm::vec4 sliceParams;  // x=sliceIndex (raw voxel index), y=windowCenter, z=windowWidth, w unused
+    // w=sliceAxis (MPR, 2026-08-27: 0=Axial/fixes Z, 1=Sagittal/fixes X,
+    // 2=Coronal/fixes Y -- always 0 for the NativeSlice2D view, which has
+    // no axis concept of its own, see loadNativeVolume's header comment).
+    glm::vec4 sliceParams;  // x=sliceIndex (raw voxel index), y=windowCenter, z=windowWidth, w=sliceAxis
     glm::vec4 maskParams;   // x=overlayEnabled, y=overlayAlpha, zw unused
     // "Contain" letterbox fit (issue #40 follow-up) -- see
     // axial_slice.slang's own comment on this field for the full
@@ -139,25 +142,40 @@ static_assert(offsetof(AxialSliceUBO, maskParams) == 16);
 static_assert(offsetof(AxialSliceUBO, fitParams) == 32);
 static_assert(sizeof(AxialSliceUBO) == 48);
 
-// View modes for WebGPUDevice::setViewMode() (issue #37).
+// View modes for WebGPUDevice::setViewMode() (issue #37; MPR + native-slice
+// modes added 2026-08-27).
 constexpr uint32_t kViewModeOrbit3D = 0;
-constexpr uint32_t kViewModeAxialSlice2D = 1;
+constexpr uint32_t kViewModeSlice2D = 1;
+constexpr uint32_t kViewModeNativeSlice2D = 2;
 
+// Slice axes for WebGPUDevice::setSliceAxis() (MPR, 2026-08-27).
+constexpr uint32_t kSliceAxisAxial = 0;
+constexpr uint32_t kSliceAxisSagittal = 1;
+constexpr uint32_t kSliceAxisCoronal = 2;
+
+// User request, 2026-08-27 (revised same day: "실제 병원 CT 판독화면대로
+// 그레이 스케일로 가자" -- match real clinical reading screens): every
+// fixed preset now shares one plain grayscale LUT (kGrayscaleLow/High
+// below) -- real radiology workstations never tint by window, so the
+// per-preset color ramp this struct used to carry (lowColor/highColor,
+// docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) was this
+// app's own invention, not a clinical convention, and is removed here
+// rather than kept as unused dead weight. Custom (§5.3, id 8) is
+// unaffected -- it never read from this struct, and still lets a user
+// pick any two colors via setCustomColormap()/writeLutColors() directly.
+// Grayscale itself is also removed as a *separate* preset here -- once
+// nothing carries a color tint, it was byte-for-byte identical to Soft
+// Tissue (same center/width, and now the same colorless LUT too), so
+// keeping both was two buttons for one behavior. Soft Tissue is the new
+// kDefaultColormapPreset.
+//
 // Baseline clinical window/level presets (REQ-R03) -- center/width values
 // sourced from Mini-Engine-reference's medical-volume primer doc, per PRD
 // Appendix A's explicit "referencing Mini-Engine's preset values"
-// instruction. lowColor/highColor (docs/current/
-// RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) give each preset its own
-// LUT color ramp instead of the original shared grayscale -- alpha still
-// ramps linearly with normalized density regardless of preset (see
-// writeLutPreset()), so only hue/tint distinguishes presets, not opacity
-// behavior. ColorRGB itself now lives in WebGPUDevice.hpp -- shared with
-// setCustomColormap()'s (§5.3) writeLutColors()/writePreintegratedLutColors().
+// instruction.
 struct ColormapPreset {
     float center;
     float width;
-    ColorRGB lowColor;
-    ColorRGB highColor;
     // User request, 2026-08-27: per-preset default Threshold band (§5.3's
     // `n < threshold || n > thresholdMax -> alpha = 0` cutoff,
     // volume_raymarch.slang), applied by setColormapPreset() below.
@@ -230,17 +248,35 @@ struct ColormapPreset {
     float thresholdMax;
 };
 
-constexpr std::array<ColormapPreset, 5> kColormapPresets{{
-    {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}, 0.25F, 0.45F},  // 0: Lung -- cool blue
-    {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}, 0.4F, 1.0F},    // 1: Bone -- warm ivory
-    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}, 0.0F, 1.0F},      // 2: Soft Tissue -- warm red
-    {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}, 0.0F, 1.0F},       // 3: Brain -- neutral warm gray
-    {40.0F, 400.0F, {12, 12, 12}, {245, 245, 245}, 0.0F, 1.0F},      // 4: Grayscale (default) -- no
-                                                                      // color tint, same window/level
-                                                                      // as Soft Tissue, traditional
-                                                                      // CT-film look
+// User request, 2026-08-27 (clinical preset expansion): 4 more real
+// clinical windows (Mediastinum/Abdomen-Liver/Stroke/Subdural), sourced
+// from standard radiology window/level references, the same way the
+// original ones were sourced from Mini-Engine's medical-volume primer
+// (PRD Appendix A). None of these 4 get a nonzero threshold/thresholdMax
+// default -- unlike Bone/Lung (see ColormapPreset's own comment above),
+// there is no real per-preset 3D-Orbit tuning data for these yet, and a
+// guessed value would repeat exactly the mistake that comment warns
+// against for Brain.
+constexpr std::array<ColormapPreset, 8> kColormapPresets{{
+    {-600.0F, 1500.0F, 0.25F, 0.45F},  // 0: Lung
+    {300.0F, 1500.0F, 0.4F, 1.0F},     // 1: Bone
+    {40.0F, 400.0F, 0.0F, 1.0F},       // 2: Soft Tissue (default)
+    {40.0F, 80.0F, 0.0F, 1.0F},        // 3: Brain
+    {50.0F, 350.0F, 0.0F, 1.0F},       // 4: Mediastinum
+    {50.0F, 400.0F, 0.0F, 1.0F},       // 5: Abdomen/Liver
+    {32.0F, 8.0F, 0.0F, 1.0F},         // 6: Stroke (very narrow window -- early ischemia has only
+                                       // ~1-3 HU of contrast against normal parenchyma)
+    {70.0F, 200.0F, 0.0F, 1.0F},       // 7: Subdural
 }};
-constexpr uint32_t kDefaultColormapPreset = 4;
+constexpr uint32_t kDefaultColormapPreset = 2;  // Soft Tissue
+
+// Every fixed preset's LUT ramp -- see this file's own "match real
+// clinical reading screens" comment above ColormapPreset. Not `alpha=t`
+// specific to grayscale -- shape(s)=s in writePreintegratedLutColors()
+// (identity, unrelated to color) still governs opacity; only hue is
+// fixed here.
+constexpr ColorRGB kGrayscaleLow{12, 12, 12};
+constexpr ColorRGB kGrayscaleHigh{245, 245, 245};
 
 // REQ-R04 quality/step-count tiers -- WebGPUDevice::setQualityTier().
 // stepsAcrossDiagonal sizes stepSize (diagonal / this); maxSteps is a
@@ -572,21 +608,15 @@ void WebGPUDevice::createSamplerAndLut() {
     setColormapPreset(kDefaultColormapPreset);
 }
 
-// Writes kColormapPresets[presetId]'s color ramp into lutTexture_ (§4.2) --
-// r/g/b lerp from lowColor to highColor across the ramp, alpha keeps the
-// original linear-with-density ramp (a=t) regardless of preset, so only
-// hue changes, not the existing opacity-vs-density behavior. Called from
-// createSamplerAndLut() (initial default preset) and setColormapPreset()
-// (every subsequent preset click) -- presetId is assumed already
-// bounds-checked by the caller.
-void WebGPUDevice::writeLutPreset(uint32_t presetId) {
-    ColormapPreset const& preset = kColormapPresets[presetId];
-    writeLutColors(preset.lowColor, preset.highColor);
-}
-
-// Shared by writeLutPreset() (the 4 fixed presets) and setCustomColormap()
-// (§5.3's 5th, user-defined preset) -- see writeLutPreset()'s own header
-// comment for the ramp/alpha semantics, unchanged here.
+// Writes a color ramp into lutTexture_ (§4.2) -- r/g/b lerp from lowColor
+// to highColor across the ramp, alpha keeps the original
+// linear-with-density ramp (a=t) regardless of color, so only hue
+// changes, not the existing opacity-vs-density behavior. Called from
+// createSamplerAndLut() (startup) and setColormapPreset() (every preset
+// click, with kGrayscaleLow/High -- see ColormapPreset's own comment on
+// why every fixed preset shares one plain grayscale ramp now) and from
+// setCustomColormap() (§5.3's 8th, user-defined preset, id 8, with
+// whatever the color pickers currently hold).
 void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
     std::array<uint8_t, kLutSize * 4> lutData{};
     for (uint32_t i = 0; i < kLutSize; ++i) {
@@ -633,17 +663,8 @@ void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
 //         longer factor apart cleanly.
 // Degenerates to the original single-point classification exactly when
 // front==back (no segment to integrate over). Only rebaked on a preset
-// (or future custom-color) change, not per frame or per window/level
-// change -- see setColormapPreset().
-void WebGPUDevice::writePreintegratedLut(uint32_t presetId) {
-    ColormapPreset const& preset = kColormapPresets[presetId];
-    writePreintegratedLutColors(preset.lowColor, preset.highColor);
-}
-
-// Shared by writePreintegratedLut() (the 4 fixed presets) and
-// setCustomColormap() (§5.3's 5th, user-defined preset) -- see
-// writePreintegratedLut()'s own header comment for the bake algorithm,
-// unchanged here.
+// (or custom-color) change, not per frame or per window/level change --
+// see setColormapPreset()/setCustomColormap().
 void WebGPUDevice::writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor) {
     auto classColor = [lowColor, highColor](float s) -> glm::vec3 {
         return glm::vec3{
@@ -1217,7 +1238,7 @@ void WebGPUDevice::renderFrame() {
         compositeTimestampWrites.endOfPassWriteIndex = 3;
     }
 
-    if (hasVolume_ && pipeline_ && bindGroup_ && viewMode_ == kViewModeAxialSlice2D && axialPipeline_) {
+    if (hasVolume_ && pipeline_ && bindGroup_ && viewMode_ == kViewModeSlice2D && axialPipeline_) {
         renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
         renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
 
@@ -1239,18 +1260,28 @@ void WebGPUDevice::renderFrame() {
         WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
         // "Contain" letterbox fit (issue #40 follow-up) -- see
-        // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_'s X/Y
-        // already encode the volume's physical (spacing-aware) extent
-        // (frameCameraForVolume()), so no separate spacing storage is
-        // needed here.
+        // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_ already
+        // encodes the volume's physical (spacing-aware) extent on all
+        // three axes (frameCameraForVolume()), so no separate spacing
+        // storage is needed here. Which two components form the displayed
+        // plane depends on sliceAxis_ (MPR, 2026-08-27) -- Axial shows
+        // X/Y, Sagittal shows Y/Z, Coronal shows X/Z.
         glm::vec3 const physicalExtent = aabbMax_ - aabbMin_;
-        float const volumeAspect = physicalExtent.x / physicalExtent.y;
+        float volumeAspect;
+        if (sliceAxis_ == kSliceAxisSagittal) {
+            volumeAspect = physicalExtent.y / physicalExtent.z;
+        } else if (sliceAxis_ == kSliceAxisCoronal) {
+            volumeAspect = physicalExtent.x / physicalExtent.z;
+        } else {
+            volumeAspect = physicalExtent.x / physicalExtent.y;
+        }
         float const canvasAspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
         float const fitScaleX = std::max(1.0F, canvasAspect / volumeAspect);
         float const fitScaleY = std::max(1.0F, volumeAspect / canvasAspect);
 
         AxialSliceUBO ubo{};
-        ubo.sliceParams = glm::vec4{static_cast<float>(axialSliceIndex_), windowCenter_, windowWidth_, 0.0F};
+        ubo.sliceParams =
+            glm::vec4{static_cast<float>(sliceIndex_), windowCenter_, windowWidth_, static_cast<float>(sliceAxis_)};
         ubo.maskParams = glm::vec4{maskOverlayEnabled_ ? 1.0F : 0.0F, maskOverlayAlpha_, 0.0F, 0.0F};
         ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
 
@@ -1258,6 +1289,56 @@ void WebGPUDevice::renderFrame() {
 
         wgpuRenderPassEncoderSetPipeline(pass, axialPipeline_);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBlendConstant(pass, &kOpaqueBlendConstant);
+        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+    } else if (hasNativeVolume_ && nativeBindGroup_ && viewMode_ == kViewModeNativeSlice2D && axialPipeline_) {
+        // Native-slice view (2026-08-27 user request) -- the DICOM
+        // series' own original per-file slices, entirely separate from
+        // the (possibly reformatted) primary volume. Reuses
+        // axialPipeline_/axial_slice.slang unchanged: this view always
+        // scans nativeBindGroup_'s own volume texture along its Z axis
+        // (sliceAxis=0/Axial-style in the shader's terms, since the
+        // native volume's own "depth" IS the file order, not a real
+        // spatial axis requiring MPR) with mask overlay forced off (its
+        // class indices only line up with the primary volume's geometry).
+        renderGraph_.transition("volume", core::ResourceState::ShaderReadOnly);
+        renderGraph_.transition("mask", core::ResourceState::ShaderReadOnly);
+
+        WGPURenderPassColorAttachment colorAttachment{};
+        colorAttachment.view = view;
+        colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+        colorAttachment.loadOp = WGPULoadOp_Clear;
+        colorAttachment.storeOp = WGPUStoreOp_Store;
+        colorAttachment.clearValue =
+            WGPUColor{backgroundColor_.r, backgroundColor_.g, backgroundColor_.b, 1.0};
+
+        WGPURenderPassDescriptor passDesc{};
+        passDesc.colorAttachmentCount = 1;
+        passDesc.colorAttachments = &colorAttachment;
+        if (wantTimestamps) {
+            passDesc.timestampWrites = &axialTimestampWrites;
+            timestampQueryCountThisFrame = 2;
+        }
+        WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+
+        float const nativeVolumeAspect = (static_cast<float>(nativeVolumeWidth_) * nativeSpacingX_) /
+                                          (static_cast<float>(nativeVolumeHeight_) * nativeSpacingY_);
+        float const canvasAspect = static_cast<float>(canvasWidth_) / static_cast<float>(canvasHeight_);
+        float const fitScaleX = std::max(1.0F, canvasAspect / nativeVolumeAspect);
+        float const fitScaleY = std::max(1.0F, nativeVolumeAspect / canvasAspect);
+
+        AxialSliceUBO ubo{};
+        ubo.sliceParams = glm::vec4{static_cast<float>(nativeSliceIndex_), windowCenter_, windowWidth_, 0.0F};
+        ubo.maskParams = glm::vec4{0.0F, 0.0F, 0.0F, 0.0F};
+        ubo.fitParams = glm::vec4{fitScaleX, fitScaleY, 0.0F, 0.0F};
+
+        wgpuQueueWriteBuffer(queue_, uboBuffer_, 0, &ubo, sizeof(ubo));
+
+        wgpuRenderPassEncoderSetPipeline(pass, axialPipeline_);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, nativeBindGroup_, 0, nullptr);
         wgpuRenderPassEncoderSetBlendConstant(pass, &kOpaqueBlendConstant);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
 
@@ -1588,10 +1669,15 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     volumeWidth_ = textureWidth;
     volumeHeight_ = textureHeight;
     volumeDepth_ = depth;
-    // Defaults the AxialSlice2D view to the volume's middle slice (issue
-    // #37) -- mirrors frameCameraForVolume()'s own reset-defaults-on-load
-    // pattern for the Orbit3D camera below.
-    axialSliceIndex_ = depth > 0 ? depth / 2 : 0;
+    // Defaults the Slice2D view to Axial at the volume's middle slice
+    // (issue #37; axis reset added 2026-08-27/MPR) -- mirrors
+    // frameCameraForVolume()'s own reset-defaults-on-load pattern for the
+    // Orbit3D camera below. A new series' Sagittal/Coronal extents are
+    // unrelated to the previous one's, so keeping a stale non-Axial axis
+    // selected across loads would show a slice index with no clear
+    // relationship to the new volume.
+    sliceAxis_ = kSliceAxisAxial;
+    sliceIndex_ = depth > 0 ? depth / 2 : 0;
 
     frameCameraForVolume(width, height, depth, spacingX, spacingY, spacingZ);
     rebuildBindGroup();
@@ -1630,6 +1716,118 @@ void WebGPUDevice::releaseVolumeResources() {
         wgpuTextureRelease(gradientTexture_);
         gradientTexture_ = nullptr;
     }
+}
+
+void WebGPUDevice::releaseNativeVolumeResources() {
+    if (nativeBindGroup_) {
+        wgpuBindGroupRelease(nativeBindGroup_);
+        nativeBindGroup_ = nullptr;
+    }
+    if (nativeVolumeTextureView_) {
+        wgpuTextureViewRelease(nativeVolumeTextureView_);
+        nativeVolumeTextureView_ = nullptr;
+    }
+    if (nativeVolumeTexture_) {
+        wgpuTextureRelease(nativeVolumeTexture_);
+        nativeVolumeTexture_ = nullptr;
+    }
+}
+
+void WebGPUDevice::loadNativeVolume(uint32_t volumeId, void const* data, size_t byteLength, uint32_t width,
+                                      uint32_t height, uint32_t depth, float spacingX, float spacingY,
+                                      float spacingZ) {
+    if (!ready_) {
+        std::printf("WebGPUDevice::loadNativeVolume: device not ready, ignoring\n");
+        return;
+    }
+    // Shares uboBuffer_/linearSampler_/maskTextureView_/lutTextureView_/
+    // preintegratedLutTextureView_/gradientTextureView_ with the primary
+    // volume's bind group (see this class's own header comment on
+    // nativeVolumeTexture_) -- those must already exist.
+    if (!lutTextureView_ || !maskTextureView_ || !gradientTextureView_ || !preintegratedLutTextureView_) {
+        std::printf(
+            "WebGPUDevice::loadNativeVolume: no primary volume loaded yet (shared LUT/mask/gradient textures "
+            "don't exist), ignoring\n");
+        return;
+    }
+    size_t const expected = static_cast<size_t>(width) * height * depth * sizeof(uint16_t);
+    if (byteLength != expected) {
+        std::printf("WebGPUDevice::loadNativeVolume: byteLength %zu != expected %zu, ignoring\n", byteLength,
+                     expected);
+        return;
+    }
+
+    releaseNativeVolumeResources();
+
+    WGPUTextureDescriptor desc{};
+    desc.dimension = WGPUTextureDimension_3D;
+    desc.size = WGPUExtent3D{width, height, depth};
+    desc.format = WGPUTextureFormat_R16Float;
+    desc.mipLevelCount = 1;
+    desc.sampleCount = 1;
+    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    nativeVolumeTexture_ = wgpuDeviceCreateTexture(device_, &desc);
+    std::printf("WebGPUDevice::nativeVolumeTexture: %ux%ux%u\n", width, height, depth);
+
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = nativeVolumeTexture_;
+    dst.mipLevel = 0;
+    dst.origin = WGPUOrigin3D{0, 0, 0};
+    dst.aspect = WGPUTextureAspect_All;
+
+    WGPUTexelCopyBufferLayout layout{};
+    layout.offset = 0;
+    layout.bytesPerRow = width * static_cast<uint32_t>(sizeof(uint16_t));
+    layout.rowsPerImage = height;
+
+    WGPUExtent3D writeSize{width, height, depth};
+    wgpuQueueWriteTexture(queue_, &dst, data, byteLength, &layout, &writeSize);
+
+    WGPUTextureViewDescriptor viewDesc{};
+    viewDesc.format = WGPUTextureFormat_R16Float;
+    viewDesc.dimension = WGPUTextureViewDimension_3D;
+    viewDesc.mipLevelCount = 1;
+    viewDesc.arrayLayerCount = 1;
+    viewDesc.aspect = WGPUTextureAspect_All;
+    nativeVolumeTextureView_ = wgpuTextureCreateView(nativeVolumeTexture_, &viewDesc);
+
+    // Same 7-entry layout as rebuildBindGroup()'s primary bind group --
+    // only binding 1 (the volume texture) differs.
+    std::array<WGPUBindGroupEntry, 7> entries{};
+    entries[0].binding = 0;
+    entries[0].buffer = uboBuffer_;
+    entries[0].offset = 0;
+    entries[0].size = sizeof(AxialSliceUBO);
+    entries[1].binding = 1;
+    entries[1].textureView = nativeVolumeTextureView_;
+    entries[2].binding = 2;
+    entries[2].sampler = linearSampler_;
+    entries[3].binding = 3;
+    entries[3].textureView = maskTextureView_;
+    entries[4].binding = 4;
+    entries[4].textureView = lutTextureView_;
+    entries[5].binding = 5;
+    entries[5].textureView = preintegratedLutTextureView_;
+    entries[6].binding = 6;
+    entries[6].textureView = gradientTextureView_;
+
+    WGPUBindGroupDescriptor bgDesc{};
+    bgDesc.layout = bindGroupLayout_;
+    bgDesc.entryCount = entries.size();
+    bgDesc.entries = entries.data();
+    nativeBindGroup_ = wgpuDeviceCreateBindGroup(device_, &bgDesc);
+
+    hasNativeVolume_ = true;
+    nativeVolumeWidth_ = width;
+    nativeVolumeHeight_ = height;
+    nativeVolumeDepth_ = depth;
+    nativeSpacingX_ = spacingX;
+    nativeSpacingY_ = spacingY;
+    nativeSpacingZ_ = spacingZ;
+    // Defaults to the middle slice, same convention as loadVolume().
+    nativeSliceIndex_ = depth > 0 ? depth / 2 : 0;
+    (void)volumeId;  // Not tracked separately -- loadVolume()'s currentVolumeId_ already guards staleness
+                      // for the same series; the native volume always loads alongside it, never independently.
 }
 
 void WebGPUDevice::applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
@@ -1720,8 +1918,12 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
     windowWidth_ = preset.width;
     threshold_ = preset.threshold;
     thresholdMax_ = preset.thresholdMax;
-    writeLutPreset(presetId);
-    writePreintegratedLut(presetId);
+    // Every fixed preset shares one plain grayscale ramp now (see
+    // ColormapPreset's own comment) -- rewritten here regardless of which
+    // preset this call, since a prior Custom selection (setCustomColormap())
+    // may have left both LUTs holding whatever colors the user picked.
+    writeLutColors(kGrayscaleLow, kGrayscaleHigh);
+    writePreintegratedLutColors(kGrayscaleLow, kGrayscaleHigh);
     markAccumulationDirty();
 }
 
@@ -1767,7 +1969,7 @@ void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
 }
 
 void WebGPUDevice::setViewMode(uint32_t mode) {
-    if (mode != kViewModeOrbit3D && mode != kViewModeAxialSlice2D) {
+    if (mode != kViewModeOrbit3D && mode != kViewModeSlice2D && mode != kViewModeNativeSlice2D) {
         std::printf("WebGPUDevice::setViewMode: invalid mode=%u, ignoring\n", mode);
         return;
     }
@@ -1775,12 +1977,52 @@ void WebGPUDevice::setViewMode(uint32_t mode) {
     markAccumulationDirty();
 }
 
-void WebGPUDevice::setAxialSliceIndex(uint32_t index) {
+void WebGPUDevice::setSliceIndex(uint32_t index) {
     if (!hasVolume_) {
-        std::printf("WebGPUDevice::setAxialSliceIndex: no volume loaded, ignoring\n");
+        std::printf("WebGPUDevice::setSliceIndex: no volume loaded, ignoring\n");
         return;
     }
-    axialSliceIndex_ = std::min(index, volumeDepth_ - 1);
+    uint32_t maxIndex;
+    if (sliceAxis_ == kSliceAxisSagittal) {
+        maxIndex = volumeWidth_ - 1;
+    } else if (sliceAxis_ == kSliceAxisCoronal) {
+        maxIndex = volumeHeight_ - 1;
+    } else {
+        maxIndex = volumeDepth_ - 1;
+    }
+    sliceIndex_ = std::min(index, maxIndex);
+}
+
+void WebGPUDevice::setSliceAxis(uint32_t axis) {
+    if (!hasVolume_) {
+        std::printf("WebGPUDevice::setSliceAxis: no volume loaded, ignoring\n");
+        return;
+    }
+    if (axis != kSliceAxisAxial && axis != kSliceAxisSagittal && axis != kSliceAxisCoronal) {
+        std::printf("WebGPUDevice::setSliceAxis: invalid axis=%u, ignoring\n", axis);
+        return;
+    }
+    sliceAxis_ = axis;
+    // Resets to the middle of the new axis's own range -- the previous
+    // index may be out of range (e.g. width vs. depth) or anatomically
+    // meaningless for the new axis (see setSliceAxis's Device.hpp comment).
+    uint32_t dimension;
+    if (axis == kSliceAxisSagittal) {
+        dimension = volumeWidth_;
+    } else if (axis == kSliceAxisCoronal) {
+        dimension = volumeHeight_;
+    } else {
+        dimension = volumeDepth_;
+    }
+    sliceIndex_ = dimension > 0 ? dimension / 2 : 0;
+}
+
+void WebGPUDevice::setNativeSliceIndex(uint32_t index) {
+    if (!hasNativeVolume_) {
+        std::printf("WebGPUDevice::setNativeSliceIndex: no native volume loaded, ignoring\n");
+        return;
+    }
+    nativeSliceIndex_ = std::min(index, nativeVolumeDepth_ - 1);
 }
 
 void WebGPUDevice::setQualityTier(uint32_t tier) {

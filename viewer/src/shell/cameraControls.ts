@@ -34,9 +34,16 @@
  * Issue #69: this same start/end lifecycle also drives
  * qualityControls.ts's interaction-adaptive quality tier -- notified
  * here rather than duplicating drag-state tracking in that module.
+ *
+ * User request, 2026-08-27: the wheel handler now branches on the current
+ * view mode -- Orbit3D zooms the camera as before, but Axial Slice 2D
+ * scrubs the slice slider instead (previously the wheel just did nothing
+ * there, since engine_zoom_camera no-ops outside Orbit3D). Mode lives in
+ * viewControls.ts, not duplicated here -- see getViewMode()'s own comment.
  */
 
 import { notifyInteractionEnd, notifyInteractionStart } from "./qualityControls";
+import { getViewMode, stepSlice, VIEW_MODE_SLICE_2D, VIEW_MODE_NATIVE_SLICE_2D } from "./viewControls.js";
 
 export function setupCameraControls(): void {
   const canvas = document.getElementById("canvas") as HTMLCanvasElement | null;
@@ -92,7 +99,13 @@ export function setupCameraControls(): void {
       // (DOM_DELTA_PIXEL vs DOM_DELTA_LINE, trackpad vs. mouse wheel), so
       // only the sign is forwarded rather than the raw magnitude.
       event.preventDefault();
-      window.Module._engine_zoom_camera(Math.sign(event.deltaY));
+      const notches = Math.sign(event.deltaY);
+      const viewMode = getViewMode();
+      if (viewMode === VIEW_MODE_SLICE_2D || viewMode === VIEW_MODE_NATIVE_SLICE_2D) {
+        stepSlice(notches);
+        return;
+      }
+      window.Module._engine_zoom_camera(notches);
     },
     { passive: false },
   );

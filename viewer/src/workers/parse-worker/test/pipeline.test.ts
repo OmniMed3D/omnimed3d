@@ -88,6 +88,10 @@ describe("parseSliceToHu vs CT_small.dcm ground truth", () => {
       imagePositionPatient: [0, 0, 0],
       hasImageOrientationPatient: false,
       hasImagePositionPatient: false,
+      windowCenter: 0,
+      windowWidth: 0,
+      hasWindowCenter: false,
+      hasWindowWidth: false,
       pixelData: new Uint8Array(16),
     };
     const fakeParser: ImageParser = { parseImage: () => fakeImage };

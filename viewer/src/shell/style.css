@@ -144,6 +144,36 @@ canvas {
   border-radius: var(--radius-md);
 }
 
+/* Drag-and-drop DICOM loading (user request, 2026-08-27,
+   dragAndDropControls.ts) -- a full-viewport invite while a drag carrying
+   files is over the page, above every other overlay (z-index 20 > 10)
+   since it can legitimately show up alongside any of them. pointer-events:
+   none so it never becomes the drag's own hit-test target -- the actual
+   dragenter/dragover/drop listeners are on `window`, which still receives
+   them via bubbling from whatever real element (canvas, panel) is
+   underneath either way, so this is just visual, never functional. */
+#drop-overlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.75);
+  pointer-events: none;
+}
+
+#drop-overlay p {
+  margin: 0;
+  padding: 16px 24px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  background: rgba(79, 184, 171, 0.12);
+  border: 2px dashed var(--accent-bright);
+  border-radius: var(--radius-md);
+}
+
 #engine-error {
   position: relative;
   max-width: 420px;
@@ -933,6 +963,50 @@ button.upload-btn:disabled:hover {
   margin: 0 0 0 auto;
   accent-color: var(--accent-bright);
   cursor: pointer;
+}
+
+/* Colormap preset picker (user request, 2026-08-27, clinical preset
+   expansion) -- a native <select>, themed to match the panel instead of
+   left at the browser default (the pre-existing #downsample-factor
+   select was left unstyled; this one is the primary Window & Level
+   control, worth the same investment .upload-btn/input[type=range] got).
+   Chevron is CSS-drawn (two overlapping gradient triangles), matching
+   this file's "no unicode glyphs standing in for icons" rule elsewhere
+   (.chevron) without needing a second markup element -- a <select>'s
+   native dropdown arrow can't be restyled directly, only replaced this
+   way once `appearance: none` removes the native one. flex:1 1 auto/
+   min-width:0 matches every other lone-child-in-a-.row control
+   (.row .upload-btn) so it fills the row the same way. */
+.select-input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 28px 6px 10px;
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) center,
+    calc(100% - 11px) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: filter 0.1s ease;
+}
+
+.select-input:hover {
+  filter: brightness(1.15);
+}
+
+.select-input:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
 }
 
 /* Custom colormap color pickers (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md

@@ -47,6 +47,16 @@ void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uin
                          downsampleFactor);
 }
 
+// MPR + native-slice feature (2026-08-27 user request) -- the DICOM
+// series' own original per-file slices, see rhi::Device::loadNativeVolume's
+// header comment. No downsampleFactor: this view has no cinematic
+// rendering path to trade memory against.
+EMSCRIPTEN_KEEPALIVE
+void engine_load_native_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width, uint32_t height,
+                                 uint32_t depth, float spacingX, float spacingY, float spacingZ) {
+    g_device.loadNativeVolume(volumeId, data, byteLength, width, height, depth, spacingX, spacingY, spacingZ);
+}
+
 EMSCRIPTEN_KEEPALIVE
 void engine_apply_mask_slice(uint32_t volumeId, uint32_t sliceIndex, uint32_t width, uint32_t height,
                               uint8_t* data, size_t byteLength) {
@@ -82,18 +92,36 @@ void engine_zoom_camera(float wheelDeltaSign) {
     g_device.zoomCamera(wheelDeltaSign);
 }
 
-// Issue #37 (PRD §9 slice-panning gap): view-mode toggle. mode: 0=Orbit3D,
-// 1=AxialSlice2D -- see rhi::Device::setViewMode's header comment.
+// Issue #37 (PRD §9 slice-panning gap); MPR + native-slice modes added
+// 2026-08-27: view-mode toggle. mode: 0=Orbit3D, 1=Slice2D (Axial/
+// Sagittal/Coronal, see engine_set_slice_axis), 2=NativeSlice2D -- see
+// rhi::Device::setViewMode's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_view_mode(uint32_t mode) {
     g_device.setViewMode(mode);
 }
 
-// Raw voxel Z index (not normalized) for the AxialSlice2D view -- see
-// rhi::Device::setAxialSliceIndex's header comment.
+// Raw voxel index (not normalized) for the Slice2D view, along whichever
+// axis engine_set_slice_axis currently selects -- see
+// rhi::Device::setSliceIndex's header comment.
 EMSCRIPTEN_KEEPALIVE
-void engine_set_axial_slice_index(uint32_t index) {
-    g_device.setAxialSliceIndex(index);
+void engine_set_slice_index(uint32_t index) {
+    g_device.setSliceIndex(index);
+}
+
+// MPR (2026-08-27 user request): which physical axis the Slice2D view
+// slices along. axis: 0=Axial, 1=Sagittal, 2=Coronal -- see
+// rhi::Device::setSliceAxis's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_slice_axis(uint32_t axis) {
+    g_device.setSliceAxis(axis);
+}
+
+// Raw voxel index (not normalized) for the NativeSlice2D view -- see
+// rhi::Device::setNativeSliceIndex's header comment.
+EMSCRIPTEN_KEEPALIVE
+void engine_set_native_slice_index(uint32_t index) {
+    g_device.setNativeSliceIndex(index);
 }
 
 // Issue #40: canvas backing-store pixel dimensions (post-devicePixelRatio

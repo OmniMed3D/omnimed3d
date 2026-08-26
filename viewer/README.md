@@ -121,9 +121,20 @@ them and into the Engine WASM module:
   `src/workers/inference-worker/src/pipeline.ts`'s `MaskSliceMessage`.
 - `volume-ready` (Parse Worker → Shell → `engine_load_volume`):
   `src/workers/parse-worker/src/pipeline.ts`'s
-  `VolumeReadyMessage` — matches
+  `VolumeReadyMessage` — its `width`/`height`/`depth`/`spacingX`/
+  `spacingY`/`spacingZ`/`data` fields match
   `rhi::Device::loadVolume`/`engine_load_volume`'s parameters exactly
   (`engine/src/rhi/include/rhi/Device.hpp`, `engine/src/main_wasm.cpp`).
+  The optional `windowCenter`/`windowWidth` fields (added 2026-08-27 --
+  the series' own DICOM VOI LUT display window, PS3.3 C.11.2, taken from
+  the first slice when present) are a Shell-only concern instead --
+  main.ts calls `engine_set_window_level` with them directly on load,
+  overriding whatever preset/manual value was previously active; they
+  never cross into `engine_load_volume`'s own parameter list. Motivation:
+  a fixed CT-calibrated preset (e.g. "Brain", center 40/width 80 HU)
+  applied to MR data -- which isn't in Hounsfield Units at all -- can
+  render as a blown-out white block even though nothing failed to parse;
+  the file's own window is the only reliable per-series display hint.
 
 This routing is verified end-to-end in a real browser via
 `tests/e2e/shell-mask-integration.spec.ts`: real DICOM bytes through a
@@ -163,10 +174,14 @@ Playwright's bundled build).
   multi-slice series with known left/right anatomy — no suitable fixture
   exists yet (see "DICOM orientation normalization" below); only
   synthetic hand-computed cases are verified so far.
-- Sagittal/coronal/oblique DICOM acquisitions — the Parse Worker only
-  supports axial series (slice normal resolves to the patient Z axis);
-  anything else is rejected with `UnsupportedOrientationError` rather
-  than silently mishandled.
+- Sagittal/coronal DICOM acquisitions (slice normal does not resolve to
+  the patient Z axis) — still rejected with `UnsupportedOrientationError`.
+  Axial-but-tilted (oblique) acquisitions, where the normal is Z but
+  row/column cosines aren't axis-aligned, are supported as of 2026-08-27
+  via whole-series trilinear resampling onto a canonical grid (bug
+  report: UPENN-GBM brain MR, routinely angled a few to ~20 degrees off
+  axial to align with the AC-PC line) — see "DICOM orientation
+  normalization" below.
 
 ## DICOM orientation normalization
 
@@ -189,17 +204,37 @@ patient LPS space regardless of `PatientPosition` (which describes how
 the patient was fed into the scanner, not a different coordinate
 convention for these tags).
 
-Scope: **axial acquisitions only** — the slice normal
-(`cross(rowCosine, columnCosine)`) must resolve to the patient Z axis.
-Row/column can be any axis-aligned permutation of ±X/±Y (covering
-realistic HFS/FFS/HFP/FFP variation), so both transpose and flip
-transforms are applied as needed, but sagittal/coronal/oblique
-acquisitions are rejected outright (`UnsupportedOrientationError`), not
-silently misparsed.
+Scope: the slice normal (`cross(rowCosine, columnCosine)`) must resolve
+to the patient Z axis — sagittal/coronal acquisitions are rejected
+outright (`UnsupportedOrientationError`), not silently misparsed. Within
+that, two paths exist:
+
+- **Axis-aligned fast path** (`computeOrientationTransform` +
+  `applyTransform`): row/column are any axis-aligned permutation of
+  ±X/±Y (covering realistic HFS/FFS/HFP/FFP variation), handled with a
+  per-slice transpose/flip, no resampling needed.
+- **Oblique-resample fallback** (added 2026-08-27, bug report: UPENN-GBM
+  brain MR — real neuro MR is routinely angled a few to ~20 degrees off
+  axial to align with the AC-PC line): when row/column aren't
+  axis-aligned but the normal still is Z, `assembleSeries` catches the
+  fast path's `UnsupportedOrientationError` and instead resamples the
+  _whole series_ onto a canonical-axis-aligned grid via trilinear
+  interpolation (`computeObliqueResampleGrid`/`canonicalToSourceIndex` in
+  orientation.ts, the resampling loop itself in pipeline.ts's
+  `assembleObliqueSeries`). Output voxel spacing reuses the source's own
+  pixel/slice spacing magnitudes unchanged (only re-orienting axes, not
+  rescaling) — a reasonable approximation for the moderate tilt angles
+  real protocols use, not a physically-exact resample for arbitrary
+  rotation. This path only exists for whole-series assembly
+  (`assembleSeries`/`parse-series`); the single-file streaming path
+  (`parseSliceToHu`/`parse-file`) has no series-wide context to resample
+  against, so it still throws `UnsupportedOrientationError` for an
+  oblique slice.
 
 If a slice is missing either tag, its pixel data passes through
 unchanged (`console.warn`), and `assembleSeries` falls back to ordering
 by `InstanceNumber` instead of true geometric position — see
 [`dicom-parser/README.md`](../dicom-parser/README.md#data-model) for
 that fallback's own caveats. The result's `orderingMethod` field
-(`"geometric"` or `"instanceNumber"`) reports which path was taken.
+(`"geometric"`, `"oblique-resample"`, or `"instanceNumber"`) reports
+which path was taken.

@@ -22,7 +22,13 @@
  * caller's job either way.
  */
 import { DicomParserWasm } from "./wasm.js";
-import { parseSliceToHu, assembleSeries, type HuSliceMessage, type VolumeReadyMessage } from "./pipeline.js";
+import {
+  parseSliceToHu,
+  assembleSeries,
+  type HuSliceMessage,
+  type VolumeReadyMessage,
+  type NativeVolumeReadyMessage,
+} from "./pipeline.js";
 
 interface InitMessage {
   type: "init";
@@ -97,13 +103,19 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
 
     if (msg.type === "parse-series") {
       const files = msg.files.map((f) => new Uint8Array(f));
-      const { sliceMessages, volume } = assembleSeries(requireWasm(), files, msg.volumeId);
+      const { sliceMessages, volume, nativeVolume } = assembleSeries(requireWasm(), files, msg.volumeId);
 
       for (const sliceMessage of sliceMessages) {
         worker.postMessage(sliceMessage, [sliceMessage.data]);
       }
       const volumeMessage: VolumeReadyMessage = volume;
       worker.postMessage(volumeMessage, [volumeMessage.data]);
+      // MPR + native-slice feature (2026-08-27 user request) -- posted
+      // after volumeMessage, not before: main.ts's engineLoadNativeVolume
+      // requires a primary volume to already be loaded (loadNativeVolume
+      // reuses its mask/gradient/LUT GPU resources, see WebGPUDevice.cpp).
+      const nativeVolumeMessage: NativeVolumeReadyMessage = nativeVolume;
+      worker.postMessage(nativeVolumeMessage, [nativeVolumeMessage.data]);
     }
   } catch (error) {
     const errorMessage: ParseErrorMessage = {

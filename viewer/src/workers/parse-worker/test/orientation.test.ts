@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTransform,
+  canonicalToSourceIndex,
   classifyAxis,
+  computeObliqueResampleGrid,
   computeOrientationTransform,
   cross,
   dot,
   UnsupportedOrientationError,
+  type ObliqueSeriesGeometry,
 } from "../src/orientation.js";
 
 describe("cross / dot", () => {
@@ -128,5 +131,139 @@ describe("applyTransform", () => {
     expect(result.rows).toBe(3);
     expect(result.columns).toBe(2);
     expect(Array.from(result.data)).toEqual([6, 3, 5, 2, 4, 1]);
+  });
+});
+
+// Oblique-resample fallback (2026-08-27, bug report: UPENN-GBM brain MR --
+// real neuro MR is routinely angled a few to ~20 degrees off axial). Uses a
+// 30-degree in-plane rotation (row/column cosines rotated about Z, so the
+// slice normal stays exactly Z) -- hand-verified below, not derived from
+// the code under test, same policy as the rest of this file.
+describe("computeObliqueResampleGrid / canonicalToSourceIndex", () => {
+  const COS30 = Math.sqrt(3) / 2; // 0.8660254...
+  const SIN30 = 0.5;
+  // row=[cos30,sin30,0], column=[-sin30,cos30,0] -- a 30-degree rotation
+  // about Z, so neither cosine is axis-aligned (computeOrientationTransform
+  // would reject this), but cross(row,column) is still exactly [0,0,1].
+  const GEOMETRY: ObliqueSeriesGeometry = {
+    row: [COS30, SIN30, 0],
+    column: [-SIN30, COS30, 0],
+    normal: [0, 0, 1],
+    origin: [0, 0, 0],
+    pixelSpacingRow: 1,
+    pixelSpacingColumn: 1,
+    sliceSpacing: 1,
+  };
+
+  it("computes the bounding-box grid for a 2x2x2 oblique source stack (hand-verified corners)", () => {
+    // 8 corners of the unit cube rotated 30 degrees about Z: X ranges over
+    // [-0.5, cos30] (width cos30+0.5 = 1.3660254), Y ranges over
+    // [0, sin30+cos30] (height 1.3660254 too, by symmetry), Z is untouched
+    // ([0, 1]). See this test file's own math, not the implementation.
+    // Math.round(1.3660254) = 1 (rounds down, below the .5 threshold).
+    const grid = computeObliqueResampleGrid(GEOMETRY, 2, 2, 2);
+
+    expect(grid.columns).toBe(2); // round(1.3660254) + 1
+    expect(grid.rows).toBe(2);
+    expect(grid.depth).toBe(2); // round(1) + 1
+    expect(grid.spacingX).toBe(1);
+    expect(grid.spacingY).toBe(1);
+    expect(grid.spacingZ).toBe(1);
+    expect(grid.origin[0]).toBeCloseTo(-0.5, 6);
+    expect(grid.origin[1]).toBeCloseTo(0, 6);
+    expect(grid.origin[2]).toBeCloseTo(0, 6);
+  });
+
+  it("inverts the forward corner mapping back to the exact source index", () => {
+    // Source corner (columnIndex=1, rowIndex=0, sliceIndex=0) in patient
+    // space is exactly `row` itself (origin is [0,0,0], spacing is 1) --
+    // hand-verified: dot(row, row) = cos30^2+sin30^2 = 1, dot(row, column)
+    // = -cos30*sin30 + sin30*cos30 = 0.
+    const patientPos: [number, number, number] = [COS30, SIN30, 0];
+    const [rowIndex, columnIndex, sliceIndex] = canonicalToSourceIndex(patientPos, GEOMETRY);
+    expect(rowIndex).toBeCloseTo(0, 6);
+    expect(columnIndex).toBeCloseTo(1, 6);
+    expect(sliceIndex).toBeCloseTo(0, 6);
+  });
+
+  it("round-trips an arbitrary output-grid voxel through the forward/inverse mapping", () => {
+    const grid = computeObliqueResampleGrid(GEOMETRY, 4, 4, 3);
+    const outCol = 2;
+    const outRow = 3;
+    const outSlice = 1;
+    const patientPos: [number, number, number] = [
+      grid.origin[0] + outCol * grid.spacingX,
+      grid.origin[1] + outRow * grid.spacingY,
+      grid.origin[2] + outSlice * grid.spacingZ,
+    ];
+    const [rowIndex, columnIndex, sliceIndex] = canonicalToSourceIndex(patientPos, GEOMETRY);
+
+    // Forward-mapping that same source index should reproduce patientPos --
+    // proves the two functions are consistent inverses of each other,
+    // independent of any specific numeric expectation.
+    const reconstructed: [number, number, number] = [
+      GEOMETRY.origin[0] +
+        columnIndex * GEOMETRY.pixelSpacingColumn * GEOMETRY.row[0] +
+        rowIndex * GEOMETRY.pixelSpacingRow * GEOMETRY.column[0] +
+        sliceIndex * GEOMETRY.sliceSpacing * GEOMETRY.normal[0],
+      GEOMETRY.origin[1] +
+        columnIndex * GEOMETRY.pixelSpacingColumn * GEOMETRY.row[1] +
+        rowIndex * GEOMETRY.pixelSpacingRow * GEOMETRY.column[1] +
+        sliceIndex * GEOMETRY.sliceSpacing * GEOMETRY.normal[1],
+      GEOMETRY.origin[2] +
+        columnIndex * GEOMETRY.pixelSpacingColumn * GEOMETRY.row[2] +
+        rowIndex * GEOMETRY.pixelSpacingRow * GEOMETRY.column[2] +
+        sliceIndex * GEOMETRY.sliceSpacing * GEOMETRY.normal[2],
+    ];
+    expect(reconstructed[0]).toBeCloseTo(patientPos[0], 6);
+    expect(reconstructed[1]).toBeCloseTo(patientPos[1], 6);
+    expect(reconstructed[2]).toBeCloseTo(patientPos[2], 6);
+  });
+
+  // Bug fix, 2026-08-27 (follow-up to the same UPENN-GBM report -- a
+  // *sagittal* series, "T2 SAG SPACE", whose slice-stacking direction
+  // (normal) is ~X, not ~Z). The 30-degree-about-Z case above never
+  // exercises this: its normal stays exactly Z, so the old fixed mapping
+  // (spacingX always from pixelSpacingColumn, spacingY from
+  // pixelSpacingRow, spacingZ from sliceSpacing) happened to agree with
+  // the correct dominant-axis assignment by construction. A permuted
+  // (sagittal/coronal-style) orientation with *anisotropic* spacing is
+  // the case that actually distinguishes them -- it only produced a
+  // visually correct result for the real UPENN-GBM sagittal series by
+  // luck, because that series happens to be near-isotropic (~0.9mm in
+  // every direction); this fixture uses deliberately distinct spacings so
+  // a mislabeling bug can't hide.
+  it("assigns each output axis's spacing from whichever source direction actually dominates it (permuted/sagittal orientation)", () => {
+    // Pure sagittal, no tilt: row=+Y, column=-Z, normal=cross(row,column)=-X.
+    // computeOrientationTransform's fast path would reject this too (column
+    // resolves to "z", disallowed even though both cosines are individually
+    // axis-aligned) -- same dispatch path a real sagittal series takes.
+    const geometry: ObliqueSeriesGeometry = {
+      row: [0, 1, 0],
+      column: [0, 0, -1],
+      normal: [-1, 0, 0],
+      origin: [0, 0, 0],
+      pixelSpacingRow: 2.0, // governs the column direction (-Z) -- should end up as spacingZ
+      pixelSpacingColumn: 0.5, // governs the row direction (+Y) -- should end up as spacingY
+      sliceSpacing: 3.0, // governs the normal direction (-X) -- should end up as spacingX
+    };
+    const sourceRows = 4;
+    const sourceColumns = 5;
+    const sourceDepth = 6;
+
+    const grid = computeObliqueResampleGrid(geometry, sourceRows, sourceColumns, sourceDepth);
+
+    // Hand-verified (see this test's own math): with no tilt, each output
+    // axis's voxel count exactly recovers whichever source dimension maps
+    // to it via the correct dominant-axis spacing -- X count = sourceDepth
+    // (normal -> X), Y count = sourceColumns (row -> Y), Z count =
+    // sourceRows (column -> Z). The old fixed mapping would instead have
+    // produced columns=31, rows=2, depth=3 -- wildly wrong.
+    expect(grid.spacingX).toBe(3.0);
+    expect(grid.spacingY).toBe(0.5);
+    expect(grid.spacingZ).toBe(2.0);
+    expect(grid.columns).toBe(sourceDepth);
+    expect(grid.rows).toBe(sourceColumns);
+    expect(grid.depth).toBe(sourceRows);
   });
 });

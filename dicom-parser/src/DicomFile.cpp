@@ -144,6 +144,122 @@ std::optional<ImplicitElementHeader> readImplicitElementHeader(std::byte const* 
     return ImplicitElementHeader{group, element, offset + 8, valueLength};
 }
 
+// FFFE is reserved for Item / Item Delimitation Item / Sequence
+// Delimitation Item (DICOM PS3.5 7.5) -- these never carry VR bytes or a
+// short/long length-form distinction, regardless of whether the enclosing
+// dataset is Explicit or Implicit VR. A dataset walker that blindly
+// applied Explicit-VR header rules inside a sequence's Items would
+// misread a delimiter's tag+length as VR+length instead.
+constexpr uint16_t kDelimiterGroup = 0xFFFE;
+constexpr uint16_t kItemTag = 0xE000;
+constexpr uint16_t kItemDelimitationTag = 0xE00D;
+constexpr uint16_t kSequenceDelimitationTag = 0xE0DD;
+
+struct ElementHeader {
+    uint16_t group;
+    uint16_t element;
+    size_t valueOffset;
+    uint32_t valueLength;
+};
+
+// Reads one element header at `offset`, dispatching to the delimiter shape
+// (group 0xFFFE) or the dataset's own Explicit/Implicit VR shape. Shared by
+// the top-level dataset walk and the undefined-length sequence/item skip
+// below, since both can encounter delimiters (skip) or ordinary elements
+// (walk).
+std::optional<ElementHeader> readElementHeader(std::byte const* data, size_t offset, size_t size, bool explicitVR) {
+    if (offset + 4 > size) {
+        return std::nullopt;
+    }
+    if (readU16LE(data + offset) == kDelimiterGroup) {
+        auto const header = readImplicitElementHeader(data, offset, size);
+        if (!header) {
+            return std::nullopt;
+        }
+        return ElementHeader{header->group, header->element, header->valueOffset, header->valueLength};
+    }
+    if (explicitVR) {
+        auto const header = readExplicitElementHeader(data, offset, size);
+        if (!header) {
+            return std::nullopt;
+        }
+        return ElementHeader{header->group, header->element, header->valueOffset, header->valueLength};
+    }
+    auto const header = readImplicitElementHeader(data, offset, size);
+    if (!header) {
+        return std::nullopt;
+    }
+    return ElementHeader{header->group, header->element, header->valueOffset, header->valueLength};
+}
+
+std::optional<size_t> skipUndefinedLengthSequence(std::byte const* data, size_t offset, size_t size, bool explicitVR);
+
+// Skips one Item's own dataset (only needed when the Item itself has
+// undefined length -- a defined-length Item is skipped by byte count
+// alone, see the caller). Walks nested elements using the enclosing
+// dataset's Explicit/Implicit VR rules until the Item Delimitation Item,
+// recursing for any nested undefined-length sequence found along the way
+// (sequences nest arbitrarily per DICOM PS3.5 7.5).
+std::optional<size_t> skipItemDataset(std::byte const* data, size_t offset, size_t size, bool explicitVR) {
+    while (true) {
+        auto const header = readElementHeader(data, offset, size, explicitVR);
+        if (!header) {
+            return std::nullopt;
+        }
+        if (header->group == kDelimiterGroup && header->element == kItemDelimitationTag) {
+            return header->valueOffset;
+        }
+        if (header->valueLength == 0xFFFFFFFFu) {
+            auto const after = skipUndefinedLengthSequence(data, header->valueOffset, size, explicitVR);
+            if (!after) {
+                return std::nullopt;
+            }
+            offset = *after;
+            continue;
+        }
+        if (header->valueOffset + header->valueLength > size) {
+            return std::nullopt;
+        }
+        offset = header->valueOffset + header->valueLength;
+    }
+}
+
+// Skips an undefined-length SQ element's Items, starting right after the
+// SQ element's own header (i.e. `offset` == that header's valueOffset),
+// up to and including its Sequence Delimitation Item. Only skips -- this
+// parser has no caller that needs sequence contents, so there is no value
+// in decoding Items beyond what's needed to find their end.
+std::optional<size_t> skipUndefinedLengthSequence(std::byte const* data, size_t offset, size_t size,
+                                                    bool explicitVR) {
+    while (true) {
+        auto const header = readElementHeader(data, offset, size, explicitVR);
+        if (!header || header->group != kDelimiterGroup) {
+            // A well-formed sequence contains only Items and ends with a
+            // Sequence Delimitation Item -- anything else means the buffer
+            // doesn't actually match the structure this function assumes.
+            return std::nullopt;
+        }
+        if (header->element == kSequenceDelimitationTag) {
+            return header->valueOffset;
+        }
+        if (header->element != kItemTag) {
+            return std::nullopt;
+        }
+        if (header->valueLength == 0xFFFFFFFFu) {
+            auto const after = skipItemDataset(data, header->valueOffset, size, explicitVR);
+            if (!after) {
+                return std::nullopt;
+            }
+            offset = *after;
+            continue;
+        }
+        if (header->valueOffset + header->valueLength > size) {
+            return std::nullopt;
+        }
+        offset = header->valueOffset + header->valueLength;
+    }
+}
+
 // Tags parseImageInfo cares about. For Implicit VR this list also doubles as
 // the "how do I interpret this value" table, since Implicit VR doesn't carry
 // VR information in the stream itself -- everything else is skipped by
@@ -164,6 +280,8 @@ enum class KnownTag {
     InstanceNumber,
     ImageOrientationPatient,
     ImagePositionPatient,
+    WindowCenter,
+    WindowWidth,
 };
 
 struct TagLookup {
@@ -188,6 +306,8 @@ constexpr TagLookup kKnownTags[] = {
     {0x0020, 0x0013, KnownTag::InstanceNumber},
     {0x0020, 0x0037, KnownTag::ImageOrientationPatient},
     {0x0020, 0x0032, KnownTag::ImagePositionPatient},
+    {0x0028, 0x1050, KnownTag::WindowCenter},
+    {0x0028, 0x1051, KnownTag::WindowWidth},
 };
 
 std::optional<KnownTag> lookupKnownTag(uint16_t group, uint16_t element) {
@@ -310,6 +430,24 @@ void applyKnownTagValue(KnownTag tag, std::byte const* data, size_t valueOffset,
             }
             break;
         }
+        case KnownTag::WindowCenter: {
+            auto const values =
+                parseDSValues(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
+            if (!values.empty()) {
+                info.windowCenter = values[0];
+                info.hasWindowCenter = true;
+            }
+            break;
+        }
+        case KnownTag::WindowWidth: {
+            auto const values =
+                parseDSValues(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
+            if (!values.empty()) {
+                info.windowWidth = values[0];
+                info.hasWindowWidth = true;
+            }
+            break;
+        }
     }
 }
 
@@ -335,31 +473,48 @@ std::optional<DicomMetaInfo> DicomFile::parseFromBuffer(std::byte const* data, s
     DicomMetaInfo info;
 
     // First element must be (0002,0000) UL FileMetaInformationGroupLength --
-    // its value is the byte length of everything else in group 0002.
+    // its value is the byte length of everything else in group 0002. Some
+    // real-world files (e.g. TCIA's TCGA-GBM MR series -- bug report,
+    // 2026-08-27) omit this element entirely and go straight to
+    // (0002,0010) TransferSyntaxUID, even though DICOM PS3.10 nominally
+    // requires it. Confirmed via a raw hex dump of those files: right
+    // after "DICM" comes group=0002/element=0010 directly, no
+    // group=0002/element=0000 first. Rather than reject those files
+    // outright, fall back to scanning group 0002 element-by-element until
+    // the group number changes, the same way most real DICOM readers
+    // tolerate this.
     if (offset + 8 > size) {
         return fail(DicomParseError::Truncated);
     }
     uint16_t const firstGroup = readU16LE(data + offset);
     uint16_t const firstElement = readU16LE(data + offset + 2);
-    if (firstGroup != 0x0002 || firstElement != 0x0000) {
+    if (firstGroup != 0x0002) {
         return fail(DicomParseError::MissingGroupLength);
     }
-    uint16_t const groupLengthValueLen = readU16LE(data + offset + 6);
-    if (offset + 8 + groupLengthValueLen > size) {
-        return fail(DicomParseError::Truncated);
-    }
-    info.metaGroupLength = readU32LE(data + offset + 8);
-    offset += 8 + groupLengthValueLen;
 
-    size_t const groupEnd = offset + info.metaGroupLength;
-    if (groupEnd > size) {
-        return fail(DicomParseError::Truncated);
+    bool hasExplicitGroupEnd = false;
+    size_t groupEnd = size;
+    if (firstElement == 0x0000) {
+        uint16_t const groupLengthValueLen = readU16LE(data + offset + 6);
+        if (offset + 8 + groupLengthValueLen > size) {
+            return fail(DicomParseError::Truncated);
+        }
+        info.metaGroupLength = readU32LE(data + offset + 8);
+        offset += 8 + groupLengthValueLen;
+        groupEnd = offset + info.metaGroupLength;
+        if (groupEnd > size) {
+            return fail(DicomParseError::Truncated);
+        }
+        hasExplicitGroupEnd = true;
     }
 
     while (offset < groupEnd) {
         auto const header = readExplicitElementHeader(data, offset, size);
         if (!header) {
             return fail(DicomParseError::Truncated);
+        }
+        if (!hasExplicitGroupEnd && header->group != 0x0002) {
+            break;
         }
         if (header->valueOffset + header->valueLength > size) {
             return fail(DicomParseError::Truncated);
@@ -379,7 +534,7 @@ std::optional<DicomMetaInfo> DicomFile::parseFromBuffer(std::byte const* data, s
         offset = header->valueOffset + header->valueLength;
     }
 
-    info.dataSetOffset = groupEnd;
+    info.dataSetOffset = offset;
     return info;
 }
 
@@ -429,12 +584,24 @@ std::optional<DicomImageInfo> DicomFile::parseImageInfo(std::byte const* data, s
             valueLength = header->valueLength;
         }
 
-        // Undefined length (SQ items, encapsulated/compressed PixelData)
-        // requires nested Sequence/Item delimiter scanning to skip correctly
-        // -- out of scope (see docs/adr/0002). Fail loudly rather than
-        // misinterpreting 0xFFFFFFFF as a real length.
+        // Undefined length -- an SQ element (common even in otherwise-
+        // uncompressed CT/MR studies, e.g. "Referenced Image Sequence") or,
+        // in principle, encapsulated/compressed PixelData. The latter can't
+        // actually occur here: a compressed transfer syntax was already
+        // rejected above via UnsupportedTransferSyntax, so by this point
+        // 0xFFFFFFFF always means a sequence. None of kKnownTags is ever
+        // SQ-valued, so this parser only needs to skip past it to keep
+        // walking the rest of the dataset (see docs/adr/0002's "revisit
+        // this decision" trigger -- a real UPENN-GBM MR file hit exactly
+        // this, 2026-08-27). A malformed/truncated sequence still fails
+        // loudly via UnsupportedSequenceEncoding rather than misparsing.
         if (valueLength == 0xFFFFFFFFu) {
-            return fail(DicomParseError::UnsupportedSequenceEncoding);
+            auto const after = skipUndefinedLengthSequence(data, valueOffset, size, explicitVR);
+            if (!after) {
+                return fail(DicomParseError::UnsupportedSequenceEncoding);
+            }
+            offset = *after;
+            continue;
         }
         if (valueOffset + valueLength > size) {
             return fail(DicomParseError::Truncated);

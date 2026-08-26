@@ -3,14 +3,17 @@
  * §5.3) -- two `<input type="color">` pickers driving
  * `engine_set_custom_lut_colors` directly and synchronously on every
  * `input` event (no queueing needed -- see cameraControls.ts's comment on
- * why). Unlike the 5 fixed presets, Custom doesn't change window/level and
+ * why). Unlike the fixed presets, Custom doesn't change window/level and
  * has no `engine_set_colormap_preset` counterpart (that export only
- * accepts kColormapPresets' 0-4 range) -- windowLevelControls.ts's preset
- * click handler special-cases id 5 to just call setActivePreset() for the
- * visual state, while this file owns actually applying the colors.
+ * accepts kColormapPresets' 0-7 range) -- windowLevelControls.ts's preset
+ * `<select>` change handler special-cases `CUSTOM_PRESET_ID` (8) to just
+ * call setActivePreset() for the visual state, while this file owns
+ * actually applying the colors. It's also the one place in this app that
+ * still applies a color tint at all -- see ColormapPreset's own comment
+ * (WebGPUDevice.cpp) for why every fixed preset went grayscale-only.
  */
 
-import { setActivePreset } from "./windowLevelControls.js";
+import { CUSTOM_PRESET_ID, setActivePreset } from "./windowLevelControls.js";
 
 function hexToUnitFloat(hex: string, start: number): number {
   return parseInt(hex.slice(start, start + 2), 16) / 255;
@@ -33,7 +36,7 @@ export function setupCustomColormapControls(): void {
       hexToUnitFloat(highInput!.value, 3),
       hexToUnitFloat(highInput!.value, 5),
     );
-    setActivePreset(5);
+    setActivePreset(CUSTOM_PRESET_ID);
   }
 
   lowInput.addEventListener("input", applyCustomColors);

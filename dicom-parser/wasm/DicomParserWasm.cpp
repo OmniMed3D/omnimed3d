@@ -56,6 +56,10 @@ struct DicomWasmImageInfo {
     double imagePositionPatient[3];     // slice origin (x, y, z), patient LPS space
     uint32_t hasImageOrientationPatient;
     uint32_t hasImagePositionPatient;
+    double windowCenter;  // VOI LUT display window (DICOM PS3.3 C.11.2), same units as HU
+    double windowWidth;
+    uint32_t hasWindowCenter;
+    uint32_t hasWindowWidth;
 };
 
 static_assert(offsetof(DicomWasmImageInfo, rows) == 0);
@@ -74,7 +78,11 @@ static_assert(offsetof(DicomWasmImageInfo, imageOrientationPatient) == 72);
 static_assert(offsetof(DicomWasmImageInfo, imagePositionPatient) == 120);
 static_assert(offsetof(DicomWasmImageInfo, hasImageOrientationPatient) == 144);
 static_assert(offsetof(DicomWasmImageInfo, hasImagePositionPatient) == 148);
-static_assert(sizeof(DicomWasmImageInfo) == 152);
+static_assert(offsetof(DicomWasmImageInfo, windowCenter) == 152);
+static_assert(offsetof(DicomWasmImageInfo, windowWidth) == 160);
+static_assert(offsetof(DicomWasmImageInfo, hasWindowCenter) == 168);
+static_assert(offsetof(DicomWasmImageInfo, hasWindowWidth) == 172);
+static_assert(sizeof(DicomWasmImageInfo) == 176);
 
 extern "C" {
 
@@ -147,6 +155,10 @@ int dicom_wasm_parse_image(uint8_t const* data, size_t size, size_t dataSetOffse
               out->imagePositionPatient);
     out->hasImageOrientationPatient = image->hasImageOrientationPatient ? 1 : 0;
     out->hasImagePositionPatient = image->hasImagePositionPatient ? 1 : 0;
+    out->windowCenter = image->windowCenter;
+    out->windowWidth = image->windowWidth;
+    out->hasWindowCenter = image->hasWindowCenter ? 1 : 0;
+    out->hasWindowWidth = image->hasWindowWidth ? 1 : 0;
     return 0;
 }
 

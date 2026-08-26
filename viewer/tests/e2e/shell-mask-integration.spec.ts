@@ -327,11 +327,11 @@ test("real UI: file picker, camera drag, wheel zoom, and window/level controls a
   const afterSlider = await canvas.screenshot();
   expect(afterZoom.equals(afterSlider)).toBe(false);
 
-  // Colormap preset button -- also confirms the window/level sliders and
+  // Colormap preset select -- also confirms the window/level sliders and
   // their labels update to match the preset (previously they went stale
   // after a preset click, so the next manual drag silently overwrote the
   // preset with the pre-click values).
-  await page.locator('[data-colormap-preset="1"]').click();
+  await page.locator("#colormap-preset-select").selectOption("1");
   await page.waitForTimeout(300);
   const afterPreset = await canvas.screenshot();
   expect(afterSlider.equals(afterPreset)).toBe(false);
@@ -373,17 +373,19 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   await page.waitForTimeout(500);
   const orbitShot = await canvas.screenshot();
 
-  // Switch to 2D Slice -- a genuinely different pipeline/output, so this
+  // Switch to 2D Slice (Axial -- MPR feature, 2026-08-27, added Sagittal/
+  // Coronal buttons sharing data-view-mode="1", disambiguated by
+  // data-slice-axis) -- a genuinely different pipeline/output, so this
   // must differ regardless of mask state.
-  await page.locator('[data-view-mode="1"]').click();
+  await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
   await page.waitForTimeout(300);
   const sliceDefaultShot = await canvas.screenshot();
   expect(orbitShot.equals(sliceDefaultShot)).toBe(false);
 
   // depth=3 -> slider max=2, default index=floor(3/2)=1 (engine's own
   // depth/2 default, mirrored client-side by viewControls.ts).
-  await expect(page.locator("#axial-slice-index")).toHaveAttribute("max", "2");
-  await expect(page.locator("#axial-slice-index")).toHaveValue("1");
+  await expect(page.locator("#slice-index")).toHaveAttribute("max", "2");
+  await expect(page.locator("#slice-index")).toHaveValue("1");
 
   // The three slices are byte-identical HU data (same file loaded 3x), so
   // moving the slider alone wouldn't guarantee a visual diff -- apply a
@@ -410,7 +412,7 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   }, engineVolumeId);
   await waitForLine(/WebGPUDevice::applyMaskSlice: volumeId=\d+ slice=0 applied/);
 
-  const sliceSlider = page.locator("#axial-slice-index");
+  const sliceSlider = page.locator("#slice-index");
   await sliceSlider.fill("0");
   await sliceSlider.dispatchEvent("input");
   await page.waitForTimeout(300);
@@ -422,6 +424,24 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   await page.waitForTimeout(300);
   const backToOneShot = await canvas.screenshot();
   expect(backToOneShot.equals(sliceZeroShot)).toBe(false);
+
+  // User request, 2026-08-27: mouse wheel over the canvas scrubs this same
+  // slider in 2D Slice mode (cameraControls.ts's wheel handler branches on
+  // viewControls.ts's getViewMode() instead of always zooming -- zoom is a
+  // no-op outside Orbit3D anyway, WebGPUDevice::zoomCamera's own guard).
+  const sliceBox = (await canvas.boundingBox())!;
+  await page.mouse.move(sliceBox.x + sliceBox.width / 2, sliceBox.y + sliceBox.height / 2);
+  await page.mouse.wheel(0, 200); // scroll "down" a notch -> index 1 -> 2
+  await page.waitForTimeout(300);
+  await expect(sliceSlider).toHaveValue("2");
+  const wheelDownShot = await canvas.screenshot();
+  expect(wheelDownShot.equals(backToOneShot)).toBe(false);
+
+  await page.mouse.wheel(0, -200); // scroll "up" a notch -> index 2 -> 1
+  await page.waitForTimeout(300);
+  await expect(sliceSlider).toHaveValue("1");
+  const wheelUpShot = await canvas.screenshot();
+  expect(wheelUpShot.equals(wheelDownShot)).toBe(false);
 
   // Toggle back to 3D Orbit -- pipeline changes again, and rotation/zoom
   // must keep working unregressed (drag confirms the camera still
@@ -541,9 +561,7 @@ test("a loading indicator appears during a real file load and clears after (issu
   await page.locator("#dicom-files-input").setInputFiles(ctSmallDcmPath);
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/);
 
-  const wasVisible = await page.evaluate(
-    () => (window as { __indicatorWasVisible?: boolean }).__indicatorWasVisible,
-  );
+  const wasVisible = await page.evaluate(() => (window as { __indicatorWasVisible?: boolean }).__indicatorWasVisible);
   expect(wasVisible).toBe(true);
   // Final state: cleared once the load completes.
   await expect(indicator).toBeHidden();
