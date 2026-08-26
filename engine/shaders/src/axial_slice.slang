@@ -1,22 +1,36 @@
-// Axial single-slice view: samples one Z-plane of the same HU volume
-// texture the raymarch shader uses (rhi::Device::loadVolume), applies the
-// same clinical window/level + transfer-function LUT and mask-overlay
-// logic per pixel instead of per raymarch step, and draws it directly to
-// the swapchain -- a traditional DICOM-style 2D cross-sectional view
-// (REQ-R02, PRD §9 slice-panning gap, issue #37).
+// Single-slice 2D view: samples one plane of the same HU volume texture
+// the raymarch shader uses (rhi::Device::loadVolume, or a separate native
+// volume for NativeSlice2D -- see WebGPUDevice.cpp's own comment on
+// nativeVolumeTexture_), applies the same clinical window/level +
+// transfer-function LUT and mask-overlay logic per pixel instead of per
+// raymarch step, and draws it directly to the swapchain -- a traditional
+// DICOM-style 2D cross-sectional view (REQ-R02, PRD §9 slice-panning gap,
+// issue #37).
 //
-// WebGPU/Dawn cannot bind a single Z-slice of a 3D-dimension texture as a
+// MPR (2026-08-27 user request): sliceAxis picks which of the volume's
+// three physical axes is held fixed while the other two vary as the
+// on-screen U/V -- Axial fixes Z (the original, only behavior before this
+// change), Sagittal fixes X, Coronal fixes Y. Always Axial-style for
+// NativeSlice2D (WebGPUDevice.cpp forces sliceAxis=0 for that view; the
+// native volume's own "depth" is file order, not a real spatial axis, so
+// MPR has no meaning there). No anatomical left/right calibration claim
+// for any axis, same as the original Axial-only version -- out of scope
+// per PRD §7.2 and viewer/README.md's own documented gap.
+//
+// WebGPU/Dawn cannot bind a single plane of a 3D-dimension texture as a
 // native 2D view (WGPUTextureViewDimension_2D only applies to textures
 // created with dimension=2D), so this shader keeps sampling the same full
 // 3D volumeTex/maskTex WebGPUDevice already binds for the raymarch
-// pipeline, at a fixed Z instead of a varying one. See
+// pipeline, at a fixed coordinate instead of a varying one. See
 // engine/docs/adr/0002-shader-source-strategy.md for why shader source is
 // written once here and cross-compiled rather than hand-maintained
 // per-backend.
 
 struct AxialSliceUBO
 {
-    float4 sliceParams;  // x=sliceIndex (raw voxel index, not normalized), y=windowCenter, z=windowWidth, w unused
+    // w=sliceAxis: 0=Axial (fixes Z), 1=Sagittal (fixes X), 2=Coronal
+    // (fixes Y) -- see this file's own header comment (MPR).
+    float4 sliceParams;  // x=sliceIndex (raw voxel index, not normalized), y=windowCenter, z=windowWidth, w=sliceAxis
     float4 maskParams;   // x=overlayEnabled (0/1), y=overlayAlpha, zw unused
     // "Contain" letterbox fit (issue #40 follow-up -- the canvas is no
     // longer a fixed near-4:3 640x480 box, so filling it edge-to-edge
@@ -100,13 +114,31 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const float sliceIndex = ubo.sliceParams.x;
     const float windowCenter = ubo.sliceParams.y;
     const float windowWidth = ubo.sliceParams.z;
+    const int sliceAxis = int(ubo.sliceParams.w + 0.5);
     const bool maskEnabled = ubo.maskParams.x > 0.5;
     const float maskAlpha = ubo.maskParams.y;
 
-    // +0.5 samples the texel center along Z, matching how uv.x/uv.y
-    // already land mid-texel for a full-resolution sample grid.
-    float sliceZ = (sliceIndex + 0.5) / float(volD);
-    float3 uvw = float3(uv, sliceZ);
+    // MPR (2026-08-27): which texture axis is held fixed, and which two
+    // vary as uv.x/uv.y, depends on sliceAxis -- see this file's own
+    // header comment. +0.5 samples the fixed axis's texel center,
+    // matching how uv.x/uv.y already land mid-texel for a full-resolution
+    // sample grid.
+    float3 uvw;
+    if (sliceAxis == 1) // Sagittal: fix X, uv.x -> Y (rows), uv.y -> Z (depth)
+    {
+        float sliceX = (sliceIndex + 0.5) / float(volW);
+        uvw = float3(sliceX, uv.x, uv.y);
+    }
+    else if (sliceAxis == 2) // Coronal: fix Y, uv.x -> X (columns), uv.y -> Z (depth)
+    {
+        float sliceY = (sliceIndex + 0.5) / float(volH);
+        uvw = float3(uv.x, sliceY, uv.y);
+    }
+    else // Axial (default): fix Z, uv.x -> X (columns), uv.y -> Y (rows)
+    {
+        float sliceZ = (sliceIndex + 0.5) / float(volD);
+        uvw = float3(uv, sliceZ);
+    }
 
     float raw = volumeTex.SampleLevel(linearSampler, uvw, 0.0);
     float n = clamp((raw - (windowCenter - windowWidth * 0.5)) / max(windowWidth, 1e-6), 0.0, 1.0);
@@ -120,9 +152,22 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 
         // Nearest-only by construction (Load, not Sample), same reasoning
         // as volume_raymarch.slang's mask lookup. Uses the raw integer
-        // sliceIndex directly (not a round-tripped float via sliceZ) to
-        // stay pixel-exact with the Z plane actually being displayed.
-        int3 texel = int3(int(uv.x * float(maskW)), int(uv.y * float(maskH)), int(sliceIndex));
+        // sliceIndex directly (not a round-tripped float via uvw) to stay
+        // pixel-exact with the plane actually being displayed. Axis
+        // mapping mirrors uvw's construction above.
+        int3 texel;
+        if (sliceAxis == 1)
+        {
+            texel = int3(int(sliceIndex), int(uv.x * float(maskH)), int(uv.y * float(maskD)));
+        }
+        else if (sliceAxis == 2)
+        {
+            texel = int3(int(uv.x * float(maskW)), int(sliceIndex), int(uv.y * float(maskD)));
+        }
+        else
+        {
+            texel = int3(int(uv.x * float(maskW)), int(uv.y * float(maskH)), int(sliceIndex));
+        }
         uint maskClass = maskTex.Load(int4(texel, 0));
         if (maskClass != 0u)
         {

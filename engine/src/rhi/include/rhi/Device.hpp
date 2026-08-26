@@ -106,6 +106,23 @@ public:
                              uint32_t width, uint32_t height, uint32_t depth,
                              float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) = 0;
 
+    // Loads a second, independent volume for the NativeSlice2D view mode
+    // (MPR/native-slice feature, 2026-08-27 user request) -- the DICOM
+    // series' own original per-file slices in their native acquisition
+    // order/resolution, as opposed to loadVolume's canonical-LPS-oriented
+    // (possibly trilinear-resampled, see the Parse Worker's oblique-series
+    // fallback) volume. Deliberately minimal compared to loadVolume: no
+    // downsampling, no mask overlay, no precomputed gradient volume --
+    // this view exists to let a user look at exactly what the scanner
+    // produced, not to support cinematic rendering or AI mask overlay
+    // against it (the mask's own geometry only lines up with the
+    // canonical-oriented volume). No-op (logged) if no volume has ever
+    // been loaded via loadVolume -- this shares that call's LUT/sampler
+    // GPU resources rather than duplicating them.
+    virtual void loadNativeVolume(uint32_t volumeId, void const* data, size_t byteLength,
+                                    uint32_t width, uint32_t height, uint32_t depth,
+                                    float spacingX, float spacingY, float spacingZ) = 0;
+
     // Writes one Z-slice into the mask texture (uint8 class indices, PRD
     // #5.3.1) for the given volume. No-ops (with a logged reason) if
     // volumeId doesn't match the currently loaded volume, or if
@@ -149,22 +166,47 @@ public:
     virtual void zoomCamera(float wheelDeltaSign) = 0;
 
     // Selects which render pipeline drives renderFrame() (PRD §9 slice-
-    // panning gap, issue #37): 0 = Orbit3D (default -- the existing
-    // REQ-R06 orbit-camera raymarch view), 1 = AxialSlice2D (a real 2D
-    // single-slice cross-sectional view, see setAxialSliceIndex). An
-    // engine-owned uint32_t enum rather than a string, matching
-    // setColormapPreset's own reasoning -- an invalid value is rejected
-    // (logged), leaving the current mode unchanged. Safe to call before
-    // any volume is loaded -- like setWindowLevel/setColormapPreset, this
-    // only stores a plain value consumed by the next renderFrame().
+    // panning gap, issue #37; MPR + native-slice modes added 2026-08-27):
+    // 0 = Orbit3D (default -- the existing REQ-R06 orbit-camera raymarch
+    // view), 1 = Slice2D (a real 2D single-slice cross-sectional view of
+    // the canonical-oriented volume, along whichever axis setSliceAxis
+    // selected -- Axial/Sagittal/Coronal, see setSliceIndex/setSliceAxis),
+    // 2 = NativeSlice2D (the DICOM series' own original per-file slices,
+    // see loadNativeVolume/setNativeSliceIndex). An engine-owned uint32_t
+    // enum rather than a string, matching setColormapPreset's own
+    // reasoning -- an invalid value is rejected (logged), leaving the
+    // current mode unchanged. Safe to call before any volume is loaded --
+    // like setWindowLevel/setColormapPreset, this only stores a plain
+    // value consumed by the next renderFrame().
     virtual void setViewMode(uint32_t mode) = 0;
 
-    // Selects the Z slice (raw voxel index, not normalized) the
-    // AxialSlice2D view samples. No-op (logged) if no volume is loaded --
-    // there is no depth to clamp against yet, mirroring orbitCamera's
-    // no-volume no-op. Otherwise clamped to [0, depth-1]. On loadVolume,
-    // the engine defaults this to depth/2 (the volume's middle slice).
-    virtual void setAxialSliceIndex(uint32_t index) = 0;
+    // Selects the slice (raw voxel index, not normalized) the Slice2D view
+    // samples, along whichever axis setSliceAxis currently selects. No-op
+    // (logged) if no volume is loaded -- there is no dimension to clamp
+    // against yet, mirroring orbitCamera's no-volume no-op. Otherwise
+    // clamped to [0, dimension-1] for the current axis (depth for Axial,
+    // width for Sagittal, height for Coronal). On loadVolume, the engine
+    // defaults this to depth/2 (the volume's middle axial slice).
+    virtual void setSliceIndex(uint32_t index) = 0;
+
+    // Selects which physical axis the Slice2D view slices along (MPR,
+    // 2026-08-27 user request): 0 = Axial (fixes Z, the original single-
+    // axis behavior), 1 = Sagittal (fixes X), 2 = Coronal (fixes Y). An
+    // invalid value is rejected (logged), leaving the current axis
+    // unchanged. Changing axis resets setSliceIndex's value to the middle
+    // of the new axis's own valid range (its previous value may be out of
+    // range or anatomically meaningless for the new axis). No-op (logged)
+    // if no volume is loaded.
+    virtual void setSliceAxis(uint32_t axis) = 0;
+
+    // Selects the slice (raw voxel index into loadNativeVolume's own
+    // depth, not normalized) the NativeSlice2D view samples -- always
+    // scans the native volume's own Z/depth axis (its "depth" is whichever
+    // order the DICOM files were assembled in, not necessarily a real
+    // spatial axis for a reformatted series), no axis selection needed.
+    // No-op (logged) if no native volume is loaded. On loadNativeVolume,
+    // the engine defaults this to depth/2.
+    virtual void setNativeSliceIndex(uint32_t index) = 0;
 
     // Selects the raymarch step-count/quality tier (REQ-R04): 0=Low,
     // 1=Medium (default), 2=High. Trades image fidelity (banding, thin-

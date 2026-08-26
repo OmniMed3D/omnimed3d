@@ -34,6 +34,9 @@ public:
     void loadVolume(uint32_t volumeId, void const* data, size_t byteLength,
                      uint32_t width, uint32_t height, uint32_t depth,
                      float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) override;
+    void loadNativeVolume(uint32_t volumeId, void const* data, size_t byteLength,
+                            uint32_t width, uint32_t height, uint32_t depth,
+                            float spacingX, float spacingY, float spacingZ) override;
     void applyMaskSlice(uint32_t volumeId, uint32_t sliceIndex,
                          uint32_t width, uint32_t height,
                          void const* data, size_t byteLength) override;
@@ -42,7 +45,9 @@ public:
     void orbitCamera(float deltaYawPixels, float deltaPitchPixels) override;
     void zoomCamera(float wheelDeltaSign) override;
     void setViewMode(uint32_t mode) override;
-    void setAxialSliceIndex(uint32_t index) override;
+    void setSliceIndex(uint32_t index) override;
+    void setSliceAxis(uint32_t axis) override;
+    void setNativeSliceIndex(uint32_t index) override;
     void setQualityTier(uint32_t tier) override;
     void setShadingMode(uint32_t mode) override;
     void setExtinction(float extinction) override;
@@ -167,6 +172,13 @@ private:
     // (all null-guarded) -- loadVolume() calls this to replace a
     // previously-loaded volume's resources before creating new ones.
     void releaseVolumeResources();
+
+    // Releases nativeVolumeTexture_/nativeVolumeTextureView_/
+    // nativeBindGroup_ (all null-guarded) -- loadNativeVolume() calls this
+    // to replace a previously-loaded native volume's resources before
+    // creating new ones. Separate from releaseVolumeResources() since the
+    // two volumes are entirely independent GPU resources.
+    void releaseNativeVolumeResources();
 
     // One-time creation of the gradient-bake compute pipeline (issue #81's
     // own follow-up) -- called once from createPipeline(), analogous to
@@ -377,11 +389,49 @@ private:
     WGPUComputePipeline gradientBakePipeline_ = nullptr;
     WGPUBuffer gradientBakeParamsBuffer_ = nullptr;
 
-    // 0 = Orbit3D (default), 1 = AxialSlice2D -- see setViewMode().
+    // 0 = Orbit3D (default), 1 = Slice2D, 2 = NativeSlice2D -- see setViewMode().
     uint32_t viewMode_ = 0;
-    // Raw voxel Z index for the AxialSlice2D view -- defaulted to
-    // depth/2 on loadVolume(), see setAxialSliceIndex().
-    uint32_t axialSliceIndex_ = 0;
+    // Raw voxel index for the Slice2D view, along whichever axis
+    // sliceAxis_ currently selects -- defaulted to depth/2 (Axial) on
+    // loadVolume(), see setSliceIndex()/setSliceAxis().
+    uint32_t sliceIndex_ = 0;
+    // 0 = Axial (fixes Z), 1 = Sagittal (fixes X), 2 = Coronal (fixes Y) --
+    // MPR (2026-08-27 user request). See setSliceAxis().
+    uint32_t sliceAxis_ = 0;
+
+    // Native-slice volume (MPR + native-slice feature, 2026-08-27 user
+    // request) -- the DICOM series' own original per-file slices, entirely
+    // separate from volumeTexture_ (which loadVolume() may have received
+    // already trilinear-resampled onto a canonical LPS grid, see the Parse
+    // Worker's oblique-series fallback). No mask/gradient texture of its
+    // own: NativeSlice2D reuses maskTexture_/gradientTexture_/
+    // lutTexture_/preintegratedLutTexture_ from whatever the current
+    // loadVolume() call set up (mask overlay is always forced off for this
+    // view, so their contents don't matter, but the bind-group-layout
+    // slots must still be satisfied), so loadNativeVolume() is a no-op
+    // (logged) until at least one loadVolume() call has happened.
+    WGPUTexture nativeVolumeTexture_ = nullptr;
+    WGPUTextureView nativeVolumeTextureView_ = nullptr;
+    // Own bind group (distinct from bindGroup_) since only the volume
+    // texture view differs -- rebuilt by loadNativeVolume() itself, not
+    // rebuildBindGroup() (which only tracks volumeTextureView_/
+    // maskTextureView_ for the primary volume).
+    WGPUBindGroup nativeBindGroup_ = nullptr;
+    bool hasNativeVolume_ = false;
+    uint32_t nativeVolumeWidth_ = 0;
+    uint32_t nativeVolumeHeight_ = 0;
+    uint32_t nativeVolumeDepth_ = 0;
+    // Physical spacing, kept (unlike the primary volume, which derives its
+    // "contain" letterbox fit from aabbMax_-aabbMin_, a camera-framing
+    // side effect loadNativeVolume() has no reason to compute) so
+    // renderFrame() can size the NativeSlice2D view's own letterbox fit.
+    float nativeSpacingX_ = 1.0F;
+    float nativeSpacingY_ = 1.0F;
+    float nativeSpacingZ_ = 1.0F;
+    // Raw voxel index into the native volume's own depth (its "depth" is
+    // whichever order the DICOM files were assembled in) -- defaulted to
+    // depth/2 on loadNativeVolume(), see setNativeSliceIndex().
+    uint32_t nativeSliceIndex_ = 0;
 
     // Camera + AABB. aabbMin_/aabbMax_ and the cameraYaw_/cameraPitch_/
     // cameraDistance_ defaults are (re)framed per loadVolume() call (see
