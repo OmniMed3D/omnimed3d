@@ -6,6 +6,36 @@ records what changed between one committed snapshot and the next, in
 addition to whatever "Last Updated" date `PRD.md`'s own header table
 carries.
 
+## 2026-08-27 — v1.0 Final: history stripped down to conclusions
+
+For the first-submission milestone (§8), the document was bumped from
+v0.9/Draft to v1.0/Final and cleaned of the inline "Updated/Decided/
+Resolved (date)" annotations accumulated during drafting — the substance
+of every decision is kept, only the process narration is removed (this
+file remains the record of that narration). Notable changes:
+
+- §5.2 (REQ-A04/A05), §5.3 (REQ-C04), §5.3.1 (REQ-C01 table), §5.3.2
+  (mask transport), §6.1 (rendering stack row), §6.2 (parser
+  architecture): date-stamped "Updated/Decided/Correction (2026-08-XX)"
+  prefixes removed, substance kept as plain stated fact. §5.3.1's
+  `(Finalized)`/`(New)` per-parameter tags removed for the same reason —
+  redundant once the whole document is Final.
+- §10.2 "Open Questions" split into **§10.2 Key Decisions** (substantive
+  resolved content not otherwise captured elsewhere: dataset-choice
+  rationale, accuracy threshold, upscaling location, second-model
+  candidate) and **§10.3 Open Questions** (genuinely still-open items:
+  Regulatory Compliance, I18n/multi-modal, Minimum Hardware Specs,
+  Optional Backend Adapter Priority). "Primary Target Organ" and
+  "Training & Evaluation Datasets" rows removed outright — fully
+  duplicated by REQ-A01's own row.
+- §6.3 "Mask Upscaling Computational Cost" and §10.1's matching Risk row
+  updated from "to be decided" framing to the actual resolved outcome
+  (WASM loop, 1-4ms/slice) — both had gone stale after the Upscaling
+  Computation Location decision landed without these being revisited.
+- No requirement, contract value, or decided number changed — this pass
+  only removed *how a conclusion was reached and when*, never the
+  conclusion itself.
+
 ## 2026-08-21 (later same day) — Accuracy degradation threshold team-confirmed
 
 The proposal from the entry directly below ("Acceptable Accuracy
