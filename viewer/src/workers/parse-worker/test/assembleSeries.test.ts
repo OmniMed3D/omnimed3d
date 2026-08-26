@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DicomWasmImageInfo, ImageParser } from "../src/wasm.js";
 import { assembleSeries, InconsistentSeriesError } from "../src/pipeline.js";
+import { float32ToFloat16 } from "../src/halfFloat.js";
 
 /**
  * assembleSeries's own job (sorting, dimension-consistency checking,
@@ -27,6 +28,7 @@ function makeFakeSlice(
   columns = 2,
   orientation?: { row: [number, number, number]; column: [number, number, number] },
   position?: [number, number, number],
+  windowLevel?: { center: number; width: number },
 ): DicomWasmImageInfo {
   const pixelCount = rows * columns;
   const raw = new Int16Array(pixelCount).fill(rawValue);
@@ -47,6 +49,10 @@ function makeFakeSlice(
     imagePositionPatient: position ?? [0, 0, 0],
     hasImageOrientationPatient: orientation !== undefined,
     hasImagePositionPatient: position !== undefined,
+    windowCenter: windowLevel?.center ?? 0,
+    windowWidth: windowLevel?.width ?? 0,
+    hasWindowCenter: windowLevel !== undefined,
+    hasWindowWidth: windowLevel !== undefined,
     pixelData: new Uint8Array(raw.buffer),
   };
 }
@@ -78,6 +84,10 @@ function makeFakeSliceFromValues(
     imagePositionPatient: position,
     hasImageOrientationPatient: true,
     hasImagePositionPatient: true,
+    windowCenter: 0,
+    windowWidth: 0,
+    hasWindowCenter: false,
+    hasWindowWidth: false,
     pixelData: new Uint8Array(raw.buffer),
   };
 }
@@ -105,7 +115,7 @@ describe("assembleSeries", () => {
     const sliceC = makeFakeSlice(4, 2); // HU=4 -> 0x4400
     const wasm = fakeParserFor([sliceA, sliceB, sliceC]);
 
-    const { sliceMessages, volume, orderingMethod } = assembleSeries(
+    const { sliceMessages, volume, nativeVolume, orderingMethod } = assembleSeries(
       wasm,
       [new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)],
       "vol-1",
@@ -135,6 +145,20 @@ describe("assembleSeries", () => {
     expect(Array.from(voxels.subarray(0, 4))).toEqual([0x4000, 0x4000, 0x4000, 0x4000]); // depth 0: sliceB
     expect(Array.from(voxels.subarray(4, 8))).toEqual([0x4400, 0x4400, 0x4400, 0x4400]); // depth 1: sliceC
     expect(Array.from(voxels.subarray(8, 12))).toEqual([0x3c00, 0x3c00, 0x3c00, 0x3c00]); // depth 2: sliceA
+
+    // MPR + native-slice feature (2026-08-27) -- same order/dims as the
+    // main volume for this identity-transform case (no orientation tags,
+    // so nothing to normalize); the two paths only actually diverge in
+    // pixel data when a real flip/transpose happens, see the dedicated
+    // test below.
+    expect(nativeVolume.type).toBe("native-volume-ready");
+    expect(nativeVolume.width).toBe(2);
+    expect(nativeVolume.height).toBe(2);
+    expect(nativeVolume.depth).toBe(3);
+    const nativeVoxels = new Uint16Array(nativeVolume.data);
+    expect(Array.from(nativeVoxels.subarray(0, 4))).toEqual([0x4000, 0x4000, 0x4000, 0x4000]);
+    expect(Array.from(nativeVoxels.subarray(4, 8))).toEqual([0x4400, 0x4400, 0x4400, 0x4400]);
+    expect(Array.from(nativeVoxels.subarray(8, 12))).toEqual([0x3c00, 0x3c00, 0x3c00, 0x3c00]);
   });
 
   it("rejects a series with inconsistent slice dimensions", () => {
@@ -148,6 +172,32 @@ describe("assembleSeries", () => {
   it("rejects an empty file list", () => {
     const wasm = fakeParserFor([]);
     expect(() => assembleSeries(wasm, [], "v")).toThrow(InconsistentSeriesError);
+  });
+
+  // Bug report, 2026-08-27: UPENN-GBM brain MR rendered as a blown-out
+  // white block under the app's CT-calibrated "Brain" preset -- MR pixel
+  // values aren't Hounsfield Units, so the file's own VOI LUT window
+  // (WindowCenter/WindowWidth, DICOM PS3.3 C.11.2) is the only reliable
+  // display hint. assembleSeries takes it from the first slice, same
+  // pattern as spacingZ/sliceThickness.
+  it("carries the first slice's WindowCenter/WindowWidth into the volume-ready message when present", () => {
+    const sliceA = makeFakeSlice(1, 1, 2, 2, undefined, undefined, { center: 212, width: 493 });
+    const wasm = fakeParserFor([sliceA]);
+
+    const { volume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
+
+    expect(volume.windowCenter).toBe(212);
+    expect(volume.windowWidth).toBe(493);
+  });
+
+  it("leaves windowCenter/windowWidth undefined when the file carries no VOI LUT window", () => {
+    const sliceA = makeFakeSlice(1, 1, 2, 2);
+    const wasm = fakeParserFor([sliceA]);
+
+    const { volume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
+
+    expect(volume.windowCenter).toBeUndefined();
+    expect(volume.windowWidth).toBeUndefined();
   });
 
   it("orders slices geometrically by ImagePositionPatient when every slice has orientation/position, overriding instanceNumber", () => {
@@ -189,7 +239,7 @@ describe("assembleSeries", () => {
     const flipped = makeFakeSliceFromValues([1, 2, 3, 4, 5, 6], 2, 3, { row: [-1, 0, 0], column: [0, -1, 0] });
     const wasm = fakeParserFor([flipped]);
 
-    const { sliceMessages, volume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
+    const { sliceMessages, volume, nativeVolume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
 
     expect(sliceMessages[0]?.width).toBe(3);
     expect(sliceMessages[0]?.height).toBe(2);
@@ -198,6 +248,15 @@ describe("assembleSeries", () => {
     expect(volume.height).toBe(2);
     expect(volume.spacingX).toBe(0.6); // pixelSpacingColumn, unaffected by flips (only transpose swaps these)
     expect(volume.spacingY).toBe(0.5); // pixelSpacingRow
+
+    // MPR + native-slice feature (2026-08-27) -- nativeVolume is the
+    // literal source pixel data, untouched by the 180-degree flip
+    // `volume`/`sliceMessages` normalize away. This is the case that
+    // actually distinguishes the two (the identity-transform test above
+    // can't, since there's nothing to normalize there).
+    expect(nativeVolume.width).toBe(3);
+    expect(nativeVolume.height).toBe(2);
+    expect(Array.from(new Uint16Array(nativeVolume.data))).toEqual([1, 2, 3, 4, 5, 6].map((v) => float32ToFloat16(v)));
   });
 
   it("normalizes a transposed orientation's pixel data and dimensions/spacing before assembling", () => {
@@ -216,5 +275,85 @@ describe("assembleSeries", () => {
     expect(volume.height).toBe(3);
     expect(volume.spacingX).toBe(0.5); // pixelSpacingRow -- swapped in because of the transpose
     expect(volume.spacingY).toBe(0.6); // pixelSpacingColumn
+  });
+
+  // Oblique-resample fallback (2026-08-27, bug report: UPENN-GBM brain MR --
+  // real neuro MR is routinely angled a few to ~20 degrees off axial, which
+  // computeOrientationTransform's axis-aligned-only fast path rejects
+  // outright). A 30-degree in-plane rotation about Z (row/column cosines
+  // rotated, slice normal stays exactly Z) -- same geometry hand-verified
+  // in orientation.test.ts's computeObliqueResampleGrid tests.
+  describe("oblique acquisitions", () => {
+    const COS30 = Math.sqrt(3) / 2;
+    const SIN30 = 0.5;
+    const OBLIQUE: { row: [number, number, number]; column: [number, number, number] } = {
+      row: [COS30, SIN30, 0],
+      column: [-SIN30, COS30, 0],
+    };
+
+    it("resamples an oblique series onto a canonical grid instead of rejecting it", () => {
+      const UNIFORM_HU = 5; // rawValue=5, rescaleSlope=1/intercept=0 (makeFakeSlice's default)
+      const sliceSpacing = 2;
+      const slices = [0, 1, 2].map((z) => makeFakeSlice(UNIFORM_HU, z + 1, 4, 4, OBLIQUE, [0, 0, z * sliceSpacing]));
+      const wasm = fakeParserFor(slices);
+
+      const { sliceMessages, volume, nativeVolume, orderingMethod } = assembleSeries(
+        wasm,
+        slices.map(() => new Uint8Array(0)),
+        "vol-oblique",
+      );
+
+      expect(orderingMethod).toBe("oblique-resample");
+
+      // Hand-verified bounding box for a 4x4x3 stack rotated 30 degrees
+      // about Z, using makeFakeSlice's fixed pixelSpacingColumn=0.6/
+      // pixelSpacingRow=0.5 and sliceSpacing=2 -- grid dims are the
+      // physical extent divided by the *output* spacing (not 1), then
+      // round()+1: X extent = 1.55884572 - (-0.75) = 2.30884572, /0.6 =
+      // 3.8480762 -> round()+1 = 5; Y extent = 2.1990381, /0.5 = 4.3980762
+      // -> round()+1 = 5; Z extent = 2*2 = 4, /2 = 2 -> round()+1 = 3.
+      expect(volume.width).toBe(5);
+      expect(volume.height).toBe(5);
+      expect(volume.depth).toBe(3);
+      expect(volume.spacingX).toBe(0.6); // pixelSpacingColumn, unrotated magnitude
+      expect(volume.spacingY).toBe(0.5); // pixelSpacingRow, unrotated magnitude
+      expect(volume.spacingZ).toBeCloseTo(sliceSpacing, 6); // derived via dot-product subtraction, tiny float error expected
+      expect(sliceMessages).toHaveLength(3);
+
+      // The source stack is uniformly UNIFORM_HU everywhere -- any output
+      // voxel whose trilinear neighborhood stays fully inside the source
+      // bounding box reproduces that exact value untouched. If resampling
+      // were broken (e.g. producing all-zero output), no output voxel
+      // would ever hit this exact value.
+      const middleSlice = new Float32Array(sliceMessages[1]?.data as ArrayBuffer);
+      expect(Math.max(...middleSlice)).toBe(UNIFORM_HU);
+
+      // MPR + native-slice feature (2026-08-27) -- nativeVolume is the
+      // pre-resampling source stack (4x4x3, native acquisition order/
+      // resolution), entirely unlike volume's reformatted 5x5x3 grid.
+      expect(nativeVolume.width).toBe(4);
+      expect(nativeVolume.height).toBe(4);
+      expect(nativeVolume.depth).toBe(3);
+      const nativeVoxels = new Uint16Array(nativeVolume.data);
+      expect(nativeVoxels.length).toBe(4 * 4 * 3);
+      expect(Array.from(nativeVoxels)).toEqual(new Array(4 * 4 * 3).fill(float32ToFloat16(UNIFORM_HU)));
+    });
+
+    it("rejects an oblique series whose slices have mutually inconsistent orientation", () => {
+      const sliceA = makeFakeSlice(1, 1, 4, 4, OBLIQUE, [0, 0, 0]);
+      const rotatedDifferently: { row: [number, number, number]; column: [number, number, number] } = {
+        row: [0, 1, 0], // 90 degrees further than OBLIQUE
+        column: [-1, 0, 0],
+      };
+      // Individually axis-aligned, but inconsistent with sliceA's oblique
+      // orientation -- assembleAxisAlignedSeries's own per-slice
+      // classification would throw UnsupportedOrientationError on sliceA
+      // first, routing the whole series into assembleObliqueSeries, whose
+      // own cross-slice consistency check must then catch the mismatch.
+      const sliceB = makeFakeSlice(1, 2, 4, 4, rotatedDifferently, [0, 0, 2]);
+      const wasm = fakeParserFor([sliceA, sliceB]);
+
+      expect(() => assembleSeries(wasm, [new Uint8Array(0), new Uint8Array(0)], "v")).toThrow(InconsistentSeriesError);
+    });
   });
 });

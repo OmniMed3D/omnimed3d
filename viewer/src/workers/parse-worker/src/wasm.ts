@@ -29,6 +29,10 @@ const IMAGE_INFO_OFFSET = {
   imagePositionPatient: 120,
   hasImageOrientationPatient: 144,
   hasImagePositionPatient: 148,
+  windowCenter: 152,
+  windowWidth: 160,
+  hasWindowCenter: 168,
+  hasWindowWidth: 172,
 } as const;
 
 /** Mirrors DicomParseError's declaration order (position + 1; 0 = success) in dicom-parser/include/dicom-parser/DicomFile.hpp. */
@@ -61,6 +65,11 @@ export interface DicomWasmImageInfo {
   imagePositionPatient: [number, number, number];
   hasImageOrientationPatient: boolean;
   hasImagePositionPatient: boolean;
+  /** VOI LUT display window (DICOM PS3.3 C.11.2), same units as the caller's computed HU. Meaningless unless hasWindowCenter/hasWindowWidth. */
+  windowCenter: number;
+  windowWidth: number;
+  hasWindowCenter: boolean;
+  hasWindowWidth: boolean;
   /** Copied out of WASM memory -- safe to use after the module call returns. */
   pixelData: Uint8Array;
 }
@@ -167,6 +176,10 @@ export class DicomParserWasm implements ImageParser {
         ) as DicomWasmImageInfo["imagePositionPatient"],
         hasImageOrientationPatient: view.getUint32(IMAGE_INFO_OFFSET.hasImageOrientationPatient, true) !== 0,
         hasImagePositionPatient: view.getUint32(IMAGE_INFO_OFFSET.hasImagePositionPatient, true) !== 0,
+        windowCenter: view.getFloat64(IMAGE_INFO_OFFSET.windowCenter, true),
+        windowWidth: view.getFloat64(IMAGE_INFO_OFFSET.windowWidth, true),
+        hasWindowCenter: view.getUint32(IMAGE_INFO_OFFSET.hasWindowCenter, true) !== 0,
+        hasWindowWidth: view.getUint32(IMAGE_INFO_OFFSET.hasWindowWidth, true) !== 0,
         pixelData,
       };
     } finally {
