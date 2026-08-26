@@ -70,6 +70,8 @@ export interface DicomWasmImageInfo {
   windowWidth: number;
   hasWindowCenter: boolean;
   hasWindowWidth: boolean;
+  /** DICOM Modality (PS3.3 C.7.3.1.1.1, e.g. "CT", "MR"); empty string if the tag was absent. */
+  modality: string;
   /** Copied out of WASM memory -- safe to use after the module call returns. */
   pixelData: Uint8Array;
 }
@@ -92,6 +94,8 @@ interface EmscriptenModule {
     dataSetOffset: number,
     transferSyntaxUIDPtr: number,
     outPtr: number,
+    outModalityBufPtr: number,
+    outModalityBufLen: number,
   ): number;
 }
 
@@ -130,6 +134,11 @@ export class DicomParserWasm implements ImageParser {
     const tsBufPtr = m._malloc(tsBufLen);
     const structSize = m._dicom_wasm_image_info_size();
     const outStructPtr = m._malloc(structSize);
+    // Modality (CS) is at most 16 chars per spec; 32 leaves headroom for a
+    // non-conformant file without truncating (DicomParserWasm.cpp truncates
+    // safely either way).
+    const modalityBufLen = 32;
+    const modalityBufPtr = m._malloc(modalityBufLen);
 
     try {
       m.HEAPU8.set(fileBytes, dataPtr);
@@ -140,10 +149,24 @@ export class DicomParserWasm implements ImageParser {
       }
       const dataSetOffset = new DataView(m.HEAPU8.buffer, outOffsetPtr, 4).getUint32(0, true);
 
-      const imageRc = m._dicom_wasm_parse_image(dataPtr, fileBytes.length, dataSetOffset, tsBufPtr, outStructPtr);
+      const imageRc = m._dicom_wasm_parse_image(
+        dataPtr,
+        fileBytes.length,
+        dataSetOffset,
+        tsBufPtr,
+        outStructPtr,
+        modalityBufPtr,
+        modalityBufLen,
+      );
       if (imageRc !== 0) {
         throw new DicomParseError(imageRc, "parseImageInfo");
       }
+
+      const modalityBytes = m.HEAPU8.subarray(modalityBufPtr, modalityBufPtr + modalityBufLen);
+      const modalityNul = modalityBytes.indexOf(0);
+      const modality = new TextDecoder().decode(
+        modalityBytes.subarray(0, modalityNul === -1 ? modalityBytes.length : modalityNul),
+      );
 
       const view = new DataView(m.HEAPU8.buffer, outStructPtr, structSize);
       const pixelDataOffset = view.getUint32(IMAGE_INFO_OFFSET.pixelDataOffset, true);
@@ -180,6 +203,7 @@ export class DicomParserWasm implements ImageParser {
         windowWidth: view.getFloat64(IMAGE_INFO_OFFSET.windowWidth, true),
         hasWindowCenter: view.getUint32(IMAGE_INFO_OFFSET.hasWindowCenter, true) !== 0,
         hasWindowWidth: view.getUint32(IMAGE_INFO_OFFSET.hasWindowWidth, true) !== 0,
+        modality,
         pixelData,
       };
     } finally {
@@ -187,6 +211,7 @@ export class DicomParserWasm implements ImageParser {
       m._free(outOffsetPtr);
       m._free(tsBufPtr);
       m._free(outStructPtr);
+      m._free(modalityBufPtr);
     }
   }
 }

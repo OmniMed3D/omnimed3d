@@ -256,6 +256,14 @@ std::vector<std::byte> buildUndefinedLengthSequenceBuffer() {
     appendStr("1.2.840.10008.1.2");  // Implicit VR Little Endian, 17 chars
     bytes.push_back(0);              // pad to even length (18)
 
+    // Modality (CS) -- "MR", matching the real UPENN-GBM series this
+    // fixture models. Exercises the same auto-select-vs-CT-preset fix this
+    // WindowCenter/WindowWidth pair does (bug report, 2026-08-27: a plain
+    // "has a VOI LUT window" check wrongly caught real CT series too, which
+    // also commonly carry one -- Modality is the actual signal callers need).
+    appendImplicitElement(0x0008, 0x0060, 2);  // Modality = "MR"
+    appendStr("MR");
+
     // Main dataset, Implicit VR:
     // (0008,1140) ReferencedImageSequence, undefined length --
     //   Item (FFFE,E000), undefined length --
@@ -331,6 +339,7 @@ void testUndefinedLengthSequenceSkipped() {
     check(image->hasWindowWidth, "hasWindowWidth");
     checkNear(image->windowCenter, 212.0, 1e-9, "windowCenter");
     checkNear(image->windowWidth, 493.0, 1e-9, "windowWidth");
+    checkEq(image->modality, "MR", "modality");
 }
 
 void testUnsupportedTransferSyntax() {

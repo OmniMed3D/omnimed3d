@@ -67,6 +67,17 @@
  * File" as that volume's starting preset instead of leaving Soft Tissue
  * selected -- a volume with no file window/level (the common CT case)
  * still starts on Soft Tissue, unchanged.
+ *
+ * User report, 2026-08-27 (follow-up to the above, same day): "has a file
+ * window/level" turned out to be a bad proxy for "likely non-HU data" on
+ * its own -- this app's own LIDC-IDRI Lung1/Lung2 demo CTs both carry a
+ * VOI LUT window too (real CT commonly does), so both were silently
+ * starting on "From File" instead of their ordinary CT presets. Fixed by
+ * reading the file's actual Modality tag (added to the shared DICOM
+ * parser for this) instead: setFileWindowLevel now only auto-applies
+ * "From File" when Modality names something other than CT (e.g. MR);
+ * unknown/absent Modality falls back to the plain-CT behavior (stays on
+ * Soft Tissue) rather than guessing. See setFileWindowLevel's own comment.
  */
 
 const DEFAULT_WINDOW_CENTER = 40;
@@ -320,12 +331,19 @@ function applyFromFilePreset(center: number, width: number): void {
 // and clears any previous volume's stale stored value rather than leaving
 // it selectable for a series it no longer describes.
 //
-// Deliberately does NOT apply the value or touch the active preset --
-// see this module's header comment (2026-08-27 follow-up) for why an
-// auto-applied override was the wrong design (loses the value permanently
-// once the user picks anything else, and looks wrong as the first-seen 3D
-// Orbit view). The user opts in via the "From File" option instead.
-export function setFileWindowLevel(center: number | undefined, width: number | undefined): void {
+// Auto-applies as the starting preset (20e99bc) only when `modality` names
+// something other than CT -- user report, 2026-08-27 (follow-up to
+// 20e99bc): "does this file carry a VOI LUT window" turned out to be a bad
+// signal for "is this non-HU data" on its own, since real CT series
+// commonly carry one too (this app's own LIDC-IDRI Lung1/Lung2 demo CTs
+// do), which was silently overriding their ordinary CT presets with
+// whatever per-slice window the scanner happened to recommend. Modality
+// (DICOM PS3.3 C.7.3.1.1.1) is the actual signal; unknown/absent modality
+// (empty string) falls back to the pre-this-feature default (stays on
+// Soft Tissue, same as the plain CT case) rather than guessing either way.
+// "From File" stays selectable from the dropdown regardless -- this only
+// decides what the *first-seen* view starts on.
+export function setFileWindowLevel(center: number | undefined, width: number | undefined, modality?: string): void {
   const option = document.getElementById("from-file-preset-option") as HTMLOptionElement | null;
   if (center === undefined || width === undefined) {
     currentFileWindowLevel = null;
@@ -349,7 +367,11 @@ export function setFileWindowLevel(center: number | undefined, width: number | u
     option.disabled = false;
     option.title = `Center ${center} / Width ${width} -- this series' own DICOM VOI LUT window`;
   }
-  applyFromFilePreset(center, width);
+  const normalizedModality = modality?.trim().toUpperCase();
+  const isKnownNonCT = normalizedModality !== undefined && normalizedModality !== "" && normalizedModality !== "CT";
+  if (isKnownNonCT) {
+    applyFromFilePreset(center, width);
+  }
 }
 
 export function setupWindowLevelControls(): void {
