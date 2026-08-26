@@ -4,7 +4,7 @@ A shared C++20 DICOM parsing library, consumed by two independent targets:
 
 - OmniMed3D-Engine's native dev/test tooling (the `dicom_inspect` CLI in
   this repo, and eventually `engine/tests/parity/` fixtures).
-- The browser Parse Worker, via a WASM build.
+- The browser [Parse Worker](../viewer/src/workers/parse-worker/README.md), via a WASM build.
 
 It never performs filesystem I/O itself — every entry point parses from an
 in-memory buffer the caller already owns. That's what makes the same code

@@ -83,14 +83,14 @@ a committed schedule:
 
 ## Monorepo layout
 
-| Path                                          | What it is                                                                                                                                                                                                                                                  | Owner                                               |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| [`engine/`](engine/README.md)                 | The rendering core: a from-scratch C++20 engine with a Vulkan (native) + WebGPU/WASM (browser) RHI abstraction. Volume rendering, clinical window/level, the mask-overlay compositor. See [`engine/docs/RENDERING_SPEC.md`](engine/docs/RENDERING_SPEC.md). | `@nowead`                                           |
-| [`viewer/`](viewer/README.md)                 | The web application shell wrapping the engine's WASM module, plus the Parse Worker (DICOM → Hounsfield Units) and [Inference Worker](viewer/src/workers/inference-worker/README.md) (ONNX Runtime Web segmentation) it hosts. An npm workspace — see its own README for the full build/test setup. | `@nowead` (Inference Worker subtree: `@hyuniverse`) |
-| [`dicom-parser/`](dicom-parser/README.md)     | A shared C++20 DICOM parsing library, compiled to both a native target (engine dev/test tooling) and WASM (the Parse Worker) — one parser, not two independent implementations.                                                                             | `@nowead`                                           |
-| [`ai-pipeline/`](ai-pipeline/README.md)       | Offline model work: [ONNX conversion](ai-pipeline/conversion/README.md), [PTQ quantization](ai-pipeline/quantization/README.md), Dice/IoU accuracy verification. Produces the static `.onnx` files the Inference Worker loads — no runtime server involved. | `@hyuniverse`                                       |
-| [`test-data/`](test-data/lidc_idri/README.md) | Shared, real (de-identified) DICOM sample data, tracked via Git LFS.                                                                                                                                                                                        | `@nowead`                                           |
-| `infra/`                                      |                                                                                                                                                                                                                                                             | `@hyuniverse`                                       |
+| Path | What it is | Owner |
+| --- | --- | --- |
+| [`engine/`](engine/README.md) | The rendering core: a from-scratch C++20 engine with a Vulkan (native) + WebGPU/WASM (browser) RHI abstraction. Volume rendering, clinical window/level, the mask-overlay compositor. See [`engine/docs/RENDERING_SPEC.md`](engine/docs/RENDERING_SPEC.md). | `@nowead` |
+| [`viewer/`](viewer/README.md) | The web application shell wrapping the engine's WASM module, plus the Parse Worker (DICOM → Hounsfield Units) and [Inference Worker](viewer/src/workers/inference-worker/README.md) (ONNX Runtime Web segmentation) it hosts. An npm workspace — see its own README for the full build/test setup. | `@nowead` (Inference Worker subtree: `@hyuniverse`) |
+| [`dicom-parser/`](dicom-parser/README.md) | A shared C++20 DICOM parsing library, compiled to both a native target (engine dev/test tooling) and WASM (the Parse Worker) — one parser, not two independent implementations. | `@nowead` |
+| [`ai-pipeline/`](ai-pipeline/README.md) | Offline model work: [ONNX conversion](ai-pipeline/conversion/README.md), [PTQ quantization](ai-pipeline/quantization/README.md), Dice/IoU accuracy verification. Produces the static `.onnx` files the Inference Worker loads — no runtime server involved. | `@hyuniverse` |
+| [`test-data/`](test-data/lidc_idri/README.md) | Shared, real (de-identified) DICOM sample data, tracked via Git LFS. | `@nowead` |
+| `infra/` | | `@hyuniverse` |
 
 See [`.github/CODEOWNERS`](.github/CODEOWNERS) for the exact review-routing rules.
 
