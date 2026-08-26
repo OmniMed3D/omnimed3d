@@ -1,34 +1,45 @@
 # LIDC-IDRI demo CT series
 
-`LIDC-IDRI-0001/` is one real, de-identified patient CT series (133
-axial slices, 512×512) from the LIDC-IDRI collection. Tracked via [Git
-LFS](../../.gitattributes) rather than a plain blob, so it doesn't
-permanently bloat every clone's `.git` history the way a normal commit
-of ~68MB of binary data would.
+Three real, de-identified patient CT series from the LIDC-IDRI
+collection, one per `LIDC-IDRI-000{1,2,3}/` subdirectory:
+
+| Series | Slices | Size |
+| --- | --- | --- |
+| `LIDC-IDRI-0001/` | 133 | ~68MB |
+| `LIDC-IDRI-0002/` | 261 | ~132MB |
+| `LIDC-IDRI-0003/` | 140 | ~71MB |
+
+(~271MB total). Tracked via [Git LFS](../../.gitattributes) rather than
+a plain blob, so it doesn't permanently bloat every clone's `.git`
+history the way a normal commit of that much binary data would.
 
 Lives at the repo root (not under `engine/`) because it's a shared,
 cross-module resource, not engine-only — mirroring `dicom-parser/`'s own
 "shared, one owner" precedent (see `.github/CODEOWNERS`):
 
-- **engine/viewer**: the "Load Demo CT" button
-  (`viewer/src/shell/demoCtControls.ts`) loads this series so the volume
-  renderer can be shown off with real patient-scale data, which a
-  synthetic or single-slice fixture (see
+- **engine/viewer**: the "Load Demo CT" toggle
+  (`viewer/src/shell/demoCtControls.ts`) loads one of these three series
+  (one button each) so the volume renderer can be shown off with real
+  patient-scale data, which a synthetic or single-slice fixture (see
   `engine/tests/fixtures/CT_small.dcm`) can't do. Synced into the
   viewer's servable `public/` tree via `npm run sync-demo-ct`
   (`viewer/scripts/sync-demo-ct.mjs`), not committed there a second time.
 - **ai-pipeline**: `docs/verification/inference-worker.md` already
-  references specific instances from this same patient
+  references specific instances from `LIDC-IDRI-0001`
   (`LIDC-IDRI-0001_inst00xx`) for inference-worker verification, and
   `ai-pipeline/quantization/`'s own calibration pool draws from the same
   LIDC-IDRI collection (see `ai-pipeline/quantization/README.md`) --
-  this committed copy is available to reuse there too instead of
-  maintaining a separate local-only download for the same patient.
+  these committed copies are available to reuse there too instead of
+  maintaining separate local-only downloads for the same patients.
 
-Only the CT series was kept from this patient's original download — a
-separate 2-image Digital X-Ray (DX modality) study also exists for this
-patient in the source collection but isn't part of the CT volume and
-isn't included here.
+Only the CT series was kept from each patient's original download — a
+separate secondary study (Digital X-Ray/DX modality for 0001 and 0002,
+a small 5-image study for 0003) also exists for each patient in the
+source collection but isn't part of the CT volume and isn't included
+here. Disambiguated by reading each candidate series' DICOM Modality tag
+(0008,0060) directly rather than assuming folder order or slice count
+alone (0002's non-CT study happens to be a single file, easy to
+mistake for a truncated series otherwise).
 
 ## Getting this data
 

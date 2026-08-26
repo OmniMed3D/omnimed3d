@@ -100,14 +100,32 @@
           <label for="dicom-files-input" class="upload-btn secondary">Load DICOM files</label>
           <input id="dicom-files-input" type="file" multiple accept=".dcm,application/dicom" class="file-input" />
         </div>
-        <!-- Real, de-identified LIDC-IDRI patient CT (133 slices, CC BY
-             3.0 -- see test-data/lidc_idri/README.md) served
-             from public/demo-ct/ (npm run sync-demo-ct), not committed
-             there directly. demoCtControls.ts owns the button/status. -->
-        <div class="row">
-          <button type="button" id="load-demo-ct" class="upload-btn secondary gauge-btn">
+        <!-- Real, de-identified LIDC-IDRI patient CTs (CC BY 3.0 -- see
+             test-data/lidc_idri/README.md) served from public/demo-ct/
+             (npm run sync-demo-ct), not committed there directly.
+             User request, 2026-08-26: a 3-way toggle (one series each)
+             instead of a single "Load Demo CT" button, reusing the
+             .preset-buttons active-state pattern (background/quality/
+             colormap presets) -- each stays independently re-selectable
+             after loading rather than becoming permanently disabled.
+             demoCtControls.ts owns the buttons/status. User request,
+             2026-08-26 (follow-up): a caption above the row so these
+             three read as bundled sample data rather than real loaded
+             patients before any attribution text has appeared yet (that
+             only shows up in #demo-ct-status after a series loads). -->
+        <p class="hint-text">Demo CT (sample data)</p>
+        <div class="row preset-buttons demo-ct-buttons">
+          <button type="button" id="load-demo-ct" class="gauge-btn" data-demo-ct-id="LIDC-IDRI-0001">
             <span class="gauge-fill" aria-hidden="true"></span>
-            <span class="gauge-label">Load Demo CT</span>
+            <span class="gauge-label">Patient 1</span>
+          </button>
+          <button type="button" class="gauge-btn" data-demo-ct-id="LIDC-IDRI-0002">
+            <span class="gauge-fill" aria-hidden="true"></span>
+            <span class="gauge-label">Patient 2</span>
+          </button>
+          <button type="button" class="gauge-btn" data-demo-ct-id="LIDC-IDRI-0003">
+            <span class="gauge-fill" aria-hidden="true"></span>
+            <span class="gauge-label">Patient 3</span>
           </button>
         </div>
         <p id="demo-ct-status" class="hint-text"></p>
@@ -433,6 +451,17 @@
           <div class="row checkbox-row">
             <label for="mask-overlay-enabled">Show Mask</label>
             <input id="mask-overlay-enabled" type="checkbox" checked data-tooltip-key="mask-overlay-enabled" />
+          </div>
+          <!-- User request, 2026-08-27 (revised same day): resets every TF
+               Detail control above back to its own hardcoded default,
+               except Threshold, which resets to the active colormap
+               preset's own default instead (tfDetailControls.ts /
+               windowLevelControls.ts's getActiveThresholdDefault()) --
+               mirrors "Reset Clip"'s pattern (clipControls.ts). -->
+          <div class="row">
+            <button type="button" id="tf-reset" class="upload-btn secondary" data-tooltip-key="tf-reset">
+              Reset TF Detail
+            </button>
           </div>
         </details>
         <!-- Raymarch background color (rhi::Device::setBackgroundColor) --

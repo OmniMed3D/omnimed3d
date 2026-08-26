@@ -66,7 +66,7 @@ test("hu-slice messages sent before the model finishes loading are queued and st
 
   // The exact buggy click order: demo CT first, model second.
   await page.locator("#load-demo-ct").click();
-  await expect(page.locator("#load-demo-ct")).toHaveText("Demo CT loaded", { timeout: 60000 });
+  await expect(page.locator("#load-demo-ct")).toHaveClass(/active/, { timeout: 60000 });
 
   await page.locator("#load-demo-model").click();
   await expect

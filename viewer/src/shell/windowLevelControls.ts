@@ -14,6 +14,15 @@
  * export from the engine exists (or is needed) to sync this; both sides
  * just agree on the same default independently, the same way
  * `kDefaultColormapPreset` is a plain constant on the C++ side.
+ *
+ * User request, 2026-08-27: a preset click also syncs tfDetailControls.ts's
+ * #threshold slider (PRESET_THRESHOLDS below), the same way it already
+ * syncs #window-center/#window-width -- setColormapPreset() now applies a
+ * per-preset default Threshold natively (WebGPUDevice.cpp's
+ * ColormapPreset::threshold) so Bone actually shows the skeleton rather
+ * than the skin/fat surface in 3D Orbit; without this sync the slider
+ * would silently disagree with engine state after a preset click, same
+ * class of bug PRESET_WINDOW_LEVELS already exists to avoid.
  */
 
 const DEFAULT_WINDOW_CENTER = 40;
@@ -100,6 +109,23 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
   4: { center: 40, width: 400 }, // Grayscale
 };
 
+// Mirrors kColormapPresets[presetId].threshold (WebGPUDevice.cpp) -- kept
+// in sync here for the same reason PRESET_WINDOW_LEVELS is: setColormapPreset()
+// applies this natively (no readback export), but the #threshold slider
+// (tfDetailControls.ts) would otherwise go stale after a preset click, the
+// same desync bug PRESET_WINDOW_LEVELS's own header comment already
+// describes for center/width. Only Bone gets a nonzero default -- see
+// ColormapPreset's own comment in WebGPUDevice.cpp for why Lung/Brain are
+// deliberately left at 0 rather than given a value that looks like a fix
+// but isn't one.
+const PRESET_THRESHOLDS: Record<number, number> = {
+  0: 0.25, // Lung -- see ColormapPreset's own comment (WebGPUDevice.cpp) for why
+  1: 0.4, // Bone
+  2: 0, // Soft Tissue
+  3: 0, // Brain
+  4: 0, // Grayscale
+};
+
 // The engine's own default-on-load preset (kDefaultColormapPreset in
 // WebGPUDevice.cpp) -- Grayscale. Marked active on setup so the UI
 // agrees with engine state from the first frame, not just after a click.
@@ -116,10 +142,25 @@ const DEFAULT_PRESET_ID = 4;
 // `data-colormap-preset` so it's included in the same querySelectorAll
 // here) can drive the same active-state feedback when a custom color is
 // picked, without duplicating this query/toggle logic.
+let activePresetId: number | null = DEFAULT_PRESET_ID;
+
 export function setActivePreset(presetId: number | null): void {
+  activePresetId = presetId;
   document.querySelectorAll<HTMLButtonElement>("[data-colormap-preset]").forEach((button) => {
     button.classList.toggle("active", Number(button.dataset["colormapPreset"]) === presetId);
   });
+}
+
+// User request, 2026-08-27: "Reset TF Detail" (tfDetailControls.ts) should
+// put Threshold back at the *active preset's own* default (e.g. Bone's
+// 0.4), not always the plain hardcoded 0 -- otherwise resetting TF Detail
+// while Bone is selected would undo exactly the preset behavior
+// setColormapPreset() just set up. Returns undefined when no preset is
+// currently active (manually dragged Center/Width, or Custom, id 5, which
+// isn't in PRESET_THRESHOLDS) -- tfDetailControls.ts falls back to its own
+// hardcoded default in that case.
+export function getActiveThresholdDefault(): number | undefined {
+  return activePresetId === null ? undefined : PRESET_THRESHOLDS[activePresetId];
 }
 
 export function setupWindowLevelControls(): void {
@@ -173,6 +214,15 @@ export function setupWindowLevelControls(): void {
         widthInput.value = String(width);
         widthLabel.value = String(width);
       }
+
+      const presetThreshold = PRESET_THRESHOLDS[presetId];
+      const thresholdInput = document.getElementById("threshold") as HTMLInputElement | null;
+      const thresholdLabel = document.getElementById("threshold-value") as HTMLInputElement | null;
+      if (presetThreshold !== undefined && thresholdInput && thresholdLabel) {
+        thresholdInput.value = String(presetThreshold);
+        thresholdLabel.value = String(presetThreshold);
+      }
+
       setActivePreset(presetId);
     });
   });

@@ -60,6 +60,8 @@ const TOOLTIP_TEXT: Record<string, string> = {
     "Blend strength of the AI segmentation mask highlight over the volume. 0 hides it, 1 fully replaces the underlying color.",
   "mask-overlay-enabled":
     "Shows or hides the mask overlay entirely. Already-received mask data stays cached -- turning this back on redisplays it instantly, no re-inference needed.",
+  "tf-reset":
+    "Resets Extinction, Density Scale, Edge Emphasis, Occlusion Shading, and Mask Opacity/Show Mask to their defaults. Threshold resets to the active colormap preset's own default instead (e.g. Bone's 0.4), not 0.",
   "clip-x-min": "Clip box: minimum X bound (world mm).",
   "clip-x-max": "Clip box: maximum X bound (world mm).",
   "clip-y-min": "Clip box: minimum Y bound (world mm).",

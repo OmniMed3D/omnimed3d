@@ -70,9 +70,7 @@ test("Reload Volume is disabled until a volume loads, then re-applies a changed 
   expect(calledWith).toEqual([1, 4]);
 });
 
-test("Reload Volume also works after Load Demo CT, even though that button stays disabled once loaded", async ({
-  page,
-}) => {
+test("Reload Volume also works after Load Demo CT", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
@@ -88,7 +86,10 @@ test("Reload Volume also works after Load Demo CT, even though that button stays
   // 133 slices over the network takes materially longer than CT_small.dcm
   // -- 60s covers a slow CI runner, matching demo-ct-loader.spec.ts.
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/, 60000);
-  await expect(page.locator("#load-demo-ct")).toBeDisabled(); // demoCtControls.ts's own, known permanent-once-loaded state
+  // Toggle behavior (2026-08-26): re-selectable, not permanently disabled --
+  // .active is demoCtControls.ts's "this series is the one loaded" signal.
+  await expect(page.locator("#load-demo-ct")).toBeEnabled();
+  await expect(page.locator("#load-demo-ct")).toHaveClass(/active/);
 
   await expect(page.locator("#reload-volume")).toBeEnabled();
 

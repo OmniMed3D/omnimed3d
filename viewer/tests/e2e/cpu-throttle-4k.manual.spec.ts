@@ -59,7 +59,7 @@ test.describe("4x CPU throttle @ 2560x1440 (vsync-escaping resolution, PRD §9 i
     await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
     await page.locator("#load-demo-ct").click();
-    await expect(page.locator("#load-demo-ct")).toHaveText("Demo CT loaded", { timeout: 60000 });
+    await expect(page.locator("#load-demo-ct")).toHaveClass(/active/, { timeout: 60000 });
     await page.waitForTimeout(SETTLE_MS);
 
     const cdp = await page.context().newCDPSession(page);
@@ -91,7 +91,7 @@ test.describe("4x CPU throttle @ 2560x1440 (vsync-escaping resolution, PRD §9 i
     console.table(
       Object.entries(results).map(([condition, { fps, frameMs }]) => ({
         condition,
-        "FPS": fps.toFixed(1),
+        FPS: fps.toFixed(1),
         "Frame (ms)": frameMs.toFixed(3),
       })),
     );
