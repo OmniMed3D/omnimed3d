@@ -7,6 +7,16 @@
       "viewer/scripts/**",
       "viewer/*.config.ts"
     ],
-    "ignoreValues": []
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "width 0.2s ease",
+        "files": [
+          "viewer/src/shell/style.css"
+        ],
+        "createdAt": "2026-08-26T03:04:21.965Z",
+        "reason": "Pre-existing .gauge-fill progress overlay (not touched this session): absolutely-positioned self-contained fill strip inside .gauge-btn, inset:0, no sibling/ancestor reflow dependency -- width growth is the intended progress-bar metaphor, already documented in the surrounding comment, negligible blast radius"
+      }
+    ]
   }
 }

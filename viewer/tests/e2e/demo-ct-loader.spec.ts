@@ -6,6 +6,13 @@ import { expect, test } from "@playwright/test";
  * loads a real volume through the same engine_load_volume path the
  * file-picker uses, and shows the required CC BY 3.0 attribution.
  *
+ * User request, 2026-08-26: now a 3-way toggle (one series each), so
+ * "loaded" is asserted via the .active class (same idiom as
+ * rendering-quality-controls.spec.ts/clinical-shading-controls.spec.ts's
+ * preset-button checks) rather than a permanently-disabled button with
+ * "Demo CT loaded" text -- #load-demo-ct (data-demo-ct-id="LIDC-IDRI-0001")
+ * stays re-selectable afterward, matching its sibling series buttons.
+ *
  * Requires `npm run sync-demo-ct` to have been run first (not run
  * automatically by this test, matching how the engine WASM build is a
  * manual prerequisite rather than test-triggered) -- without it,
@@ -29,7 +36,7 @@ test("Load Demo CT loads a real volume and shows CC BY 3.0 attribution", async (
   await page.locator("#load-demo-ct").click();
   await expect(page.locator("#load-demo-ct")).toBeDisabled();
 
-  // 133 slices over the network takes materially longer than the 1-slice
+  // 261 slices over the network takes materially longer than the 1-slice
   // CT_small.dcm fixture other specs load -- 60s covers a slow CI runner.
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/, 60000);
   await page.waitForTimeout(500);
@@ -37,7 +44,9 @@ test("Load Demo CT loads a real volume and shows CC BY 3.0 attribution", async (
   const afterLoad = await canvas.screenshot();
   expect(beforeLoad.equals(afterLoad)).toBe(false);
 
-  await expect(page.locator("#load-demo-ct")).toHaveText("Demo CT loaded");
+  await expect(page.locator("#load-demo-ct")).toBeEnabled();
+  await expect(page.locator("#load-demo-ct")).toHaveClass(/active/);
+  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Patient 1");
   await expect(page.locator("#demo-ct-status")).toContainText("LIDC-IDRI");
   await expect(page.locator("#demo-ct-status")).toContainText("CC BY 3.0");
 
@@ -64,5 +73,6 @@ test("a missing demo-ct manifest shows a sync-demo-ct hint, not a generic error"
 
   // The button must re-enable so the user isn't stuck after a failure.
   await expect(page.locator("#load-demo-ct")).toBeEnabled();
-  await expect(page.locator("#load-demo-ct")).toHaveText("Load Demo CT");
+  await expect(page.locator("#load-demo-ct")).not.toHaveClass(/active/);
+  await expect(page.locator("#load-demo-ct .gauge-label")).toHaveText("Patient 1");
 });

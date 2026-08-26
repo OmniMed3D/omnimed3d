@@ -95,7 +95,8 @@ struct RaymarchUBO {
     glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
     glm::vec4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
-    glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1), w unused
+    glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1),
+                                // w=thresholdMax (upper cutoff, §5.3 follow-up)
     glm::vec4 backgroundColor;  // xyz=RGB, w unused -- see setBackgroundColor()
 };
 
@@ -157,16 +158,87 @@ struct ColormapPreset {
     float width;
     ColorRGB lowColor;
     ColorRGB highColor;
+    // User request, 2026-08-27: per-preset default Threshold band (§5.3's
+    // `n < threshold || n > thresholdMax -> alpha = 0` cutoff,
+    // volume_raymarch.slang), applied by setColormapPreset() below.
+    // Empirically tuned (screenshot comparison, not derived analytically)
+    // against the LIDC-IDRI demo CTs in 3D Orbit mode -- without this,
+    // every preset saturated to opaque at the skin/fat surface before the
+    // ray ever reached the tissue the preset is named for, so switching
+    // presets only re-tinted the same body-surface silhouette.
+    //
+    // Bone: skin/fat sit at n~0.3, bone at n>=0.4 within Bone's -450..1050
+    // HU window -- threshold=0.4 cuts skin while keeping bone (0.3 still
+    // mostly showed skin, 0.5 started eroding cortical bone surfaces).
+    // thresholdMax left at 1.0 (no upper cutoff needed).
+    //
+    // Lung: needed *both* ends of the band, for a reason that isn't the
+    // mirror image of Bone's -- found by rendering `n` itself as grayscale
+    // (bypassing the LUT) to see what density the visible "surface" in a
+    // plain 3D Orbit render actually sat at, since screenshot sweeps of
+    // thresholdMax alone (0.95 down to 0.3) changed *nothing* visible,
+    // which the "chest wall is denser than lung" theory alone couldn't
+    // explain. What that debug render showed: the surface sat at a *low*
+    // n (~0.15-0.2), not the high n skin/fat should occupy. Root cause --
+    // Lung's window floor (-1350 HU) is far enough below real background
+    // air (~-1000 HU, n~0.23 in this window) that air itself was *not*
+    // fully cut (alpha isn't proportionally tiny either: with the default
+    // extinction=8, n=0.23 alone gives a substantial per-step alpha, and
+    // Beer-Lambert compounds that over the hundreds of steps a ray spends
+    // crossing the AABB's own empty margin around the patient) -- so the
+    // ray was saturating to opaque from background air alone, well before
+    // it ever reached the patient, let alone the lung inside. threshold
+    // =0.25 (raw HU ~ -975, just above real background air and the most
+    // aerated lung tissue's own floor) cuts that air out; thresholdMax
+    // then cuts the chest wall the way it would for any denser-occluder
+    // preset, so what's left visible is the band in between -- the
+    // aerated lung fields and their internal vessel/airway-wall detail.
+    // 0.85 (raw HU ~ -75) alone was enough to remove the reported "solid
+    // cylinder" look, but a loaded segmentation mask (§5.3.2) still wasn't
+    // visible anywhere in 3D Orbit at that value -- the mask lives deeper,
+    // inside the lung parenchyma itself, and the still-fairly-wide 0.25-0.85
+    // band includes enough intermediate soft-tissue density (fat, vessel
+    // walls, etc.) that accum.a was still saturating before the ray got
+    // that far in. Narrowed to 0.45 (raw HU ~ -825) by re-testing with a
+    // real loaded lungmask R231 mask each step -- 0.5 still showed no mask
+    // anywhere, 0.4/0.45 both exposed it (confirmed via screenshot, a red
+    // patch visible from the volume's top). This band improves the
+    // reported "solid cylinder"/invisible-mask symptoms (confirmed via
+    // screenshot); it does not by itself produce a textbook two-lung-
+    // fields silhouette from every angle in a plain outside 3D Orbit view
+    // -- a ray through the thicker lateral chest wall still saturates
+    // before reaching the mask, only a ray through a thinner path (e.g.
+    // near the top of the volume) gets far enough. The 2D Slice view
+    // (axial_slice.slang, no threshold band
+    // involved at all) already renders lung fields perfectly, confirming
+    // the window/level values themselves were never the problem. Getting
+    // the same clarity in 3D from an unclipped outside view is a transfer-
+    // function-shape problem (a single linear alpha-vs-n ramp can't cut a
+    // denser layer to zero while keeping a less-dense one partially
+    // visible AND showing its internal detail) beyond what a threshold
+    // band alone can fix -- Clip box is today's workaround for actually
+    // looking inside.
+    //
+    // Brain: skull (if present in the scan) clamps to n=1, above brain
+    // matter's ~0.25-0.56 -- the same "occluder is denser than target"
+    // shape as Lung, so a thresholdMax *could* help the same way, but none
+    // of this repo's demo CTs are head scans, so there's no real data to
+    // empirically tune or verify a value against (the mistake this same
+    // comment already warns about avoiding for Lung/Brain before this
+    // threshold band existed). Left at 1.0 (unfixed) rather than guessed.
+    float threshold;
+    float thresholdMax;
 };
 
 constexpr std::array<ColormapPreset, 5> kColormapPresets{{
-    {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}},  // 0: Lung -- cool blue
-    {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}},   // 1: Bone -- warm ivory
-    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}},     // 2: Soft Tissue -- warm red
-    {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}},      // 3: Brain -- neutral warm gray
-    {40.0F, 400.0F, {12, 12, 12}, {245, 245, 245}},     // 4: Grayscale (default) -- no color tint,
-                                                         // same window/level as Soft Tissue, traditional
-                                                         // CT-film look
+    {-600.0F, 1500.0F, {12, 24, 46}, {198, 224, 255}, 0.25F, 0.45F},  // 0: Lung -- cool blue
+    {300.0F, 1500.0F, {46, 28, 12}, {255, 236, 199}, 0.4F, 1.0F},    // 1: Bone -- warm ivory
+    {40.0F, 400.0F, {40, 12, 12}, {255, 176, 156}, 0.0F, 1.0F},      // 2: Soft Tissue -- warm red
+    {40.0F, 80.0F, {18, 18, 22}, {230, 222, 214}, 0.0F, 1.0F},       // 3: Brain -- neutral warm gray
+    {40.0F, 400.0F, {12, 12, 12}, {245, 245, 245}, 0.0F, 1.0F},      // 4: Grayscale (default) -- no
+                                                                      // color tint, same window/level
+                                                                      // as Soft Tissue, traditional
+                                                                      // CT-film look
 }};
 constexpr uint32_t kDefaultColormapPreset = 4;
 
@@ -280,21 +352,30 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     // limit" console warning firing every frame, not assumed) and left
     // the raymarch output black. Requesting more than the default is safe
     // -- wgpuAdapterGetLimits() reports what this adapter can actually
-    // support, and min() below never asks for more than that, so a weaker
-    // adapter that genuinely can't go past the default still gets exactly
-    // the default (feature-detected here, matching this file's own
+    // support, and this file never asks for more than that (see below), so
+    // a weaker adapter that genuinely can't go past the default still gets
+    // exactly the default (feature-detected here, matching this file's own
     // `timestamp-query` handling immediately above, not just assumed
-    // available). 512 MiB comfortably covers the demo CT's ~266 MiB
-    // gradient texture with headroom for a somewhat larger clinical
-    // volume; CLAUDE.md #8's UBO-size-mismatch lesson is the same
-    // "don't just hope the numbers agree" reasoning applied to buffer
-    // limits instead.
+    // available).
+    //
+    // Bug fix, 2026-08-27: a fixed 512 MiB desired ceiling (this constant's
+    // prior value) covered the original single demo CT's ~266 MiB gradient
+    // texture (RGBA16Float, 4x the R16Float volume texture's own size) but
+    // not LIDC-IDRI-0002's 261-slice series added since (512x512x261 voxels
+    // -> a ~547 MiB gradient texture, confirmed via a real "Buffer size
+    // 547356672 exceeds the max buffer size limit 536870912" console error,
+    // not assumed) -- silently reproducing the exact bug this comment
+    // already describes, just at a larger volume size. Rather than pick
+    // another fixed number that the next larger volume can just as easily
+    // exceed again, request the adapter's own reported ceiling directly --
+    // requiredLimits only asks Dawn to *guarantee* a limit already reported
+    // as supported, it doesn't preallocate anything, so there's no cost to
+    // asking for all of it up front, and it scales automatically with
+    // whatever this adapter can actually do.
     WGPULimits adapterLimits = WGPU_LIMITS_INIT;
     wgpuAdapterGetLimits(adapter, &adapterLimits);
-    constexpr uint64_t kDesiredMaxBufferSize = 512ULL * 1024 * 1024;
-    uint64_t const maxBufferSize = std::min(kDesiredMaxBufferSize, adapterLimits.maxBufferSize);
     WGPULimits requiredLimits = WGPU_LIMITS_INIT;
-    requiredLimits.maxBufferSize = maxBufferSize;
+    requiredLimits.maxBufferSize = adapterLimits.maxBufferSize;
 
     WGPURequestDeviceCallbackInfo deviceCallbackInfo{};
     deviceCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
@@ -1227,7 +1308,8 @@ void WebGPUDevice::renderFrame() {
         ubo.clipMin = glm::vec4{clipMin_, 0.0F};
         ubo.clipMax = glm::vec4{clipMax_, 0.0F};
         ubo.occlusionParams = glm::vec4{occlusionEnabled_ ? 1.0F : 0.0F, 1.0F, 0.0F, 0.0F};
-        ubo.tfParams = glm::vec4{threshold_, gradientOpacityStrength_, downsampleFactor_ > 1 ? 1.0F : 0.0F, 0.0F};
+        ubo.tfParams =
+            glm::vec4{threshold_, gradientOpacityStrength_, downsampleFactor_ > 1 ? 1.0F : 0.0F, thresholdMax_};
         ubo.backgroundColor = glm::vec4{backgroundColor_, 0.0F};
         accumFrameIndex_ = std::min(accumFrameIndex_ + 1.0F, kMaxAccumFrames);
 
@@ -1636,6 +1718,8 @@ void WebGPUDevice::setColormapPreset(uint32_t presetId) {
     ColormapPreset const& preset = kColormapPresets[presetId];
     windowCenter_ = preset.center;
     windowWidth_ = preset.width;
+    threshold_ = preset.threshold;
+    thresholdMax_ = preset.thresholdMax;
     writeLutPreset(presetId);
     writePreintegratedLut(presetId);
     markAccumulationDirty();
@@ -1730,6 +1814,11 @@ void WebGPUDevice::setDensityScale(float scale) {
 
 void WebGPUDevice::setThreshold(float threshold) {
     threshold_ = std::clamp(threshold, 0.0F, 1.0F);
+    markAccumulationDirty();
+}
+
+void WebGPUDevice::setThresholdMax(float thresholdMax) {
+    thresholdMax_ = std::clamp(thresholdMax, 0.0F, 1.0F);
     markAccumulationDirty();
 }
 

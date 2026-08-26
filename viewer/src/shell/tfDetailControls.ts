@@ -18,7 +18,7 @@
  * quality).
  */
 
-import { bindRangeInput } from "./windowLevelControls.js";
+import { bindRangeInput, getActiveThresholdDefault } from "./windowLevelControls.js";
 import { notifyOcclusionSelection } from "./qualityControls.js";
 
 const DEFAULT_EXTINCTION = 8;
@@ -107,4 +107,67 @@ export function setupTfDetailControls(): void {
     // toggle already use.
     notifyOcclusionSelection(occlusionCheckbox.checked);
   });
+
+  // User request, 2026-08-27 (revised same day): "Reset TF Detail" --
+  // every control in this section back to its own hardcoded DEFAULT_*
+  // above, *except* Threshold, which goes back to the active colormap
+  // preset's own default (e.g. Bone's 0.4) via
+  // windowLevelControls.ts's getActiveThresholdDefault() -- resetting TF
+  // Detail while Bone is selected should keep showing the skeleton, not
+  // undo exactly the preset behavior setColormapPreset() just set up.
+  // Falls back to the plain hardcoded 0 when no preset is currently active
+  // (manually dragged Center/Width, or Custom) -- see that function's own
+  // comment. Mirrors clipControls.ts's "Reset Clip" button otherwise.
+  const resetButton = document.getElementById("tf-reset");
+  if (!resetButton) {
+    console.error("tfDetailControls: #tf-reset not found in the DOM");
+    return;
+  }
+  resetButton.addEventListener("click", () => {
+    setSliderValue("extinction", "extinction-value", DEFAULT_EXTINCTION);
+    window.Module._engine_set_extinction(DEFAULT_EXTINCTION);
+
+    setSliderValue("density-scale", "density-scale-value", DEFAULT_DENSITY_SCALE);
+    window.Module._engine_set_density_scale(DEFAULT_DENSITY_SCALE);
+
+    const thresholdDefault = getActiveThresholdDefault() ?? DEFAULT_THRESHOLD;
+    setSliderValue("threshold", "threshold-value", thresholdDefault);
+    window.Module._engine_set_threshold(thresholdDefault);
+
+    setSliderValue("gradient-opacity", "gradient-opacity-value", DEFAULT_GRADIENT_OPACITY);
+    window.Module._engine_set_gradient_opacity_strength(DEFAULT_GRADIENT_OPACITY);
+
+    setSliderValue("mask-opacity", "mask-opacity-value", DEFAULT_MASK_OPACITY);
+    window.Module._engine_set_mask_opacity(DEFAULT_MASK_OPACITY);
+
+    if (occlusionCheckbox.checked) {
+      occlusionCheckbox.checked = false;
+      notifyOcclusionSelection(false);
+    }
+
+    if (maskEnabledCheckbox) {
+      maskEnabledCheckbox.checked = true;
+      window.Module._engine_set_mask_overlay_enabled(1);
+    }
+  });
+}
+
+// Shared by every bindRange*/resetTfDetail case here -- the value element
+// is either a real <input type=number> (extinction/density-scale/threshold/
+// mask-opacity, direct-entry) or a plain read-only <span> (gradient-opacity,
+// see setupTfDetailControls's own bindRangeInput call) -- resetting needs to
+// write through whichever one this control actually has.
+function setSliderValue(rangeId: string, valueId: string, value: number): void {
+  const rangeInput = document.getElementById(rangeId) as HTMLInputElement | null;
+  const valueElement = document.getElementById(valueId);
+  if (!rangeInput || !valueElement) {
+    console.error(`tfDetailControls: #${rangeId} or #${valueId} not found in the DOM`);
+    return;
+  }
+  rangeInput.value = String(value);
+  if (valueElement instanceof HTMLInputElement) {
+    valueElement.value = String(value);
+  } else {
+    valueElement.textContent = String(value);
+  }
 }

@@ -38,6 +38,12 @@
   --text: #e6e9ef;
   --text-muted: #a7b5b1;
   --text-faint: #82938e; /* ~6:1 against --bg -- craft-floor's 4.5:1 floor for body/meta text */
+  /* User request, 2026-08-26: a step fainter than --text-faint, for the
+     Advanced Mode sub-toggle labels below (Clip/Rendering/TF Detail/
+     Background/Debug) -- still ~5:1 against --bg, comfortably above the
+     4.5:1 floor noted above, just less prominent than every other label
+     in the panel. */
+  --text-faintest: #758580;
   --accent: #1d5c56;
   --accent-bright: #4fb8ab;
   --accent-secondary: #223330;
@@ -543,6 +549,22 @@ details:not([open]) > summary.section-label .chevron {
   margin-bottom: 2px;
 }
 
+/* User request, 2026-08-26: the five sub-toggles nested one level inside
+   Advanced Mode (Clip/Rendering/TF Detail/Background/Debug) should read
+   as secondary to Advanced Mode's own title and the top-level section
+   labels above it (Volume/Segmentation/View/Window & Level) -- fainter
+   color plus a lighter weight, not color alone (contrast/colorblind
+   safety), so the extra nesting level is visible without another
+   disclosure affordance. The double-nested-details selector (a
+   details.panel-section directly inside another one) matches exactly
+   those five and excludes Advanced Mode's own summary (only one level
+   deep) and the plain top-level <span class="section-label"> sections
+   (not <details> at all). */
+details.panel-section > details.panel-section > summary.section-label {
+  color: var(--text-faintest);
+  font-weight: 500;
+}
+
 .panel-section {
   display: flex;
   flex-direction: column;
@@ -597,6 +619,26 @@ details:not([open]) > summary.section-label .chevron {
   flex: 0 0 auto;
   min-width: 90px;
   color: var(--text-muted);
+}
+
+/* Bug fix, 2026-08-26 (user report: Load DICOM folder/files render
+   smaller and dimmer than every other action button in the panel). Root
+   cause: those two are the only .upload-btn instances implemented as a
+   <label> (triggering their paired hidden <input type=file> via `for`)
+   rather than a <button> -- every sibling action button (Load Demo CT,
+   Load Segmentation Model, Reset Clip, Reload Volume) is a <button>, so
+   .row label above (meant for plain field labels like "Window Center")
+   never touches them. But it does match these two, and its specificity
+   (0,1,1) beats .upload-btn's own flex/color declarations (0,1,0) below,
+   silently overriding flex: 1 1 auto -> 0 0 auto (content-width instead
+   of filling the row, confirmed via bounding-box measurement: ~124-135px
+   instead of the row's full ~290px) and color: var(--text) -> var(--text-muted)
+   (dimmer). .row .upload-btn's two-class specificity (0,2,0) reliably
+   wins regardless of source order, restoring both. */
+.row .upload-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
 }
 
 .row input[type="range"] {
@@ -870,6 +912,12 @@ button.upload-btn:disabled:hover {
    (colormap presets) -- overrides .preset-buttons' 2-column grid so all
    three sit on one row instead of wrapping a lone third button alone. */
 .quality-buttons {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Demo CT series toggle: same reasoning as .quality-buttons above -- 3
+   discrete series, one row instead of a wrapped lone third button. */
+.demo-ct-buttons {
   grid-template-columns: repeat(3, 1fr);
 }
 
