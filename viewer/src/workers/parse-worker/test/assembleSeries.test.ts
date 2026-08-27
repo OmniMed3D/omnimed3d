@@ -149,8 +149,8 @@ describe("assembleSeries", () => {
     expect(Array.from(voxels.subarray(4, 8))).toEqual([0x4400, 0x4400, 0x4400, 0x4400]); // depth 1: sliceC
     expect(Array.from(voxels.subarray(8, 12))).toEqual([0x3c00, 0x3c00, 0x3c00, 0x3c00]); // depth 2: sliceA
 
-    // MPR + native-slice feature (2026-08-27) -- same order/dims as the
-    // main volume for this identity-transform case (no orientation tags,
+    // MPR + native-slice feature -- same order/dims as the main volume
+    // for this identity-transform case (no orientation tags,
     // so nothing to normalize); the two paths only actually diverge in
     // pixel data when a real flip/transpose happens, see the dedicated
     // test below.
@@ -177,12 +177,11 @@ describe("assembleSeries", () => {
     expect(() => assembleSeries(wasm, [], "v")).toThrow(InconsistentSeriesError);
   });
 
-  // Bug report, 2026-08-27: UPENN-GBM brain MR rendered as a blown-out
-  // white block under the app's CT-calibrated "Brain" preset -- MR pixel
-  // values aren't Hounsfield Units, so the file's own VOI LUT window
-  // (WindowCenter/WindowWidth, DICOM PS3.3 C.11.2) is the only reliable
-  // display hint. assembleSeries takes it from the first slice, same
-  // pattern as spacingZ/sliceThickness.
+  // For non-HU data (e.g. MR), where a CT Hounsfield-Unit preset would
+  // blow the image out, the file's own VOI LUT window (WindowCenter/
+  // WindowWidth, DICOM PS3.3 C.11.2) is the only reliable display hint.
+  // assembleSeries takes it from the first slice, same pattern as
+  // spacingZ/sliceThickness.
   it("carries the first slice's WindowCenter/WindowWidth into the volume-ready message when present", () => {
     const sliceA = makeFakeSlice(1, 1, 2, 2, undefined, undefined, { center: 212, width: 493 });
     const wasm = fakeParserFor([sliceA]);
@@ -203,11 +202,10 @@ describe("assembleSeries", () => {
     expect(volume.windowWidth).toBeUndefined();
   });
 
-  // Bug report, 2026-08-27 follow-up: "does this file carry a VOI LUT
-  // window" turned out to be a bad proxy for "is this non-HU data" -- real
-  // CT commonly carries one too. Modality is the actual signal the Shell
-  // needs, carried through the same "first slice" pattern as windowCenter/
-  // windowWidth above.
+  // "Does this file carry a VOI LUT window" is a bad proxy for "is this
+  // non-HU data" -- real CT commonly carries one too. Modality is the
+  // signal the Shell needs, carried through the same "first slice"
+  // pattern as windowCenter/windowWidth above.
   it("carries the first slice's Modality into the volume-ready message when present", () => {
     const sliceA = makeFakeSlice(1, 1, 2, 2, undefined, undefined, undefined, "MR");
     const wasm = fakeParserFor([sliceA]);
@@ -275,8 +273,8 @@ describe("assembleSeries", () => {
     expect(volume.spacingX).toBe(0.6); // pixelSpacingColumn, unaffected by flips (only transpose swaps these)
     expect(volume.spacingY).toBe(0.5); // pixelSpacingRow
 
-    // MPR + native-slice feature (2026-08-27) -- nativeVolume is the
-    // literal source pixel data, untouched by the 180-degree flip
+    // MPR + native-slice feature -- nativeVolume is the literal source
+    // pixel data, untouched by the 180-degree flip
     // `volume`/`sliceMessages` normalize away. This is the case that
     // actually distinguishes the two (the identity-transform test above
     // can't, since there's nothing to normalize there).
@@ -303,12 +301,12 @@ describe("assembleSeries", () => {
     expect(volume.spacingY).toBe(0.6); // pixelSpacingColumn
   });
 
-  // Oblique-resample fallback (2026-08-27, bug report: UPENN-GBM brain MR --
-  // real neuro MR is routinely angled a few to ~20 degrees off axial, which
-  // computeOrientationTransform's axis-aligned-only fast path rejects
-  // outright). A 30-degree in-plane rotation about Z (row/column cosines
-  // rotated, slice normal stays exactly Z) -- same geometry hand-verified
-  // in orientation.test.ts's computeObliqueResampleGrid tests.
+  // Oblique-resample fallback: real neuro MR is routinely angled a few to
+  // ~20 degrees off axial, which computeOrientationTransform's
+  // axis-aligned-only fast path rejects. A 30-degree in-plane rotation
+  // about Z (row/column cosines rotated, slice normal stays exactly Z) --
+  // same geometry checked in orientation.test.ts's
+  // computeObliqueResampleGrid tests.
   describe("oblique acquisitions", () => {
     const COS30 = Math.sqrt(3) / 2;
     const SIN30 = 0.5;
@@ -354,8 +352,8 @@ describe("assembleSeries", () => {
       const middleSlice = new Float32Array(sliceMessages[1]?.data as ArrayBuffer);
       expect(Math.max(...middleSlice)).toBe(UNIFORM_HU);
 
-      // MPR + native-slice feature (2026-08-27) -- nativeVolume is the
-      // pre-resampling source stack (4x4x3, native acquisition order/
+      // MPR + native-slice feature -- nativeVolume is the pre-resampling
+      // source stack (4x4x3, native acquisition order/
       // resolution), entirely unlike volume's reformatted 5x5x3 grid.
       expect(nativeVolume.width).toBe(4);
       expect(nativeVolume.height).toBe(4);

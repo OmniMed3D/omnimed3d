@@ -3,7 +3,7 @@
 // rather than symlinks for Windows/Mac portability. Requires
 // engine/build_wasm/{wasm_smoke.{js,wasm}, dicom-parser/dicom_parser_wasm.{mjs,wasm}}
 // to already exist -- build the wasm-macos/wasm-windows CMake preset first
-// (see engine's CLAUDE.md §7). Both artifacts come from the same build --
+// (see engine/README.md). Both artifacts come from the same build --
 // wasm_smoke is the rendering engine module (classic Module-global output,
 // loaded by index.html's inline script), dicom_parser_wasm is the shared
 // DICOM parser (ES module output, dynamically imported by parse-worker's

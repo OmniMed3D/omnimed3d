@@ -1,5 +1,5 @@
 /**
- * Responsive canvas backing-store sizing (issue #40) -- the canvas fills
+ * Responsive canvas backing-store sizing -- the canvas fills
  * its viewport via CSS (style.css), but the actual pixel buffer
  * (width/height attributes) has to be set explicitly and kept in sync
  * with devicePixelRatio, or the render looks blurry (too few backing
@@ -13,29 +13,25 @@
  * exist until the WASM runtime has initialized.
  */
 
-// Issue #69: raymarch cost scales close to linearly with backing pixel
-// count (measured directly via GPU timestamp-query across a resolution
-// sweep), and mobile devicePixelRatio commonly runs 2-4x. Passing DPR
+// Raymarch cost scales close to linearly with backing pixel count
+// (measured via GPU timestamp-query across a resolution sweep), and
+// mobile devicePixelRatio commonly runs 2-4x. Passing DPR
 // through uncapped means a high-DPR phone renders several times the
 // pixels its own screen can even resolve, for no visible sharpness gain
 // past this point -- capping trades away resolution beyond a
 // diminishing-returns threshold, not real quality.
 //
-// Capped at 1 (not 2) based on a real-device A/B on the same phone: 2
-// measured 26.8fps, 1 measured 48.9fps -- nearly double, for a
-// resolution difference this engine's volumetric raymarch (not text or
-// sharp vector UI, where supersampling matters far more) makes much less
-// perceptually visible on a small mobile screen. See
-// docs/current/PERF_BASELINE_2026-08-21.md for the full measurement.
+// Capped at 1 (not 2) based on a mobile A/B: 2 measured ~27fps, 1
+// measured ~49fps -- nearly double, for a resolution difference this
+// engine's volumetric raymarch (not text or sharp vector UI, where
+// supersampling matters far more) makes much less perceptually visible
+// on a small screen.
 const MAX_DEVICE_PIXEL_RATIO = 1;
 
 // Diagnostic-only override (?dpr=<n> on the URL), not a product-facing
-// setting -- lets a real-device retest at a different effective DPR
-// cap without a rebuild/redeploy cycle, which is how the fixed-vs-
-// resolution-scaled frame-cost split (docs/current/PERF_BASELINE
-// entry, issue #69) was investigated. Falls back to
-// MAX_DEVICE_PIXEL_RATIO whenever the param is absent or not a finite
-// positive number.
+// setting -- lets a device retest at a different effective DPR cap
+// without a rebuild/redeploy cycle. Falls back to MAX_DEVICE_PIXEL_RATIO
+// whenever the param is absent or not a finite positive number.
 function resolveMaxDevicePixelRatio(): number {
   const override = Number(new URLSearchParams(location.search).get("dpr"));
   return Number.isFinite(override) && override > 0 ? override : MAX_DEVICE_PIXEL_RATIO;

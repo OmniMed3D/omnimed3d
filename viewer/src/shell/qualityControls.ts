@@ -1,14 +1,13 @@
 /**
- * REQ-R04 raymarch quality tier + gradient-shading toggle
- * (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.1/§4.3) --
- * a 3-button tier selector calling `engine_set_quality_tier`, plus a
+ * REQ-R04 raymarch quality tier + gradient-shading toggle -- a 3-button
+ * tier selector calling `engine_set_quality_tier`, plus a
  * checkbox calling `engine_set_shading_enabled`, both directly and
  * synchronously on every event (no queueing needed -- see
  * cameraControls.ts's comment on why). Mirrors viewControls.ts's
  * setActiveMode pattern for the tier buttons' active-state feedback.
  *
- * Issue #69: also owns two automatic quality adjustments on top of the
- * user's own choices, both applied at the engine level without touching
+ * Also owns two automatic quality adjustments on top of the user's own
+ * choices, both applied at the engine level without touching
  * any control's UI (which always reflects the user's actual selection,
  * not what's momentarily rendering):
  *
@@ -19,33 +18,24 @@
  *   user's own selections on release. Dropped frames are most
  *   noticeable during interaction and least noticeable there too (a
  *   moving image masks the coarser sampling) -- the cheapest
- *   quality/perf trade available. Occlusion was added to this same
- *   mechanism after Mini-Engine-reference's own "adaptive SPP during
- *   camera motion" pattern showed the same interaction-gated idea
- *   generalizes to any per-sample cost, not just step count.
- *   Shading is deliberately *not* part of this list (issue #81's own
- *   follow-up, precomputing the raymarch gradient at load time instead
- *   of sampling it per step): shading used to drop to a cheap flat
- *   approximation (mode 2, see git history/RENDERING_SPEC.md) during a
- *   drag, both to skip the gradient's sampling cost and to avoid the
- *   brightness pop that fully disabling shading caused -- but
- *   precomputing the gradient made real shading (mode 1) itself so
- *   cheap (measured ~0.6ms slower than the flat approximation, down
- *   from ~1.9ms) that the whole tradeoff stopped being worth its own
- *   complexity. Shading now always reflects the user's actual
- *   selection, interacting or not -- no pop, since nothing about it
- *   ever changes at interaction boundaries.
+ *   quality/perf trade available. Occlusion is on this same mechanism
+ *   because the interaction-gated idea generalizes to any per-sample
+ *   cost, not just step count. Shading is deliberately *not* -- once the
+ *   raymarch gradient is precomputed at load time, real shading (mode 1)
+ *   is cheap enough (~0.6ms over the flat approximation) that dropping to
+ *   the flat mode during a drag isn't worth the brightness pop at
+ *   interaction boundaries.
  * - Startup auto-downgrade: main.ts calls applyStartupAutoTier() once,
  *   after sampling wall-clock frame time for a few frames post-load. A
  *   phone whose *static* frame is already too slow gets no benefit from
  *   the interaction-only adaptation above -- this catches that case
  *   before the user has interacted at all. Deliberately keyed off
  *   getFrameStats() (wall-clock), not the GPU timestamp-query pass
- *   timing added in #63: that reading has been observed to report
- *   implausible values (individual pass times exceeding the total frame
- *   time) on at least one real Apple-GPU mobile browser, so wall-clock
- *   frame time is the only signal trusted to be comparable across
- *   browsers/GPUs for this decision.
+ *   timing: that reading has been observed to report implausible values
+ *   (individual pass times exceeding the total frame time) on at least
+ *   one Apple-GPU mobile browser, so wall-clock frame time is the only
+ *   signal trusted to be comparable across browsers/GPUs for this
+ *   decision.
  */
 
 const DEFAULT_QUALITY_TIER = 1; // Medium -- matches WebGPUDevice's kDefaultQualityTier.

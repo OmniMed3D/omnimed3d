@@ -1,11 +1,10 @@
 /**
- * TF detail controls (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
- * §5.3) -- extinction/density-scale/threshold sliders, a gradient-opacity
- * ("edge emphasis") slider, a Directional Occlusion Shading toggle, a mask
- * overlay opacity slider, and a mask overlay show/hide toggle. All call
- * their `engine_set_*` WASM exports
- * directly and synchronously on every input event (no queueing needed --
- * see cameraControls.ts's comment on why). Defaults here must match
+ * TF detail controls -- extinction/density-scale/threshold sliders, a
+ * gradient-opacity ("edge emphasis") slider, a Directional Occlusion
+ * Shading toggle, a mask overlay opacity slider, and a mask overlay
+ * show/hide toggle. All call their `engine_set_*` WASM exports directly
+ * and synchronously on every input event (no queueing needed -- see
+ * cameraControls.ts's comment on why). Defaults here must match
  * WebGPUDevice's own member defaults (extinction_=8.0, densityScale_=1.0,
  * threshold_=0.0, gradientOpacityStrength_=0.0, occlusionEnabled_=false,
  * maskOverlayAlpha_=0.6) -- there is no readback export, so both sides
@@ -14,8 +13,7 @@
  *
  * The occlusion checkbox is the one exception to "calls its engine_set_*
  * export directly": see its own comment below for why it's routed
- * through qualityControls.ts instead (issue #69, interaction-adaptive
- * quality).
+ * through qualityControls.ts instead (interaction-adaptive quality).
  */
 
 import { bindRangeInput, getActiveThresholdDefault } from "./windowLevelControls.js";
@@ -99,7 +97,7 @@ export function setupTfDetailControls(): void {
     return;
   }
   occlusionCheckbox.addEventListener("change", () => {
-    // Routed through qualityControls.ts (issue #69) rather than calling
+    // Routed through qualityControls.ts rather than calling
     // engine_set_occlusion_enabled directly -- occlusion does its own
     // extra per-step sampling (one of the pricier toggles to leave on
     // during a camera drag), so its selection needs to go through the
@@ -108,16 +106,15 @@ export function setupTfDetailControls(): void {
     notifyOcclusionSelection(occlusionCheckbox.checked);
   });
 
-  // User request, 2026-08-27 (revised same day): "Reset TF Detail" --
-  // every control in this section back to its own hardcoded DEFAULT_*
-  // above, *except* Threshold, which goes back to the active colormap
-  // preset's own default (e.g. Bone's 0.4) via
+  // "Reset TF Detail" -- every control in this section back to its own
+  // hardcoded DEFAULT_* above, *except* Threshold, which goes back to the
+  // active colormap preset's own default (e.g. Bone's 0.4) via
   // windowLevelControls.ts's getActiveThresholdDefault() -- resetting TF
   // Detail while Bone is selected should keep showing the skeleton, not
-  // undo exactly the preset behavior setColormapPreset() just set up.
-  // Falls back to the plain hardcoded 0 when no preset is currently active
-  // (manually dragged Center/Width, or Custom) -- see that function's own
-  // comment. Mirrors clipControls.ts's "Reset Clip" button otherwise.
+  // undo what setColormapPreset() just set up. Falls back to the plain
+  // hardcoded 0 when no preset is currently active (manually dragged
+  // Center/Width, or Custom). Mirrors clipControls.ts's "Reset Clip"
+  // button otherwise.
   const resetButton = document.getElementById("tf-reset");
   if (!resetButton) {
     console.error("tfDetailControls: #tf-reset not found in the DOM");

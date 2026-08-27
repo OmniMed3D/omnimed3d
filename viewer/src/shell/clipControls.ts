@@ -1,6 +1,6 @@
 /**
- * Clip box controls (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
- * §6.4) -- 3 axes x (min/max range sliders) restricting the raymarch
+ * Clip box controls -- 3 axes x (min/max range sliders) restricting the
+ * raymarch
  * traversal to an axis-aligned sub-box of the loaded volume, calling
  * `engine_set_clip_box` directly and synchronously on every input event
  * (no queueing needed -- see cameraControls.ts's comment on why).

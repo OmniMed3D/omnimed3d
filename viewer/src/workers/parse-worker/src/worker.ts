@@ -1,10 +1,7 @@
 /**
  * Parse Worker entry point (REQ-A05). Thin `self.onmessage` wrapper
  * around pipeline.ts -- same pattern as
- * viewer/src/workers/inference-worker/src/worker.ts. Not
- * integration-tested in a real browser Worker as part of this pass (no
- * WebGPU under Node, and the Shell/REQ-R06 that would drive this doesn't
- * exist yet) -- see the plan's "Explicitly not in this milestone" section.
+ * viewer/src/workers/inference-worker/src/worker.ts.
  *
  * `wasmModulePath` arrives via the `init` message rather than being
  * hardcoded, mirroring inference-worker's `InitMessage.modelPath` --
@@ -58,8 +55,7 @@ type IncomingMessage = InitMessage | ParseFileMessage | ParseSeriesMessage;
  * only translates *that* event into ErrorEvent on the main thread's
  * Worker.onerror; an unhandled rejection inside a worker fires
  * "unhandledrejection" on the worker's own global scope instead, which
- * the main thread never sees (confirmed via real browser e2e testing,
- * not assumed). */
+ * the main thread never sees. */
 export interface ParseErrorMessage {
   type: "parse-error";
   message: string;
@@ -110,8 +106,8 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       }
       const volumeMessage: VolumeReadyMessage = volume;
       worker.postMessage(volumeMessage, [volumeMessage.data]);
-      // MPR + native-slice feature (2026-08-27 user request) -- posted
-      // after volumeMessage, not before: main.ts's engineLoadNativeVolume
+      // MPR + native-slice feature -- posted after volumeMessage, not
+      // before: main.ts's engineLoadNativeVolume
       // requires a primary volume to already be loaded (loadNativeVolume
       // reuses its mask/gradient/LUT GPU resources, see WebGPUDevice.cpp).
       const nativeVolumeMessage: NativeVolumeReadyMessage = nativeVolume;

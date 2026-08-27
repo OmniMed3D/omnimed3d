@@ -3,9 +3,8 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * User request, 2026-08-27: drag-and-drop DICOM loading
- * (dragAndDropControls.ts), alongside the existing "Load DICOM
- * folder"/"Load DICOM files" pickers.
+ * Drag-and-drop DICOM loading (dragAndDropControls.ts), alongside the
+ * existing "Load DICOM folder"/"Load DICOM files" pickers.
  *
  * Real OS-level drag-and-drop (a native file/folder drag from the
  * desktop) can't be driven directly from Playwright/CDP -- these tests

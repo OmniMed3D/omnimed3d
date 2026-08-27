@@ -6,22 +6,20 @@
  * expect:
  *
  * - `hu-slice`: viewer/src/workers/inference-worker/src/worker.ts's
- *   `HuSliceMessage`, documented there as "the Parse Worker's output per
- *   REQ-A04/A05, 2026-08-12 update". One 2D slice, original resolution,
- *   Hounsfield Units, float32.
+ *   `HuSliceMessage` (the Parse Worker's output per REQ-A04/A05). One 2D
+ *   slice, original resolution, Hounsfield Units, float32.
  * - `volume-ready`: a single assembled 3D volume for
  *   `rhi::Device::loadVolume`/`engine_load_volume`
  *   (engine/src/rhi/include/rhi/Device.hpp, engine/src/main_wasm.cpp),
  *   which uploads its input buffer directly into an `R16Float` GPU
  *   texture -- see halfFloat.ts for the conversion this requires.
  *
- * Scope (both Milestone 1 and 2): 16-bit pixel data only (signed or
- * unsigned) -- the only case verified against real bytes so far
- * (engine/tests/fixtures/CT_small.dcm). Anything else is a clear
- * rejection, matching dicom-parser's own fail-loud philosophy rather than
- * silently miscomputing.
+ * Scope: 16-bit pixel data only (signed or unsigned) -- the only case
+ * verified against real bytes so far (engine/tests/fixtures/CT_small.dcm).
+ * Anything else is a clear rejection, matching dicom-parser's own
+ * fail-loud philosophy rather than silently miscomputing.
  *
- * Orientation (issue #21): when a slice has both ImageOrientationPatient
+ * Orientation: when a slice has both ImageOrientationPatient
  * and ImagePositionPatient, pixel data is normalized to the canonical
  * convention documented in orientation.ts/viewer/README.md before it
  * leaves this module, and `assembleSeries` orders slices geometrically
@@ -70,13 +68,11 @@ export interface VolumeReadyMessage {
    * The series' own VOI LUT display window (DICOM PS3.3 C.11.2), taken
    * from the first slice -- present only when that slice actually carried
    * the tags (real files vary: some carry a per-slice-recomputed window,
-   * some carry none at all). Bug report, 2026-08-27: UPENN-GBM brain MR
-   * rendered as a blown-out white block under the app's CT-calibrated
-   * "Brain" preset (center 40/width 80 HU) because MR pixel values aren't
-   * Hounsfield Units at all -- the file's own window (e.g. center
-   * 212/width 493 for that series) is the only reliable way to know how
-   * to display it. The Shell (main.ts) applies this once on load rather
-   * than leaving whatever preset/manual value was already active.
+   * some carry none at all). For non-HU data (e.g. MR), where a CT
+   * Hounsfield-Unit preset would blow the image out, the file's own
+   * window is the only reliable way to know how to display it. The Shell
+   * (main.ts) applies this once on load rather than leaving whatever
+   * preset/manual value was already active.
    */
   windowCenter?: number;
   windowWidth?: number;
@@ -85,16 +81,15 @@ export interface VolumeReadyMessage {
    * first slice -- undefined if that slice carried no Modality tag. Lets
    * the Shell tell real HU CT data apart from non-HU data (MR etc.)
    * without relying on "does this file carry a VOI LUT window" as a proxy
-   * (bug report, 2026-08-27 follow-up: real CT series commonly carry one
-   * too, wrongly auto-selecting "From File" over the app's CT presets).
+   * -- real CT series commonly carry one too.
    */
   modality?: string;
 }
 
 /**
- * MPR + native-slice feature (2026-08-27 user request): the DICOM series'
- * own original per-file slices, in their native acquisition order and
- * resolution -- entirely separate from `VolumeReadyMessage`, which may be
+ * MPR + native-slice feature: the DICOM series' own original per-file
+ * slices, in their native acquisition order and resolution -- entirely
+ * separate from `VolumeReadyMessage`, which may be
  * trilinear-resampled onto a canonical LPS grid (see assembleObliqueSeries)
  * and is what `engine_load_volume`'s Slice2D/Orbit3D views render. This is
  * what `engine_load_native_volume`'s NativeSlice2D view renders instead --
@@ -422,14 +417,13 @@ function normalizeVec3(v: Vec3): Vec3 {
 }
 
 /**
- * Oblique-acquisition fallback (2026-08-27, bug report: UPENN-GBM brain MR
- * series -- real neuro MR is routinely angled a few to ~20 degrees off
- * axial to align with the AC-PC line, which `computeOrientationTransform`'s
- * axis-aligned-only fast path rejects). Resamples the whole stack onto a
- * canonical-axis-aligned grid via trilinear interpolation instead of
- * rejecting the series outright -- see orientation.ts's
- * `computeObliqueResampleGrid`/`canonicalToSourceIndex` for the geometry
- * this builds on.
+ * Oblique-acquisition fallback: real neuro MR is routinely angled a few
+ * to ~20 degrees off axial to align with the AC-PC line, which
+ * `computeOrientationTransform`'s axis-aligned-only fast path rejects.
+ * Resamples the whole stack onto a canonical-axis-aligned grid via
+ * trilinear interpolation instead of rejecting the series -- see
+ * orientation.ts's `computeObliqueResampleGrid`/`canonicalToSourceIndex`
+ * for the geometry this builds on.
  */
 function assembleObliqueSeries(
   rawParsed: RawParsedSlice[],
@@ -552,9 +546,9 @@ function assembleObliqueSeries(
     modality: first.image.modality || undefined,
   };
 
-  // NativeSlice2D payload (MPR + native-slice feature, 2026-08-27 user
-  // request) -- `sourceStack` is already exactly this: the raw per-file
-  // slices in native acquisition order, assembled above for resampling.
+  // NativeSlice2D payload (MPR + native-slice feature) -- `sourceStack`
+  // is already exactly this: the raw per-file slices in native
+  // acquisition order, assembled above for resampling.
   // Reused directly rather than re-derived, since it's the exact same
   // rows x columns x depth data this function already built.
   const nativeVolumeData = new Uint16Array(sourceStack.length);

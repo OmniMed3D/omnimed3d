@@ -3,8 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §5.3/§6.2/§6.3/§6.4
- * DoD verification -- the new TF Detail sliders, Occlusion Shading
+ * Verifies the TF Detail sliders, Occlusion Shading
  * checkbox, Custom colormap pickers, and Clip box sliders all actually
  * change what the raymarch pass draws, the same "real, not fabricated"
  * screenshot-diff pattern shell-mask-integration.spec.ts and
@@ -120,8 +119,7 @@ test("custom colormap pickers change the rendered frame and mark Custom active (
   expect(beforeCustom.equals(afterCustom)).toBe(false);
 
   // Custom (id 8, CUSTOM_PRESET_ID) is the <select>'s own value once
-  // active -- no more per-button .active class (2026-08-27, clinical
-  // preset expansion: button grid -> <select>).
+  // active -- no per-button .active class (button grid -> <select>).
   await expect(page.locator("#colormap-preset-select")).toHaveValue("8");
 });
 

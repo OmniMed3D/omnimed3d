@@ -1,10 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Regression tests for issue #69 (mobile render-cost reductions), added
- * after a real iPhone 14 Pro test showed the demo CT rendering at ~5.6fps
- * (178ms/frame) -- unusable. Two independent mechanisms, each verified
- * directly rather than just "the demo looks faster":
+ * Regression tests for the mobile render-cost reductions, after a
+ * high-end phone showed the demo CT rendering at ~5.6fps (178ms/frame)
+ * -- unusable. Two independent mechanisms, each verified directly:
  *
  * - DPR cap (canvasResize.ts): a high-devicePixelRatio device must not
  *   get a backing-store resolution proportionally larger than
@@ -51,7 +50,7 @@ test("canvas backing resolution is capped, not proportional to a high devicePixe
   await context.close();
 });
 
-test("camera drag drops the engine's active quality tier and restores it on release (issue #69)", async ({ page }) => {
+test("camera drag drops the engine's active quality tier and restores it on release", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // Rendering is a collapsed <details> section by default, nested inside
@@ -101,12 +100,10 @@ test("camera drag drops the engine's active quality tier and restores it on rele
     .toBe(2);
 });
 
-test("camera drag forces occlusion off (restoring on release) but leaves shading alone (issue #81 follow-up)", async ({
-  page,
-}) => {
-  // Precomputing the raymarch gradient at load time (issue #81's own
-  // follow-up) made real shading (mode 1) cheap enough that it no longer
-  // needs an interaction-time fallback -- qualityControls.ts stopped
+test("camera drag forces occlusion off (restoring on release) but leaves shading alone", async ({ page }) => {
+  // Precomputing the raymarch gradient at load time made real shading
+  // (mode 1) cheap enough that it no longer needs an interaction-time
+  // fallback -- qualityControls.ts stopped
   // dropping shading to its old flat approximation (mode 2) during a
   // drag, precisely to eliminate the brightness pop that approximation
   // itself couldn't quite avoid. Occlusion, unrelated to that change,

@@ -1,62 +1,47 @@
 /**
- * View-mode toggle + slice slider (issue #37, PRD §9 slice-panning gap) --
- * originally a 3D Orbit / 2D Slice (Axial-only) button pair calling the
- * engine's `engine_set_view_mode` WASM export, plus a range slider driving
- * `engine_set_axial_slice_index`, both directly and synchronously on every
- * event (no queueing needed -- see cameraControls.ts's comment on why).
- * Kept separate from cameraControls.ts: a mode toggle that governs
- * *whether* the orbit camera even applies is a different concern than the
- * orbit camera itself.
+ * View-mode toggle + slice slider (PRD §9 slice-panning gap) -- a 3D
+ * Orbit / 2D Slice (Axial/Sagittal/Coronal) / Native button set calling
+ * the engine's `engine_set_view_mode`/`engine_set_slice_axis` WASM
+ * exports, plus a range slider driving `engine_set_slice_index`, all
+ * directly and synchronously on every event (no queueing needed -- see
+ * cameraControls.ts's comment on why). Kept separate from
+ * cameraControls.ts: a mode toggle that governs *whether* the orbit
+ * camera even applies is a different concern than the orbit camera
+ * itself.
  *
- * MPR + native-slice feature (2026-08-27 user request): the single "2D
- * Slice" button is now three -- Axial/Sagittal/Coronal (`data-slice-axis`
- * on top of `data-view-mode="1"`) -- plus a fourth, independent "Native"
- * mode (`data-view-mode="2"`) showing the DICOM series' own original
- * per-file slices (see pipeline.ts's NativeVolumeReadyMessage). The slice
- * slider's valid range depends on both view mode and (for Slice2D) which
- * axis is active -- Axial scrubs depth, Sagittal scrubs width, Coronal
- * scrubs height, Native scrubs its own independently-loaded depth --
- * so `notifyVolumeLoaded`/`notifyNativeVolumeLoaded` record the loaded
- * volume(s)' dimensions here rather than just a single depth value.
+ * The "Native" mode (`data-view-mode="2"`) shows the DICOM series' own
+ * original per-file slices (see pipeline.ts's NativeVolumeReadyMessage).
+ * The slice slider's valid range depends on both view mode and (for
+ * Slice2D) which axis is active -- Axial scrubs depth, Sagittal scrubs
+ * width, Coronal scrubs height, Native scrubs its own independently-
+ * loaded depth -- so `notifyVolumeLoaded`/`notifyNativeVolumeLoaded`
+ * record the loaded volume(s)' dimensions here rather than just a single
+ * depth value.
  *
- * User feedback, 2026-08-27 (same-day follow-up): switching modes/axes
- * used to always reset the slice to the middle of that mode's range --
- * annoying on its own (losing your place every click), and outright wrong
- * for Native specifically: the *engine's* own `nativeSliceIndex_` doesn't
- * reset on a mode switch (only `loadNativeVolume()` resets it), but this
- * module was recomputing a fresh "middle" for the slider's *display*
- * without ever pushing it to the engine -- the slider would show a value
- * the actually-rendered image didn't match. Fixed by remembering each
- * mode/axis's own last index (`sagittalIndex`/`coronalIndex`/
- * `axialNativeIndex`) and re-applying it (clamped to the current
- * dimension, via `applySliceIndex`) on every switch, rather than always
- * recomputing a fresh middle. Axial and Native deliberately share one
- * remembered value (`axialNativeIndex`) per user request -- for the
- * common case (an already-axial or near-axial series) they represent
- * essentially the same physical position, so scrubbing one and switching
- * to the other should land on the same slice, not jump to an unrelated
- * default. Sagittal/Coronal each still only reset to a fresh middle when
- * a genuinely new volume loads (`notifyVolumeLoaded`).
+ * Switching modes/axes re-applies each mode/axis's own last index
+ * (`sagittalIndex`/`coronalIndex`/`axialNativeIndex`), clamped to the
+ * current dimension, rather than resetting to a fresh middle each time.
+ * Axial and Native share one remembered value: for an already-axial or
+ * near-axial series they represent essentially the same physical
+ * position, so scrubbing one and switching to the other should land on
+ * the same slice. Sagittal/Coronal only reset to a fresh middle when a
+ * genuinely new volume loads (`notifyVolumeLoaded`).
  *
  * The slider's `max`/default value can't be known until a volume is
- * loaded (dimensions are data-driven, unlike window/level's fixed clinical
- * HU defaults) -- `notifyVolumeLoaded()`/`notifyNativeVolumeLoaded()` are
- * called from main.ts once the loaded volume's dimensions are known,
+ * loaded (dimensions are data-driven, unlike window/level's fixed
+ * clinical HU defaults) -- `notifyVolumeLoaded()`/`notifyNativeVolumeLoaded()`
+ * are called from main.ts once the loaded volume's dimensions are known,
  * mirroring the engine's own dimension/2-default-on-load behavior
- * (WebGPUDevice::loadVolume/loadNativeVolume). No readback export exists
- * from the engine for any of this state -- both sides just independently
- * agree on the same reset-to-middle-on-load convention, the same pattern
- * windowLevelControls.ts's PRESET_WINDOW_LEVELS comment already documents.
+ * (WebGPUDevice::loadVolume/loadNativeVolume). There is no readback
+ * export, so both sides independently agree on the same
+ * reset-to-middle-on-load convention.
  *
- * User request, 2026-08-27: mouse wheel over the canvas scrubs the slice
- * slider while in a 2D view mode, instead of doing nothing -- the engine's
- * own `zoomCamera()` already no-ops outside Orbit3D (`viewMode_ !=
- * kViewModeOrbit3D` guard, WebGPUDevice.cpp), so a wheel event previously
- * just vanished in 2D Slice mode. `getViewMode()`/`stepSlice()` are
- * exported so cameraControls.ts's wheel handler (which owns the actual
- * `canvas.addEventListener("wheel", ...)`) can branch on the current mode
- * without this module needing to know anything about camera/zoom, or that
- * file needing its own view-mode tracking duplicated.
+ * The mouse wheel over the canvas scrubs the slice slider while in a 2D
+ * view mode -- the engine's own `zoomCamera()` no-ops outside Orbit3D, so
+ * a wheel event otherwise just vanishes there. `getViewMode()`/
+ * `stepSlice()` are exported so cameraControls.ts's wheel handler (which
+ * owns the actual `canvas.addEventListener("wheel", ...)`) can branch on
+ * the current mode without duplicating view-mode tracking.
  */
 
 import { bindRangeInput } from "./windowLevelControls.js";
@@ -82,8 +67,8 @@ let volumeHeight = 0;
 let volumeDepth = 0;
 let nativeVolumeDepth = 0;
 
-// Remembered per mode/axis (2026-08-27 follow-up, see header comment) --
-// Axial and Native intentionally share one value.
+// Remembered per mode/axis (see header comment) -- Axial and Native
+// intentionally share one value.
 let sagittalIndex = 0;
 let coronalIndex = 0;
 let axialNativeIndex = 0;

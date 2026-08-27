@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Regression test for a real Chrome-specific layout bug (user report,
- * 2026-08-26, "Advanced Mode" text sitting too close together): `.panel-
- * section`'s `display: flex; gap: 8px` (style.css) only ever reached a
+ * Regression test for a Chrome-specific layout bug ("Advanced Mode"
+ * rows sitting too close together): `.panel-section`'s `display: flex;
+ * gap: 8px` (style.css) only ever reached a
  * <details> element's own box, not its actual row children -- Chrome
  * wraps every non-<summary> child of a <details> in an internal
  * `::details-content` box (a real pseudo-element,

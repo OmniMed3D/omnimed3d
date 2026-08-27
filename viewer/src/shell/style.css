@@ -1,13 +1,8 @@
-/* Issue #34 (REQ-R06) control panel styling. Dark theme, floating
-   glassmorphic panel -- adapted from Mini-Engine-reference's validated UI
-   pattern (docs/current/medical-volume/VIEWERS.md), per PRD Appendix A's
-   "referencing Mini-Engine-reference's UI patterns" instruction. Kept as
-   a proper linked stylesheet rather than inlined in index.html, since this
-   is a Vite-built project rather than Mini-Engine's single-file
-   Emscripten HTML shell template.
+/* Control panel styling (REQ-R06). Dark theme, floating glassmorphic
+   panel, per PRD Appendix A's UI-pattern guidance. A linked stylesheet
+   rather than inlined in index.html, since this is a Vite-built project.
 
-   Visual polish pass: consolidates the colors/radii repeated ad hoc across
-   the file so far into named tokens (impeccable's polish playbook calls
+   Colors/radii are consolidated into named tokens (the polish playbook calls
    this out explicitly: "missing token: the system needs a reusable
    value").
 
@@ -26,8 +21,8 @@
 :root {
   --bg: #0a0c10;
   --panel-bg: rgba(14, 20, 19, 0.92);
-  /* User request, 2026-08-26: #control-panel only -- more see-through
-     than --panel-bg's 0.92, which stays as-is for the alert-style
+  /* #control-panel only -- more see-through than --panel-bg's 0.92,
+     which stays as-is for the alert-style
      surfaces (error/device-lost/toast) that share that token and want to
      stay clearly legible over whatever's rendering behind them. The
      backdrop-filter blur already on #control-panel keeps this readable
@@ -38,8 +33,8 @@
   --text: #e6e9ef;
   --text-muted: #a7b5b1;
   --text-faint: #82938e; /* ~6:1 against --bg -- craft-floor's 4.5:1 floor for body/meta text */
-  /* User request, 2026-08-26: a step fainter than --text-faint, for the
-     Advanced Mode sub-toggle labels below (Clip/Rendering/TF Detail/
+  /* A step fainter than --text-faint, for the Advanced Mode sub-toggle
+     labels below (Clip/Rendering/TF Detail/
      Background/Debug) -- still ~5:1 against --bg, comfortably above the
      4.5:1 floor noted above, just less prominent than every other label
      in the panel. */
@@ -93,8 +88,8 @@ body {
   color: #fff;
 }
 
-/* Issue #40: fills the viewport instead of a fixed 640x480 box.
-   canvasResize.ts drives the backing-store resolution (width/height
+/* Fills the viewport instead of a fixed box. canvasResize.ts drives the
+   backing-store resolution (width/height
    attributes) via a ResizeObserver + engine_resize -- this rule only
    controls the CSS/display size. position:fixed + being first in the
    DOM (index.html) means every other element paints on top of it
@@ -144,8 +139,8 @@ canvas {
   border-radius: var(--radius-md);
 }
 
-/* Drag-and-drop DICOM loading (user request, 2026-08-27,
-   dragAndDropControls.ts) -- a full-viewport invite while a drag carrying
+/* Drag-and-drop DICOM loading (dragAndDropControls.ts) -- a
+   full-viewport invite while a drag carrying
    files is over the page, above every other overlay (z-index 20 > 10)
    since it can legitimately show up alongside any of them. pointer-events:
    none so it never becomes the drag's own hit-test target -- the actual
@@ -273,23 +268,15 @@ canvas {
   white-space: nowrap;
 }
 
-/* Issue #40: these are normal-flow (position:static) debug elements --
-   without an explicit position they'd paint *below* the now-fixed
-   canvas regardless of DOM order (CSS stacking always ranks positioned
-   elements above static ones). position:relative is the minimal change
-   that keeps them visible without altering their layout.
-   Visual polish pass: #debug-readout gives the group (previously raw,
-   unstyled white text sitting directly on the canvas) a single quiet
-   corner treatment -- small, monospace, faint -- so it reads as
-   intentional instrument telemetry rather than leftover debug output.
-   #status/#shell-status/#log keep their own ids and behavior unchanged.
-   User request, 2026-08-27: hidden from view entirely -- this was
-   internal-only load-progress telemetry ("running" / "shell: ready for
-   input") that never needed a permanent on-screen presence for a real
-   user. display:none rather than deleting the elements/JS that write to
-   them: 20+ e2e specs synchronize on #shell-status's textContent via
-   Playwright's toHaveText(), which reads DOM text regardless of visible
-   layout -- only the *visible* CSS treatment needed to go. */
+/* These are normal-flow (position:static) debug elements -- without an
+   explicit position they'd paint *below* the now-fixed canvas regardless
+   of DOM order (CSS stacking always ranks positioned elements above
+   static ones). position:relative is the minimal fix.
+   Hidden from view: this is internal-only load-progress telemetry that
+   never needed a permanent on-screen presence. display:none rather than
+   deleting the elements/JS that write to them, since 20+ e2e specs
+   synchronize on #shell-status's textContent via Playwright's
+   toHaveText(), which reads DOM text regardless of visible layout. */
 #debug-readout {
   display: none;
 }
@@ -415,8 +402,8 @@ canvas {
   display: none;
 }
 
-/* Progressive disclosure (user request, 2026-08-26): the secondary
-   sections below are native <details>/<summary> now -- collapsed
+/* Progressive disclosure: the secondary sections below are native
+   <details>/<summary> -- collapsed
    (title-only) by default, no JS state to keep in sync. <summary> needs
    its own layout (native marker replaced by the shared .chevron, label
    text and chevron pushed to opposite ends) since .section-label alone
@@ -577,8 +564,8 @@ details:not([open]) > summary.section-label .chevron {
   margin-bottom: 2px;
 }
 
-/* User request, 2026-08-26: the five sub-toggles nested one level inside
-   Advanced Mode (Clip/Rendering/TF Detail/Background/Debug) should read
+/* The five sub-toggles nested one level inside Advanced Mode
+   (Clip/Rendering/TF Detail/Background/Debug) should read
    as secondary to Advanced Mode's own title and the top-level section
    labels above it (Volume/Segmentation/View/Window & Level) -- fainter
    color plus a lighter weight, not color alone (contrast/colorblind
@@ -599,30 +586,22 @@ details.panel-section > details.panel-section > summary.section-label {
   gap: 8px;
 }
 
-/* Bug fix, 2026-08-26 (found via the accordion sections' rows sitting
-   flush against each other -- user report of cramped spacing "in
-   Advanced Mode"): `.panel-section`'s `display: flex` above only ever
-   applied to <div> sections. For a <details> element specifically,
-   Chrome wraps every non-<summary> child in an internal
-   `::details-content` box (real, `CSS.supports("selector(::details-content)")`
-   confirms it, not a made-up name) -- so `.panel-section`'s `display:
-   flex`/`gap` land on the <details> element itself, but the actual rows
-   live one level deeper, inside that anonymous wrapper, which defaults
-   to plain block layout. Measured before this fix: an 8px gap between
-   two rows in a <div class="panel-section"> (Window & Level), 0px
-   between the same two rows' markup in every <details class="panel-section">
-   (Clip/Rendering/TF Detail/Background/Debug/Advanced Mode) -- confirmed
-   via a throwaway getBoundingClientRect() script, not assumed from the
-   spec. Repeating the flex/gap declaration on the pseudo-element itself
-   fixes it; harmless no-op on the <div> sections, which don't have one. */
+/* `.panel-section`'s `display: flex` above only applies to <div>
+   sections. For a <details> element, Chrome wraps every non-<summary>
+   child in an internal `::details-content` box, so `.panel-section`'s
+   `display: flex`/`gap` land on the <details> element itself while the
+   actual rows live one level deeper inside that wrapper, which defaults
+   to plain block layout (rows end up flush, no gap). Repeating the
+   flex/gap declaration on the pseudo-element fixes it; harmless no-op on
+   the <div> sections, which don't have one. */
 .panel-section::details-content {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-/* User request, 2026-08-26: extra clearance below the Debug section's
-   last control -- see index.html's own comment on #debug-section-spacer
+/* Extra clearance below the Debug section's last control -- see
+   index.html's own comment on #debug-section-spacer
    for why this is a dedicated element rather than a #control-panel
    padding tweak. Bumped further at the 640px breakpoint below, same
    env(safe-area-inset-bottom) reasoning as #control-panel's own mobile
@@ -649,14 +628,10 @@ details.panel-section > details.panel-section > summary.section-label {
   color: var(--text-muted);
 }
 
-/* Bug fix, 2026-08-26 (user report: Load DICOM folder/files render
-   smaller and dimmer than every other action button in the panel). Root
-   cause: those two are the only .upload-btn instances implemented as a
-   <label> (triggering their paired hidden <input type=file> via `for`)
-   rather than a <button> -- every sibling action button (Load Demo CT,
-   Load Segmentation Model, Reset Clip, Reload Volume) is a <button>, so
-   .row label above (meant for plain field labels like "Window Center")
-   never touches them. But it does match these two, and its specificity
+/* Load DICOM folder/files are the only .upload-btn instances implemented
+   as a <label> (triggering their paired hidden <input type=file> via
+   `for`) rather than a <button>. `.row label` above (meant for plain
+   field labels like "Window Center") matches them, and its specificity
    (0,1,1) beats .upload-btn's own flex/color declarations (0,1,0) below,
    silently overriding flex: 1 1 auto -> 0 0 auto (content-width instead
    of filling the row, confirmed via bounding-box measurement: ~124-135px
@@ -806,7 +781,7 @@ input[type="range"]:focus-visible,
   filter: brightness(0.92);
 }
 
-/* Issue #42: while a load is in flight (loadingIndicator.ts). Dims and
+/* While a load is in flight (loadingIndicator.ts). Dims and
    blocks the label's click-through-to-input behavior rather than
    relying on the underlying input's own disabled state alone, since
    it's the label the user actually sees and clicks. */
@@ -925,11 +900,10 @@ button.upload-btn:disabled:hover {
   filter: brightness(0.85);
 }
 
-/* Issue #37: first pressed-state treatment in this codebase -- reuses the
-   existing primary-action color (--accent) rather than inventing a new
-   palette token, plus a brighter border as a second, distinct cue.
-   Visual polish pass: generalized from .view-mode-buttons-only to every
-   .preset-buttons button, so the colormap presets get the same
+/* Pressed-state treatment -- reuses the primary-action color (--accent)
+   rather than a new palette token, plus a brighter border as a second
+   cue. Applied to every .preset-buttons button, so the colormap presets
+   get the same
    selected-state feedback the view-mode toggle already had (previously
    an inconsistency the critique named directly -- heuristic #4). */
 .preset-buttons button.active {
@@ -950,8 +924,8 @@ button.upload-btn:disabled:hover {
   grid-template-columns: repeat(3, 1fr);
 }
 
-/* Gradient-shading toggle (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
-   §4.3) -- first checkbox control in this panel. Reuses .row's label
+/* Gradient-shading toggle -- first checkbox control in this panel.
+   Reuses .row's label
    styling; the checkbox itself is left native (no custom track/thumb like
    input[type=range] gets) since it's a single infrequent on/off, not a
    precision control worth the same investment. */
@@ -964,8 +938,8 @@ button.upload-btn:disabled:hover {
   cursor: pointer;
 }
 
-/* Colormap preset picker (user request, 2026-08-27, clinical preset
-   expansion) -- a native <select>, themed to match the panel instead of
+/* Colormap preset picker -- a native <select>, themed to match the
+   panel instead of
    left at the browser default (the pre-existing #downsample-factor
    select was left unstyled; this one is the primary Window & Level
    control, worth the same investment .upload-btn/input[type=range] got).
@@ -1008,8 +982,8 @@ button.upload-btn:disabled:hover {
   outline-offset: 2px;
 }
 
-/* Custom colormap color pickers (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
-   §5.3) -- native swatch, just resized/bordered to sit quietly in a
+/* Custom colormap color pickers -- native swatch, just resized/bordered
+   to sit quietly in a
    .row alongside its label instead of the browser's larger default box. */
 input[type="color"] {
   flex: 0 0 auto;
@@ -1091,7 +1065,7 @@ input[type="color"]::-webkit-color-swatch {
   line-height: 1.4;
 }
 
-/* Issue #42: file-load progress spinner. Reuses the primary-action color
+/* File-load progress spinner. Reuses the primary-action color
    (--accent) for the active edge, matching the existing palette rather
    than introducing a new token. */
 .spinner {
@@ -1130,11 +1104,10 @@ input[type="color"]::-webkit-color-swatch {
     height: calc(12px + env(safe-area-inset-bottom));
   }
 
-  /* Issue #42: computed height was ~25-30px (padding + 13px text) --
-     under the 44px (iOS) / 48dp (Material) touch-target minimum, and
-     PRODUCT.md names quick/gloved-hand mobile operation as a confirmed
-     requirement, not a nice-to-have. Scoped to this breakpoint rather
-     than globally, since desktop mouse precision doesn't need it. */
+  /* Computed height was ~25-30px (padding + 13px text) -- under the 44px
+     (iOS) / 48dp (Material) touch-target minimum. Scoped to this
+     breakpoint rather than globally, since desktop mouse precision
+     doesn't need it. */
   .upload-btn,
   .preset-buttons button {
     min-height: 44px;

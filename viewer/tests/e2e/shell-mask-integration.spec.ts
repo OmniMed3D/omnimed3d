@@ -3,47 +3,39 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * Issue #20 DoD verification: real postMessage/Transferable through real
- * browser Workers, Shell -> Engine WASM compositor wiring, out-of-order
- * slice delivery, and stale-volumeId rejection (PRD §5.3.2).
+ * REQ-C01 mask-contract verification: real postMessage/Transferable
+ * through real browser Workers, Shell -> Engine WASM compositor wiring,
+ * out-of-order slice delivery, and stale-volumeId rejection (PRD §5.3.2).
  *
- * The first test's assertions are made against the Engine's own C++ stdout
- * log lines (WebGPUDevice.cpp's std::printf calls, forwarded to the
- * browser console via index.html's Module.print), not new engine-side
- * readback code -- these lines already existed to prove commit 05534b3's
- * synthetic smoke test worked; this test makes that claim reproducible.
+ * The first test's assertions are made against the Engine's own C++
+ * stdout log lines (WebGPUDevice.cpp's std::printf calls, forwarded to
+ * the browser console via index.html's Module.print), not new
+ * engine-side readback code.
  *
- * The second test (issue #29 DoD) is the first one in this repo that
- * asserts anything about what's actually on screen -- WebGPUDevice::
- * renderFrame() didn't sample the volume/mask textures at all until #29's
- * raymarch pass existed. No headless-Chrome screenshot tooling existed
- * anywhere in this repo before this (the one prior "verified with a
- * screenshot" note, referenced in an earlier version of this file, was a
- * manual, non-reproducible, one-off step -- confirmed via
- * docs/verification/shell-mask-integration.md, not assumed).
+ * The second test is the first one in this repo that asserts anything
+ * about what's actually on screen -- renderFrame() didn't sample the
+ * volume/mask textures at all until the raymarch pass existed. See
+ * docs/verification/shell-mask-integration.md for the earlier manual
+ * screenshot step this replaces.
  *
- * The fourth test (issue #34 DoD) drives the real, production UI --
- * `#dicom-files-input`, mouse drag on `#canvas`, wheel, and the
- * window/level slider/preset controls -- instead of
- * `omnimed3dTestHooks`, automating PRD §9's "successful initial
- * interaction (rotation, zoom) by non-developer testers within 3
- * unassisted attempts" criterion rather than leaving it as a manual claim.
+ * The fourth test drives the real, production UI -- `#dicom-files-input`,
+ * mouse drag on `#canvas`, wheel, and the window/level slider/preset
+ * controls -- instead of `omnimed3dTestHooks`, automating PRD §9's
+ * "successful initial interaction (rotation, zoom) by non-developer
+ * testers within 3 unassisted attempts" criterion.
  *
- * The fifth test (issue #37 DoD) covers the remaining third of that same
- * PRD §9 criterion -- slice panning -- via the real 3D/2D view-mode
- * toggle and slice slider, completing what the fourth test's rotation/
- * zoom coverage left out.
+ * The fifth test covers the remaining third of that same PRD §9 criterion
+ * -- slice panning -- via the real 3D/2D view-mode toggle and slice
+ * slider.
  *
- * The sixth test (issue #40 DoD) verifies the canvas is genuinely
- * responsive rather than a fixed 640x480 box -- both at a desktop size
- * and at a mobile-width viewport under 640px (the P0 target per
- * REQ-R07), and confirms rendering still works and re-frames correctly
- * (no stretch) after a resize with a volume already loaded.
+ * The sixth test verifies the canvas is genuinely responsive rather than
+ * a fixed box -- at a desktop size and at a mobile-width viewport under
+ * 640px (the P0 target per REQ-R07) -- and re-frames correctly (no
+ * stretch) after a resize with a volume already loaded.
  *
- * The seventh test (issue #42 DoD) verifies the file-load progress
- * indicator (loadingIndicator.ts) actually appears while a real load is
- * in flight and clears once it completes -- previously nothing
- * indicated a load was happening at all.
+ * The seventh test verifies the file-load progress indicator
+ * (loadingIndicator.ts) appears while a real load is in flight and clears
+ * once it completes.
  */
 
 const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_small.dcm", import.meta.url));
@@ -73,11 +65,11 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
   // Init the Inference Worker with the dummy model (plumbing only -- see
   // module doc comment) and wait for its own async session-load ack
   // before minting a volume / sending anything downstream of it --
-  // sending hu-slice before this resolves races the load (found via real
-  // browser e2e testing; see worker.ts's "init-complete" comment).
-  // User feedback, 2026-08-27: a new volume no longer auto-arms for
-  // segmentation just because the model is already active (main.ts's
-  // segmentationArmedVolumeId) -- armSegmentationForCurrentVolume()
+  // sending hu-slice before this resolves races the load (see worker.ts's
+  // "init-complete" comment).
+  // A new volume does not auto-arm for segmentation just because the
+  // model is already active (main.ts's segmentationArmedVolumeId) --
+  // armSegmentationForCurrentVolume()
   // (armed here explicitly, matching a real "Run Segmentation" click)
   // is required before any hu-slice for this volume actually forwards to
   // the Inference Worker.
@@ -148,10 +140,9 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
 
   // Stale-volumeId rejection (PRD §5.3.2): mint a second volume, load it
   // (making it "current"), then send a mask-producing hu-slice still
-  // carrying the FIRST volumeId. User feedback, 2026-08-27 (segmentation
-  // arming): volumeIdB is deliberately left *unarmed* here (a real new
-  // volume load no longer auto-arms), which now closes this gap one layer
-  // earlier than before -- the hu-slice is never even forwarded to the
+  // carrying the FIRST volumeId. volumeIdB is deliberately left *unarmed*
+  // here (a real new volume load does not auto-arm), which closes this
+  // gap one layer earlier -- the hu-slice is never even forwarded to the
   // Inference Worker in the first place (main.ts's hu-slice routing only
   // forwards for the armed volumeId, and volumeIdA's arming doesn't carry
   // over to B), so there's no round trip left for engineApplyMaskSlice's
@@ -191,7 +182,7 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
   expect(countLines(/WebGPUDevice::applyMaskSlice: volumeId=2 .* applied/)).toBe(0);
 });
 
-test("raymarch pass actually draws real DICOM data, not just the flat clear color (issue #29)", async ({ page }) => {
+test("raymarch pass actually draws real DICOM data, not just the flat clear color", async ({ page }) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
 
@@ -234,7 +225,7 @@ test("raymarch pass actually draws real DICOM data, not just the flat clear colo
   expect(beforeLoad.equals(afterLoad)).toBe(false);
 });
 
-test("mask overlay actually composites over the rendered volume (issue #29)", async ({ page }) => {
+test("mask overlay actually composites over the rendered volume", async ({ page }) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
 
@@ -271,9 +262,9 @@ test("mask overlay actually composites over the rendered volume (issue #29)", as
   // (tests/fixtures/generate-dummy-onnx.py) is a static Concat of the
   // input with itself across all class channels, so argmax always picks
   // class 0 (background) by construction; it can never produce a
-  // non-background mask to composite. This isolates exactly what issue
-  // #29's DoD asks about -- the engine's own mask-overlay compositing --
-  // from model quality, which is out of scope here. Same
+  // non-background mask to composite. This isolates the engine's own
+  // mask-overlay compositing from model quality, which is out of scope
+  // here. Same
   // direct-WASM-export pattern engine/tests/wasm_smoke/shell.html already
   // used before Shell wiring existed.
   await page.evaluate((id) => {
@@ -301,9 +292,7 @@ test("mask overlay actually composites over the rendered volume (issue #29)", as
   expect(volumeOnlyShot.equals(withMaskShot)).toBe(false);
 });
 
-test("real UI: file picker, camera drag, wheel zoom, and window/level controls all visually work (issue #34)", async ({
-  page,
-}) => {
+test("real UI: file picker, camera drag, wheel zoom, and window/level controls all visually work", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
@@ -366,7 +355,7 @@ test("real UI: file picker, camera drag, wheel zoom, and window/level controls a
   await expect(page.locator("#window-width-value")).toHaveValue("1500");
 });
 
-test("view-mode toggle switches to a 2D axial slice view and the slice slider pans through it (issue #37, PRD §9 slice-panning)", async ({
+test("view-mode toggle switches to a 2D axial slice view and the slice slider pans through it (PRD §9 slice-panning)", async ({
   page,
 }) => {
   const consoleLines: string[] = [];
@@ -395,9 +384,9 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   await page.waitForTimeout(500);
   const orbitShot = await canvas.screenshot();
 
-  // Switch to 2D Slice (Axial -- MPR feature, 2026-08-27, added Sagittal/
-  // Coronal buttons sharing data-view-mode="1", disambiguated by
-  // data-slice-axis) -- a genuinely different pipeline/output, so this
+  // Switch to 2D Slice (Axial -- MPR: Axial/Sagittal/Coronal buttons
+  // share data-view-mode="1", disambiguated by data-slice-axis) -- a
+  // genuinely different pipeline/output, so this
   // must differ regardless of mask state.
   await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
   await page.waitForTimeout(300);
@@ -447,8 +436,8 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   const backToOneShot = await canvas.screenshot();
   expect(backToOneShot.equals(sliceZeroShot)).toBe(false);
 
-  // User request, 2026-08-27: mouse wheel over the canvas scrubs this same
-  // slider in 2D Slice mode (cameraControls.ts's wheel handler branches on
+  // The mouse wheel over the canvas scrubs this same slider in 2D Slice
+  // mode (cameraControls.ts's wheel handler branches on
   // viewControls.ts's getViewMode() instead of always zooming -- zoom is a
   // no-op outside Orbit3D anyway, WebGPUDevice::zoomCamera's own guard).
   const sliceBox = (await canvas.boundingBox())!;
@@ -485,7 +474,7 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
   expect(backToOrbitShot.equals(afterDrag)).toBe(false);
 });
 
-test("canvas backing store is responsive, not a fixed 640x480 box (issue #40)", async ({ page }) => {
+test("canvas backing store is responsive, not a fixed 640x480 box", async ({ page }) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
   async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {
@@ -549,7 +538,7 @@ test("canvas backing store is responsive, not a fixed 640x480 box (issue #40)", 
   expect(beforeResizeShot.equals(afterResizeShot)).toBe(false);
 });
 
-test("a loading indicator appears during a real file load and clears after (issue #42)", async ({ page }) => {
+test("a loading indicator appears during a real file load and clears after", async ({ page }) => {
   const consoleLines: string[] = [];
   page.on("console", (msg) => consoleLines.push(msg.text()));
   async function waitForLine(pattern: RegExp, timeoutMs = 15000): Promise<void> {

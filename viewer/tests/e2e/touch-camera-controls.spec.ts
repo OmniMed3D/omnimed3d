@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Regression test for issue #79: a real mobile-device test found camera
- * orbit simply didn't respond to a finger drag at all. Root cause was
- * cameraControls.ts listening for mousedown/mousemove/mouseup only --
+ * Regression test: camera orbit didn't respond to a finger drag at all,
+ * because cameraControls.ts listened for mousedown/mousemove/mouseup
+ * only --
  * those never fire for touch input, so nothing was broken so much as
  * never implemented for touch in the first place. Fixed by switching to
  * Pointer Events, which unify mouse/touch/pen.
@@ -15,7 +15,7 @@ import { expect, test } from "@playwright/test";
  * with nonzero deltas -- not just that no error was thrown.
  */
 
-test("a touch drag on the canvas orbits the camera (issue #79)", async ({ page }) => {
+test("a touch drag on the canvas orbits the camera", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
@@ -67,7 +67,7 @@ test("a touch drag on the canvas orbits the camera (issue #79)", async ({ page }
   }
 });
 
-test("a second touch point mid-drag is ignored, not treated as a new drag (issue #79)", async ({ page }) => {
+test("a second touch point mid-drag is ignored, not treated as a new drag", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 

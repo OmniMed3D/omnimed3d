@@ -21,7 +21,7 @@
  * loaded), so one gauge can represent both without ambiguity.
  *
  * Sends `modelBasePath` (not `modelPath`) so the Inference Worker itself
- * picks INT8 or FP16 based on detected hardware (Issue #35) -- FP16 is
+ * picks INT8 or FP16 based on detected hardware -- FP16 is
  * fastest on WebGPU, INT8 is fastest on WASM but the slowest of the three
  * on WebGPU (docs/verification/inference-worker.md §8.4), and neither
  * needs an external-data companion file. This Shell button doesn't need to
@@ -33,21 +33,17 @@
  * pattern of passing the one capability a module needs rather than
  * hoisting more shared state.
  *
- * User feedback, 2026-08-27: previously, once the model was loaded once,
- * every *subsequent* new volume load ran segmentation on it immediately
- * too -- no way to just look at a newly loaded file without triggering a
- * (potentially slow, and on Low-Memory Mode, render-pausing) inference
- * pass. The button is now two-phase instead of one-shot: the first click
- * downloads/initializes the model as before and arms whatever volume is
- * currently loaded (matching the previously-expected "load the model, it
- * segments what I'm looking at" flow) -- but every subsequent new volume
- * load re-enables the button (relabeled "Run Segmentation" via
- * `armedForCurrentVolume`) instead of leaving the old run's "Segmentation
- * complete" state showing, requiring an explicit click (which just arms
- * the new volume -- no re-download, the model's already loaded) before
- * that volume's hu-slices are actually forwarded to the Inference Worker.
- * The actual forwarding gate lives in main.ts (segmentationArmedVolumeId)
- * -- `armSegmentationForCurrentVolume` is what flips it.
+ * The button is two-phase, not one-shot: the first click
+ * downloads/initializes the model and arms whatever volume is currently
+ * loaded ("load the model, it segments what I'm looking at"), but every
+ * subsequent new volume load re-enables the button (relabeled "Run
+ * Segmentation" via `armedForCurrentVolume`) and requires an explicit
+ * click (which just arms the new volume -- no re-download) before that
+ * volume's hu-slices are forwarded to the Inference Worker. This keeps a
+ * newly loaded file from silently triggering a slow (and, in Low-Memory
+ * Mode, render-pausing) inference pass. The actual forwarding gate lives
+ * in main.ts (segmentationArmedVolumeId) -- `armSegmentationForCurrentVolume`
+ * is what flips it.
  */
 
 import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
@@ -74,12 +70,12 @@ let gaugeButton: HTMLButtonElement | null = null;
 let modelLoaded = false;
 
 // Whether the *currently loaded* volume has been armed for segmentation
-// (see this module's header comment, 2026-08-27) -- distinct from
-// modelLoaded, which only tracks whether the model itself is ready.
-// Starts false even after the model loads for the first time; the
-// init-complete handler below sets it true immediately (auto-arming
-// whatever volume is current at that moment), and notifyVolumeLoadedForInference
-// resets it false on every subsequent new volume.
+// (see this module's header comment) -- distinct from modelLoaded, which
+// only tracks whether the model itself is ready. Starts false even after
+// the model first loads; the init-complete handler below sets it true
+// immediately (auto-arming whatever volume is current at that moment),
+// and notifyVolumeLoadedForInference resets it false on every subsequent
+// new volume.
 let armedForCurrentVolume = false;
 
 // Per-volume segmentation progress. Reset on every new volume load
@@ -133,9 +129,9 @@ export function notifyVolumeLoadedForInference(volumeId: string, totalSlices: nu
   progressTotal = totalSlices;
   progressCompleted = 0;
   if (modelLoaded) {
-    // 2026-08-27: a new volume never auto-arms just because the model is
-    // already active -- re-enable the button so the user can explicitly
-    // request it for *this* volume instead.
+    // A new volume never auto-arms just because the model is already
+    // active -- re-enable the button so the user can explicitly request
+    // it for *this* volume instead.
     armedForCurrentVolume = false;
     if (gaugeButton) {
       gaugeButton.disabled = false;
@@ -214,9 +210,9 @@ export function setupInferenceControls(inferenceWorker: Worker, armSegmentationF
 
   button.addEventListener("click", () => {
     if (modelLoaded) {
-      // 2026-08-27: the model's already loaded (this is a re-enabled
-      // "Run Segmentation" click for a volume that loaded after it) --
-      // just arm this volume, no re-download/re-init needed.
+      // The model's already loaded (this is a re-enabled "Run
+      // Segmentation" click for a volume that loaded after it) -- just
+      // arm this volume, no re-download/re-init needed.
       armedForCurrentVolume = true;
       button.disabled = true;
       armSegmentationForCurrentVolume();
@@ -226,12 +222,11 @@ export function setupInferenceControls(inferenceWorker: Worker, armSegmentationF
     button.disabled = true;
     setGaugeLabel(button, "Downloading model...");
     setGaugeProgress(button, 0);
-    // User request, 2026-08-26: Low-Memory Mode pauses rendering for the
-    // duration of each inference batch (renderPauseBanner.ts) and runs
-    // against downsampled textures -- the combination reads as "stuck" to
-    // a first-time user without this heads-up. Overwritten by the
-    // init-complete handler below once the model actually finishes
-    // loading, same as this status line always has been.
+    // Low-Memory Mode pauses rendering for the duration of each inference
+    // batch (renderPauseBanner.ts) and runs against downsampled textures
+    // -- the combination reads as "stuck" without this heads-up.
+    // Overwritten by the init-complete handler below once the model
+    // finishes loading.
     if (shouldUseLowMemoryMode()) {
       status.textContent =
         "Low-Memory Mode is on -- segmentation may take longer than usual, since rendering pauses while each batch runs.";

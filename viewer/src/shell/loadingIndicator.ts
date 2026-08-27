@@ -1,12 +1,10 @@
 /**
- * File-load progress feedback (issue #42, impeccable critique P1) --
- * previously nothing indicated a load was in progress between file
- * selection and the volume actually rendering (Nielsen heuristic #1,
- * "Visibility of System Status", scored 1/4 in the critique). Also
- * disables the file-picker triggers while a load is in flight, closing
- * a real race this session found by hand: two loads started in close
- * succession both write into the same engine state, and whichever's
- * engine_load_volume call lands last silently wins with no warning.
+ * File-load progress feedback -- without it, nothing indicates a load is
+ * in progress between file selection and the volume rendering. Also
+ * disables the file-picker triggers while a load is in flight, closing a
+ * race: two loads started in close succession both write into the same
+ * engine state, and whichever's engine_load_volume call lands last
+ * silently wins.
  */
 
 export function setLoading(isLoading: boolean): void {

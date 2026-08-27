@@ -6,10 +6,9 @@
  * (see test/fixtures.ts for the Node-only path-to-URL handling).
  *
  * The byte offsets below mirror DicomParserWasm.cpp's `DicomWasmImageInfo`
- * exactly -- that file pins them with `static_assert`s; this file's copy
- * is verified indirectly by pipeline.test.ts actually parsing a real file
- * and checking the values that come back, not assumed correct just
- * because the numbers match.
+ * exactly -- that file pins them with `static_assert`s; this copy is
+ * covered indirectly by pipeline.test.ts parsing a real file and checking
+ * the values that come back.
  */
 
 const IMAGE_INFO_OFFSET = {

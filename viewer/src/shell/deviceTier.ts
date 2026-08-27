@@ -1,21 +1,19 @@
 /**
  * Device-tier detection for the gradient volume low-memory fallback
  * (Engine's `_engine_load_volume` `lowMemoryMode` argument -- see
- * `engine/docs/RENDERING_SPEC.md`'s 2026-08-24 entry and
- * `docs/current/OPTION_A_GRADIENT_LOW_MEMORY_EXPLAINER_2026-08-24.md`).
- * Decided once, at volume-load time, from whatever device signal is
+ * `engine/docs/RENDERING_SPEC.md`). Decided once, at volume-load time,
+ * from whatever device signal is
  * actually available -- there is no way to change this mid-session
  * without reloading the volume, since it controls what size GPU texture
  * gets allocated.
  *
- * Real, reproduced motivation: an iPhone 14 Pro + Chrome (WebKit on iOS)
- * OOM-crashed running rendering + FP16 inference concurrently. `navigator
- * .deviceMemory` (the Device Memory API) is the feature-detectable signal
- * this project generally prefers over UA sniffing -- but Apple does not
- * implement it on iOS Safari/WebKit at all (confirmed: no feature-
- * detectable replacement exists for "is this iOS"), which is exactly the
- * device class this whole investigation is about. UA sniffing here is a
- * deliberate, narrow exception to that preference, not a precedent for
+ * Motivation: high-end iOS devices OOM-crash running rendering + FP16
+ * inference concurrently. `navigator.deviceMemory` (the Device Memory
+ * API) is the feature-detectable signal this project generally prefers
+ * over UA sniffing -- but Apple does not implement it on iOS
+ * Safari/WebKit at all, and there is no feature-detectable replacement
+ * for "is this iOS", which is exactly the device class this is about. UA
+ * sniffing here is a deliberate, narrow exception, not a precedent for
  * using it elsewhere.
  */
 
