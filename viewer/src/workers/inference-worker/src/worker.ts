@@ -277,9 +277,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // re-importing: it only ever runs when effectiveGpuDetected started
     // true (i.e. never for a WebKit session, which starts false), so
     // there's nothing WebKit-unsafe about that reuse.
-    const ortModule = effectiveGpuDetected
-      ? await import("onnxruntime-web/webgpu")
-      : await import("onnxruntime-web");
+    const ortModule = effectiveGpuDetected ? await import("onnxruntime-web/webgpu") : await import("onnxruntime-web");
 
     const primaryModelPath = msg.modelBasePath
       ? resolveModelPath(msg.modelBasePath, effectiveGpuDetected)

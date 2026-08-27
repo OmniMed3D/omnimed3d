@@ -68,10 +68,7 @@ test("a burst of hu-slice messages is meaningfully faster per-slice than sending
           let received = 0;
           function sendNext() {
             const buf = data.slice().buffer;
-            w.postMessage(
-              { type: "hu-slice", volumeId, sliceIndex: received, width, height, data: buf },
-              [buf],
-            );
+            w.postMessage({ type: "hu-slice", volumeId, sliceIndex: received, width, height, data: buf }, [buf]);
           }
           w.addEventListener("message", function onMsg(e: MessageEvent) {
             if (e.data.type === "mask-slice" && e.data.volumeId === volumeId) {

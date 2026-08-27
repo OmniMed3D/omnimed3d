@@ -90,10 +90,7 @@ export async function runBatch<TMeta>(
   const outputItemDims = [1, ...batchedLogits.dims.slice(1)];
 
   return requests.map((request, i) => {
-    const itemData = (batchedLogits.data as Float32Array).subarray(
-      i * outputItemSize,
-      (i + 1) * outputItemSize,
-    );
+    const itemData = (batchedLogits.data as Float32Array).subarray(i * outputItemSize, (i + 1) * outputItemSize);
     const itemLogits = new ort.Tensor("float32", itemData, outputItemDims);
     const data = adapter.postprocess(itemLogits, preprocessed[i]!.meta, {
       width: request.slice.width,
