@@ -93,26 +93,22 @@ struct DicomImageInfo {
     // than guessing a fixed window; a caller applying a generic modality
     // preset instead (e.g. a CT Hounsfield-Unit window against MR data
     // whose intensity scale isn't HU at all) can produce a wildly
-    // wrong-looking image even though nothing failed to parse -- bug
-    // report, 2026-08-27 (UPENN-GBM brain MR rendered as a blown-out white
-    // block under the app's CT "Brain" preset). Both tags are multi-valued
-    // per spec (multiple VOI LUT windows); only the first is exposed here,
-    // same simplification as pixelSpacing/rescaleSlope. Presence flags for
-    // the same reason as imageOrientationPatient/imagePositionPatient --
-    // 0 is a legitimate real value too.
+    // wrong-looking image even though nothing failed to parse. Both tags
+    // are multi-valued per spec (multiple VOI LUT windows); only the first
+    // is exposed here, same simplification as pixelSpacing/rescaleSlope.
+    // Presence flags for the same reason as imageOrientationPatient/
+    // imagePositionPatient -- 0 is a legitimate real value too.
     double windowCenter = 0.0;
     double windowWidth = 0.0;
     bool hasWindowCenter = false;
     bool hasWindowWidth = false;
 
-    // Modality (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT", "MR") -- callers were
-    // using "does this file carry a VOI LUT window" as a proxy for "is this
-    // non-HU data", but real CT commonly carries one too (bug report,
-    // 2026-08-27: a CT series' own VOI LUT window got auto-selected over
-    // the app's ordinary CT presets). Modality is the actual signal for
-    // that decision; exposed as the raw two-letter code (empty if absent),
-    // same "no presence flag, empty string means absent" convention as
-    // photometricInterpretation above.
+    // Modality (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT", "MR"). "Does this file
+    // carry a VOI LUT window" is a poor proxy for "is this non-HU data" --
+    // real CT commonly carries one too -- so Modality is the signal a
+    // caller should branch on instead. Exposed as the raw two-letter code
+    // (empty if absent), same "no presence flag, empty string means
+    // absent" convention as photometricInterpretation above.
     std::string modality;
 
     // View into the caller's original buffer -- never a copy (ADR-0004's
@@ -123,10 +119,9 @@ struct DicomImageInfo {
 
 // Parses the 128-byte preamble + "DICM" magic + File Meta Information group
 // (0002) from an in-memory DICOM file buffer. Never performs filesystem I/O
-// -- this is what makes it usable from both native tooling and the (future)
-// browser Parse Worker unchanged (CLAUDE.md #9 "No host filesystem on
-// WASM"). Callers that need to read from disk (native only) do so
-// separately and pass the resulting buffer in.
+// -- this is what makes it usable from both native tooling and the browser
+// Parse Worker unchanged. Callers that need to read from disk (native
+// only) do so separately and pass the resulting buffer in.
 class DicomFile {
 public:
     static std::optional<DicomMetaInfo> parseFromBuffer(std::byte const* data, size_t size,

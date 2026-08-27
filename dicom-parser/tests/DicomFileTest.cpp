@@ -1,12 +1,11 @@
-// Native-only automated regression test for the shared DICOM parser --
-// hand-rolled assertions (no GoogleTest/Catch2 dependency, per CLAUDE.md
-// #4's "no new dependencies without explicit consent") wired into CTest,
-// which ships with CMake so this needs nothing beyond what already must
-// build cross-platform (including macOS) for the project itself.
+// Native-only regression test for the shared DICOM parser -- hand-rolled
+// assertions (no GoogleTest/Catch2 dependency) wired into CTest, which
+// ships with CMake so this needs nothing beyond what already builds
+// cross-platform for the project itself.
 //
 // Ground-truth values below were hand-derived from CT_small.dcm's actual
-// bytes (dumped directly, not assumed) while designing parseImageInfo --
-// see docs/adr/0002-dicom-parser-uncompressed-pixel-data.md.
+// bytes while designing parseImageInfo -- see
+// docs/adr/0002-dicom-parser-uncompressed-pixel-data.md.
 
 #include "dicom-parser/DicomFile.hpp"
 
@@ -138,15 +137,13 @@ void testMissingMagic() {
     check(error == dicom_parser::DicomParseError::MissingMagic, "missing magic reports MissingMagic");
 }
 
-// Bug fix, 2026-08-27 (user report: TCIA's TCGA-GBM MR series failed to
-// load entirely, while the LIDC-IDRI CT series in the same test folder
-// loaded fine). Hand-built rather than a checked-in fixture file -- this
-// is deliberately the minimal buffer that reproduces the bug: a File Meta
-// group with no (0002,0000) group-length element at all, just a single
-// (0002,0010) TransferSyntaxUID, exactly matching what a real hex dump of
-// the TCGA-GBM files showed (see DicomFile.cpp's own comment on this
-// fallback). Preamble is left all-zero -- parseFromBuffer never reads it
-// beyond checking size, only the "DICM" magic right after it matters.
+// Regression fixture for the missing-group-length fallback. Hand-built
+// rather than a checked-in file -- the minimal buffer that exercises it:
+// a File Meta group with no (0002,0000) group-length element at all, just
+// a single (0002,0010) TransferSyntaxUID, as seen in some real TCIA MR
+// series (see DicomFile.cpp's own comment on this fallback). Preamble is
+// left all-zero -- parseFromBuffer never reads it beyond checking size,
+// only the "DICM" magic right after it matters.
 std::vector<std::byte> buildMissingGroupLengthBuffer() {
     std::vector<uint8_t> bytes(128, 0);  // preamble
     auto const appendStr = [&](char const* s) {
@@ -201,19 +198,15 @@ void testMissingGroupLengthFallback() {
     checkEqU(meta->dataSetOffset, 158, "dataSetOffset (fallback scan stops at the first non-0002 group)");
 }
 
-// Bug fix, 2026-08-27 (user report: UPENN-GBM MR series under
-// omnimed3d_tests/Brain failed to load -- every sampled file hit
-// UnsupportedSequenceEncoding via dicom_inspect, confirmed to be an
-// undefined-length SQ element, e.g. Referenced Image Sequence, appearing
-// before Rows/Columns/PixelData). Hand-built minimal Implicit VR buffer
-// containing one undefined-length sequence with one undefined-length Item
-// nested inside it, exactly the structure docs/adr/0002 called out as the
-// scope gap to revisit "if a genuine need ... surfaces". Also carries a
-// WindowCenter/WindowWidth pair (same follow-up bug report: the app
-// rendered this dataset as a blown-out white block under a CT-calibrated
-// preset -- MR pixel values aren't Hounsfield Units, so the file's own
-// VOI LUT window is the only reliable display hint) so one fixture
-// exercises both fixes together.
+// Regression fixture for real MR series that failed to load on an
+// undefined-length SQ element (e.g. Referenced Image Sequence) appearing
+// before Rows/Columns/PixelData. Hand-built minimal Implicit VR buffer
+// with one undefined-length sequence containing one undefined-length
+// Item -- the structure docs/adr/0002 called out as the scope gap to
+// revisit "if a genuine need ... surfaces". Also carries Modality and a
+// WindowCenter/WindowWidth pair (MR pixel values aren't Hounsfield Units,
+// so the file's own VOI LUT window is the reliable display hint) so one
+// fixture exercises both together.
 std::vector<std::byte> buildUndefinedLengthSequenceBuffer() {
     std::vector<uint8_t> bytes(128, 0);  // preamble
     auto const appendStr = [&](char const* s) {
@@ -256,11 +249,9 @@ std::vector<std::byte> buildUndefinedLengthSequenceBuffer() {
     appendStr("1.2.840.10008.1.2");  // Implicit VR Little Endian, 17 chars
     bytes.push_back(0);              // pad to even length (18)
 
-    // Modality (CS) -- "MR", matching the real UPENN-GBM series this
-    // fixture models. Exercises the same auto-select-vs-CT-preset fix this
-    // WindowCenter/WindowWidth pair does (bug report, 2026-08-27: a plain
-    // "has a VOI LUT window" check wrongly caught real CT series too, which
-    // also commonly carry one -- Modality is the actual signal callers need).
+    // Modality (CS) -- "MR". Modality, not "has a VOI LUT window", is the
+    // signal a caller should use to tell non-HU data apart, since real CT
+    // commonly carries a VOI LUT window too.
     appendImplicitElement(0x0008, 0x0060, 2);  // Modality = "MR"
     appendStr("MR");
 
@@ -279,8 +270,7 @@ std::vector<std::byte> buildUndefinedLengthSequenceBuffer() {
     appendImplicitElement(0xFFFE, 0xE0DD, 0);
 
     // VOI LUT display window (DS, multi-valued per spec but this parser
-    // only reads the first value) -- real-world values from the UPENN-GBM
-    // bug report's own series (dump via a raw byte scan, not guessed).
+    // only reads the first value) -- representative real-world values.
     appendImplicitElement(0x0028, 0x1050, 4);  // WindowCenter = "212 "
     appendStr("212 ");
     appendImplicitElement(0x0028, 0x1051, 4);  // WindowWidth = "493 "
