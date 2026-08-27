@@ -50,25 +50,23 @@ export async function runSlice<TMeta>(
 
 /**
  * Runs several slices through one batched `session.run()` call instead of
- * one call per slice (Issue #24) -- every model call pays some fixed
- * overhead (dispatching work to the backend, etc.) on top of the actual
- * compute, so batching N slices together pays that overhead once instead
- * of N times. Still emits one `mask-slice` result per input slice (§5.3.2
- * progressive delivery is unaffected -- see worker.ts for how those
- * results get posted individually rather than as one batch message).
+ * one call per slice -- every model call pays some fixed overhead on top
+ * of the actual compute, so batching N slices together pays that overhead
+ * once instead of N times. Still emits one `mask-slice` result per input
+ * slice (§5.3.2 progressive delivery is unaffected -- see worker.ts for
+ * how those results get posted individually rather than as one batch
+ * message).
  *
  * Deliberately adapter-agnostic, with no new SegmentationAdapter methods:
  * `preprocess()`/`infer()`/`postprocess()` are called exactly as
  * `runSlice()` already calls them, one slice at a time for pre/post-
- * processing -- only the single `infer()` call in the middle operates on
- * a stacked batch tensor. Batch stacking only needs each preprocessed
+ * processing -- only the single `infer()` call in the middle operates on a
+ * stacked batch tensor. Batch stacking only needs each preprocessed
  * tensor's own flat data length and dims (to build `[N, ...dims.slice(1)]`),
  * and un-stacking the output only needs its total length divided by N --
- * neither needs any model-specific knowledge (e.g. class count), so this
- * works for any adapter whose preprocess() output has a leading batch-of-1
- * dimension, matching this project's ONNX exports' `dynamic_axes` batch
- * dimension (confirmed directly against the FP32/INT8/FP16 .onnx files,
- * not just the export script, before starting this work).
+ * neither needs any model-specific knowledge, so this works for any
+ * adapter whose preprocess() output has a leading batch-of-1 dimension,
+ * matching this project's ONNX exports' `dynamic_axes` batch dimension.
  */
 export async function runBatch<TMeta>(
   adapter: SegmentationAdapter<TMeta>,
@@ -92,10 +90,7 @@ export async function runBatch<TMeta>(
   const outputItemDims = [1, ...batchedLogits.dims.slice(1)];
 
   return requests.map((request, i) => {
-    const itemData = (batchedLogits.data as Float32Array).subarray(
-      i * outputItemSize,
-      (i + 1) * outputItemSize,
-    );
+    const itemData = (batchedLogits.data as Float32Array).subarray(i * outputItemSize, (i + 1) * outputItemSize);
     const itemLogits = new ort.Tensor("float32", itemData, outputItemDims);
     const data = adapter.postprocess(itemLogits, preprocessed[i]!.meta, {
       width: request.slice.width,

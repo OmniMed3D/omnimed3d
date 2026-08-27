@@ -1,27 +1,22 @@
 /**
  * Inference Worker entry point (REQ-A03/A09/A16). Thin `self.onmessage`
- * wrapper around pipeline.ts — kept deliberately minimal since browser
- * bundling and the exact Parse Worker -> Inference Worker message shape
- * are not decided yet (REQ-C04 is still mostly open; see
- * ai-pipeline/inference-worker-handoff.md §5).
+ * wrapper around pipeline.ts.
  *
  * The OUTGOING `mask-slice` shape (§5.3.2) is fixed; the INCOMING shape
  * below is this worker's own provisional assumption for a single HU slice,
- * not a confirmed cross-track contract.
+ * not a PRD-confirmed cross-track contract (REQ-C04).
  */
 // Type-only -- "onnxruntime-web" and "onnxruntime-web/webgpu" are the same
 // package's two entry bundles and export identical types, so this covers
 // both without committing to either at compile time. Which one actually
-// loads at runtime is decided per `init` message inside the handler below
-// (dynamic `import()`, not this), since it depends on isWebKitForced()/
-// gpuDetected -- values only known once a message arrives. "onnxruntime-web"
-// (the default subpath) resolves to a bundle that only registers the
-// wasm/webgl backends; the webgpu (JSEP) backend is a separate subpath
-// (see package.json's `exports["./webgpu"]`), needed to get WebGPU support
-// at all (Issue #35) -- but merely loading that JSEP-variant WASM binary
-// carries the WebKit JIT bug (microsoft/onnxruntime#26827) regardless of
-// whether WebGPU ends up used, so a WebKit session must never import it,
-// full stop (see environment.ts).
+// loads at runtime is decided per `init` message (dynamic `import()`, not
+// this), since it depends on isWebKitForced()/gpuDetected -- only known
+// once a message arrives. The default "onnxruntime-web" subpath only
+// registers the wasm/webgl backends; the webgpu (JSEP) backend is a
+// separate subpath (see package.json's `exports["./webgpu"]`) -- but
+// merely loading that JSEP-variant WASM binary carries the WebKit JIT bug
+// (microsoft/onnxruntime#26827) regardless of whether WebGPU ends up used,
+// so a WebKit session must never import it, full stop (see environment.ts).
 import type * as ort from "onnxruntime-web";
 import { LungmaskAdapter } from "./adapters/lungmask/index.js";
 import type { HuSlice, SegmentationAdapter } from "./adapters/types.js";
@@ -145,17 +140,13 @@ let session: ort.InferenceSession | undefined;
 
 /**
  * Confirms a session can actually run a forward pass, not just that
- * `ort.InferenceSession.create()` resolved (issue: "Recover from WebGPU
- * session/inference failure after hardware detection succeeds" --
- * `navigator.gpu.requestAdapter()` succeeding, per Issue #35's
- * `gpuDetected` probe, doesn't guarantee `session.run()` itself works --
- * a Dawn/driver quirk could still make the first real inference fail).
- * Runs the adapter's own preprocess()/infer() on a throwaway all-zero
- * slice -- deliberately reuses the real code path (not a hand-rolled
- * shaped tensor) so this stays adapter-agnostic; `cropAndResize`'s
- * "no body-mask region found" fallback (full-frame bbox) already handles
- * an all-zero input without throwing, confirmed by reading
- * preprocess.ts directly rather than assumed.
+ * `ort.InferenceSession.create()` resolved -- `navigator.gpu.requestAdapter()`
+ * succeeding doesn't guarantee `session.run()` itself works, since a
+ * Dawn/driver quirk could still make the first real inference fail. Runs
+ * the adapter's own preprocess()/infer() on a throwaway all-zero slice --
+ * deliberately reuses the real code path (not a hand-rolled shaped tensor)
+ * so this stays adapter-agnostic; `cropAndResize`'s "no body-mask region
+ * found" fallback already handles an all-zero input without throwing.
  */
 async function validateSession(candidate: SegmentationAdapter, candidateSession: ort.InferenceSession): Promise<void> {
   const probeSlice: HuSlice = { data: new Float32Array(64 * 64), width: 64, height: 64 };
@@ -177,63 +168,27 @@ async function validateSession(candidate: SegmentationAdapter, candidateSession:
 // behind it.
 let inferenceQueue: Promise<void> = Promise.resolve();
 
-// Batch accumulation strategy (Issue #24): incoming hu-slice messages are
-// buffered for a short window instead of triggering inference immediately,
-// so a burst of slices arriving close together (e.g. the Parse Worker
-// forwarding many slices from one DICOM series) gets combined into fewer,
-// larger session.run() calls -- see pipeline.ts's runBatch() for why that
-// reduces total processing time.
+// Incoming hu-slice messages are buffered for a short window (setTimeout,
+// not queueMicrotask -- a microtask-level flush fires before the event loop
+// delivers additional already-queued postMessage events, so it would never
+// see more than one slice per flush) and combined into fewer, larger
+// session.run() calls -- see pipeline.ts's runBatch() for why that reduces
+// total processing time.
 //
-// "Wait for exactly MAX_BATCH_SIZE slices" was rejected: a volume's slice
-// count isn't guaranteed to be a multiple of any fixed batch size, so a
-// trailing remainder would either stall forever waiting for slices that
-// will never come, or need separate end-of-volume signaling this worker
-// doesn't currently have. A pure microtask-level flush (queueMicrotask)
-// was also rejected: that fires before the event loop delivers additional
-// already-queued postMessage events, so it would never actually see more
-// than one slice per flush -- defeating the point. A short macrotask-level
-// window (setTimeout) lets several already-in-flight messages arrive
-// before flushing, and a lone slice (no burst) still only waits one short
-// window, not indefinitely.
-//
-// 8 chosen from desktop/Android measurement (test/batch-latency-benchmark.test.ts,
-// e2e/batch-latency-browser.spec.ts; see docs/verification/inference-worker.md
-// §10), not guessed -- most model/EP combinations plateau by batch size
-// 4-8 (modest ~10-20% gain), but INT8-on-WebGPU keeps improving through 8
-// (1.60x at 8, still climbing) and is the one combination where this
-// matters most: batching amortizes the fixed per-call cost of its 117
-// CPU-fallback QuantizeLinear nodes (§8.3) across the whole batch instead
-// of paying it per slice, which is enough to bring INT8-on-WebGPU under
-// the 500ms/slice target for the first time (was the one model/EP gap
-// Issue #35 left open).
-//
-// iOS gets 4 instead, from real-iPhone-14-Pro measurement
-// (docs/ai-track-decisions.md, 2026-08-26): 8 reliably crashed (even
-// right after init-complete, before any volume was loaded), 4 was the
-// only size that completed a full run. Deliberately isIOS(), not
-// isWebKitForced() -- a later real desktop-Safari run (once an unrelated
-// Engine WebGPU-surface bug blocking Safari entirely was fixed) completed
-// fine at 8, so capping desktop Safari at 4 too on the assumption that
-// "same JS engine family" implies "same batch ceiling" would cost real
-// throughput for a risk direct testing didn't confirm -- see
-// environment.ts's isIOS() comment.
+// MAX_BATCH_SIZE differs by platform, from measurement rather than a guess
+// (test/batch-latency-benchmark.test.ts, e2e/batch-latency-browser.spec.ts;
+// see docs/verification/inference-worker.md §10): most model/EP
+// combinations plateau by batch size 4-8, but INT8-on-WebGPU keeps
+// improving through 8 and needs that size to bring its per-call
+// CPU-fallback overhead (§8.3) under the 500ms/slice target. iOS gets 4
+// instead -- 8 reliably crashes on real hardware, while desktop Safari
+// stays stable at 8, which is why this checks isIOS() specifically rather
+// than isWebKitForced() (see environment.ts's isIOS() comment).
 const MAX_BATCH_SIZE = isIOS(navigator.userAgent) ? 4 : 8;
 const BATCH_WINDOW_MS = 20;
 
 let pendingBatch: SliceRequest[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
-
-// TEMP DIAGNOSTIC (remove once the real-device iOS Safari white-screen/OOM
-// crash investigation is done) -- Safari's OOM kill isn't a catchable JS
-// error, so the only way to see how far a run got before it happened is a
-// log trail captured via Web Inspector's "Preserve Log" (which survives
-// the auto-reload). A monotonic counter plus each flush's slice range is
-// enough to tell "died between batch N and N+1" without needing per-
-// preprocess/infer timing (that was for the WebKit JIT-stall
-// investigation, ADR-0003 -- this is a different question: how much
-// cumulative work happened before memory ran out, not how long one call
-// took).
-let flushCounter = 0;
 
 function scheduleBatchFlush(): void {
   if (flushTimer !== undefined) return;
@@ -241,22 +196,14 @@ function scheduleBatchFlush(): void {
     flushTimer = undefined;
     const batch = pendingBatch.splice(0, MAX_BATCH_SIZE);
     if (batch.length > 0) {
-      const thisFlush = ++flushCounter;
-      const sliceRange = `${batch[0]!.sliceIndex}-${batch[batch.length - 1]!.sliceIndex}`;
-      console.log(`[AI-DIAG] #${thisFlush} starting batch[${sliceRange}] (${batch.length} slices)`);
       inferenceQueue = inferenceQueue
         .then(async () => {
-          // Mobile OOM mitigation: tells the Shell to pause rendering for
-          // the duration of this batch, so it doesn't compete with
-          // inference for the same GPU. One flush cycle (this .then()
-          // body) is the pause/resume unit, not per-slice -- paired with
-          // the "inference-ended" post in .finally() below, which fires
-          // on both success and failure so a batch error can't leave
-          // rendering paused forever. inferenceQueue's own sequential
-          // chaining means a back-to-back flush's "inference-started"
-          // can't fire until this one's .finally() has already run, so
-          // there's no window where rendering incorrectly resumes while
-          // a later flush is still actually in flight.
+          // Mobile OOM mitigation: tells the Shell to pause rendering for the
+          // duration of this batch (per flush, not per-slice) so it doesn't
+          // compete with inference for the same GPU -- paired with the
+          // "inference-ended" post in .finally() below, which fires on both
+          // success and failure so a batch error can't leave rendering
+          // paused forever.
           (self as unknown as Worker).postMessage({ type: "inference-started" });
           if (!adapter || !session) {
             throw new Error("Inference Worker received a slice before 'init'");
@@ -265,18 +212,14 @@ function scheduleBatchFlush(): void {
           try {
             results = await runBatch(adapter, session, batch);
           } catch (batchErr) {
-            // Some models have a statically-fixed batch=1 input shape
-            // rather than a dynamic batch axis (confirmed: the dummy
-            // plumbing model viewer/tests/e2e/shell-mask-integration.spec.ts
-            // uses, tests/fixtures/generate-dummy-onnx.py, has no
-            // dynamic_axes at all, unlike the real lungmask export) --
-            // runBatch() throws for those the moment more than one slice
-            // needs batching. Found via a real regression in that test,
-            // not a hypothetical. Fall back to one-at-a-time processing
-            // for this batch (sequential, not Promise.all -- concurrent
-            // session.run() calls are exactly what the original
-            // concurrency-hang fix above exists to prevent) rather than
-            // losing the whole batch silently.
+            // Some models have a statically-fixed batch=1 input shape rather
+            // than a dynamic batch axis (e.g. tests/fixtures/generate-dummy-onnx.py's
+            // dummy plumbing model), for which runBatch() throws the moment
+            // more than one slice needs batching. Fall back to one-at-a-time
+            // processing for this batch (sequential, not Promise.all --
+            // concurrent session.run() calls are what the concurrency-hang
+            // fix above exists to prevent) rather than losing the whole
+            // batch silently.
             console.error(
               "Inference Worker: batched inference failed, falling back to per-slice for this batch",
               batch.map((r) => r.sliceIndex),
@@ -290,11 +233,9 @@ function scheduleBatchFlush(): void {
           for (const result of results) {
             (self as unknown as Worker).postMessage(result, [result.data.buffer]);
           }
-          console.log(`[AI-DIAG] #${thisFlush} finished batch[${sliceRange}]`);
         })
         .catch((err: unknown) => {
           console.error(
-            `[AI-DIAG] #${thisFlush} failed batch[${sliceRange}]`,
             "Inference Worker: failed to process batch",
             batch.map((r) => r.sliceIndex),
             err,
@@ -336,9 +277,7 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
     // re-importing: it only ever runs when effectiveGpuDetected started
     // true (i.e. never for a WebKit session, which starts false), so
     // there's nothing WebKit-unsafe about that reuse.
-    const ortModule = effectiveGpuDetected
-      ? await import("onnxruntime-web/webgpu")
-      : await import("onnxruntime-web");
+    const ortModule = effectiveGpuDetected ? await import("onnxruntime-web/webgpu") : await import("onnxruntime-web");
 
     const primaryModelPath = msg.modelBasePath
       ? resolveModelPath(msg.modelBasePath, effectiveGpuDetected)
@@ -392,14 +331,11 @@ self.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       await validateSession(adapter, session);
     } catch (err) {
       // Only a modelBasePath (hardware-auto-selected) caller run against an
-      // (effectively) detected GPU has a fallback target worth retrying
-      // with -- an explicit modelPath caller (e.g.
-      // shell-mask-integration.spec.ts's dummy plumbing model) asked for
-      // one exact file and has nothing else to fall back to, and a caller
-      // that's already on effectiveGpuDetected=false (including a
-      // debugForce: "wasm-int8" caller) is already on the INT8/WASM
-      // baseline this fallback exists to reach, so there's nowhere further
-      // to fall back to either.
+      // (effectively) detected GPU has a fallback target worth retrying with
+      // -- an explicit modelPath caller asked for one exact file and has
+      // nothing else to fall back to, and a caller already on
+      // effectiveGpuDetected=false is already on the INT8/WASM baseline
+      // this fallback exists to reach.
       if (!msg.modelBasePath || !effectiveGpuDetected) {
         throw err;
       }

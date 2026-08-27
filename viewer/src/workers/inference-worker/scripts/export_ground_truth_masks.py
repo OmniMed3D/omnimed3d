@@ -66,10 +66,8 @@ def main() -> None:
         # iterates per slice internally) -- wrap this single slice as N=1.
         # Its second return value is the per-slice body-mask crop bounding
         # box ((min_row, min_col, max_row, max_col), skimage regionprops
-        # convention) -- previously discarded here, which is exactly why
-        # the mask this script wrote out shared postprocess.ts's crop-
-        # restore bug rather than catching it: both naively zoomed straight
-        # to full resolution instead of restoring this bbox first.
+        # convention), needed below to restore the crop before upscaling to
+        # full resolution.
         preprocessed, bboxes = lungmask_preprocess(
             np.clip(hu, -1024, 600)[np.newaxis, :, :], resolution=RESOLUTION
         )
@@ -86,7 +84,8 @@ def main() -> None:
 
         # Upscale to the crop bbox's own size (not the full slice), then
         # paste into a zero-initialized (background) full-resolution
-        # canvas at the bbox's offset -- mirrors postprocess.ts's fix.
+        # canvas at the bbox's offset -- mirrors postprocess.ts's own
+        # upscaling logic.
         min_row, min_col, max_row, max_col = bbox
         crop_h, crop_w = max_row - min_row, max_col - min_col
         upscaled_crop = ndimage.zoom(

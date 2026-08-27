@@ -10,11 +10,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // it this way (a real HTTP response from Vite's dev server) rather than
 // via Playwright's page.route().fulfill() is required, not a style choice:
 // route.fulfill() proxies the body through Chromium's CDP pipe, which has
-// a hard 100MB capacity -- confirmed by a real crash
-// ("Too large read data is pending: capacity=104857600 ... Connection
-// closed, not enough capacity") the first time this benchmark tried to
-// route the 116MB file that way, killing the whole browser process before
-// the page even loaded.
+// a hard 100MB capacity and crashes the whole browser process on a file
+// this size.
 const AI_PIPELINE_DIR = path.resolve(HERE, "../../../../ai-pipeline");
 
 // Minimal standalone dev server for bench/ (real-browser latency
@@ -28,34 +25,24 @@ export default defineConfig({
     port: 5174,
     // searchForWorkspaceRoot(HERE) restores Vite's own default allow-root
     // (the viewer/ workspace root, where onnxruntime-web's wasm assets
-    // actually resolve from post-hoisting -- confirmed by a real 403 the
-    // first time this only allow-listed HERE and AI_PIPELINE_DIR) --
-    // explicitly setting `fs.allow` replaces Vite's default entirely
-    // rather than extending it, so this has to be re-added by hand.
+    // actually resolve from post-hoisting) -- explicitly setting `fs.allow`
+    // replaces Vite's default entirely rather than extending it, so this
+    // has to be re-added by hand.
     fs: { allow: [searchForWorkspaceRoot(HERE), AI_PIPELINE_DIR] },
     // Required for SharedArrayBuffer, which onnxruntime-web's threaded WASM
-    // backend needs to use real multi-threading (Issue #35) -- without
-    // these, the threaded WASM binary can silently fall back to a
-    // single-threaded path instead of erroring, which would make any
-    // WASM-vs-WebGPU comparison measure "browser + a threading bug" rather
-    // than a fair baseline.
-    // Cross-Origin-Resource-Policy, matching viewer/vite.config.ts's own
-    // fix (found there via real Safari Web Inspector, 2026-08-26): under
-    // COEP: require-corp, WebKit -- more strictly than Chromium, which
-    // let this pass silently -- requires every resource a `type: "module"`
-    // Worker's module graph loads to carry an explicit CORP header. Vite's
-    // dev server auto-injects its HMR client (`@vite/client`) into every
-    // such Worker (this harness's own bench/workerHarness.ts included) but
-    // doesn't add this header to it -- without it, WebKit blocks the
-    // Worker's own module import chain outright ("Worker load was blocked
-    // by Cross-Origin-Embedder-Policy" / "Importing a module script
-    // failed"), so `init` never completes. Chromium/Playwright testing
-    // never surfaces this, since it doesn't enforce the requirement as
-    // strictly -- confirmed missing here only because a real-Safari
-    // session (2026-08-27, WebKit routing verification) used this exact
-    // harness successfully without it, meaning this gap hadn't actually
-    // been exercised by that flow -- added proactively to match Engine's
-    // already-fixed config, not because a failure was reproduced here.
+    // backend needs to use real multi-threading -- without these, the
+    // threaded WASM binary can silently fall back to a single-threaded
+    // path instead of erroring, which would make any WASM-vs-WebGPU
+    // comparison measure "browser + a threading bug" rather than a fair
+    // baseline.
+    //
+    // Cross-Origin-Resource-Policy matches viewer/vite.config.ts's own fix:
+    // under COEP: require-corp, WebKit -- more strictly than Chromium --
+    // requires every resource a `type: "module"` Worker's module graph
+    // loads to carry an explicit CORP header. Vite's dev server injects its
+    // HMR client (`@vite/client`) into every such Worker but doesn't add
+    // this header to it, so without it WebKit blocks the Worker's own
+    // module import chain outright and `init` never completes.
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
@@ -64,9 +51,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     // Same onnxruntime-web wasm-asset-resolution issue documented in
-    // ../../shell/../../vite.config.ts (viewer/vite.config.ts) -- Vite's
-    // dev-time dependency pre-bundling relocates the package without its
-    // .wasm binaries, causing a 404. Excluding from pre-bundling avoids it.
+    // viewer/vite.config.ts -- Vite's dev-time dependency pre-bundling
+    // relocates the package without its .wasm binaries, causing a 404.
+    // Excluding from pre-bundling avoids it.
     exclude: ["onnxruntime-web"],
   },
 });

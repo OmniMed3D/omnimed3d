@@ -20,9 +20,7 @@ import { ONNX_MODEL_PATH_FP16, ONNX_MODEL_PATH_INT8 } from "../test/fixtures.js"
  * through Vite's own /@fs/ static-file path (see vite.config.ts's
  * `server.fs.allow` comment for why: page.route().fulfill() proxies the
  * response body through Chromium's CDP pipe, which has a hard 100MB
- * capacity and crashes the browser outright on a file this size --
- * confirmed by a real crash the first time this test tried it, not a
- * theoretical concern).
+ * capacity and crashes the browser outright on a file this size).
  *
  * Runs each model on both EPs (Issue #35): "wasm" reproduces this file's
  * long-standing baseline unchanged; "webgpu" adds bench.ts's `verbose=1`

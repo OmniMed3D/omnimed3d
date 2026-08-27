@@ -18,29 +18,23 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        // WebGPU EP benchmarking (Issue #35) needs a real GPU adapter, not
-        // just a WebGPU-capable browser build -- headless Chromium disables
-        // the GPU process by default and navigator.gpu.requestAdapter()
-        // resolves to null without these (confirmed directly: identical
-        // launch minus these two flags reproducibly returns a null
-        // adapter). `--use-angle=metal` is macOS-specific (this project's
-        // whole benchmark suite is already scoped to one MacBook M1, see
+        // WebGPU EP benchmarking needs a real GPU adapter, not just a
+        // WebGPU-capable browser build -- headless Chromium disables the
+        // GPU process by default, so navigator.gpu.requestAdapter() would
+        // otherwise resolve to null. `--use-angle=metal` is macOS-specific
+        // (this benchmark suite is scoped to one MacBook M1, see
         // docs/verification/inference-worker.md's "Test Environment"
         // section) -- a Linux CI runner would need a different ANGLE
-        // backend (e.g. vulkan) or would fail this adapter check and skip
-        // straight to the WASM fallback, which is itself a legitimate
-        // thing for REQ-C02's hardware-fallback hierarchy to exercise.
+        // backend or would fail this adapter check and skip straight to
+        // the WASM fallback, which is itself a legitimate thing for
+        // REQ-C02's hardware-fallback hierarchy to exercise.
         launchOptions: {
-          // --ignore-gpu-blocklist added after this project's real
-          // GitHub-hosted macos-latest CI runner returned gpuDetected:false
-          // across the board (all tests silently WASM-fallback-passed,
-          // some timing assertions then failed from WASM being slower) --
-          // a local physical GPU (this suite's dev/verification machine)
-          // never hits Chromium's blocklist, but macos-latest's virtualized
-          // GPU does. Matches viewer/playwright.config.ts's (Engine-owned)
-          // non-Windows args exactly, and spike-webgpu-macos-runner.yml's
-          // flags, which is how this gap was found -- that workflow's own
-          // inline launch args included this flag, this file's didn't.
+          // --ignore-gpu-blocklist: a macOS CI runner's virtualized GPU
+          // hits Chromium's blocklist even though a local physical GPU
+          // doesn't, which silently forces every test onto the WASM
+          // fallback path instead of the WebGPU path being benchmarked.
+          // Matches viewer/playwright.config.ts's (Engine-owned) non-Windows
+          // args.
           args: ["--use-gl=angle", "--use-angle=metal", "--enable-unsafe-webgpu", "--ignore-gpu-blocklist"],
         },
       },
