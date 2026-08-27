@@ -17,15 +17,14 @@
  * framing. It rejects anything else (sagittal/coronal/oblique) via
  * UnsupportedOrientationError rather than silently mishandling it.
  *
- * Oblique fallback (2026-08-27, bug report: UPENN-GBM brain MR series
- * failed to load -- real neuro MR is routinely angled a few to ~20
- * degrees off axial to align with the AC-PC line, which every series in
- * that dataset hits): `computeObliqueResampleGrid`/`canonicalToSourceIndex`
- * below let pipeline.ts's `assembleSeries` resample a genuinely oblique
- * series onto a canonical-axis-aligned grid via trilinear interpolation,
- * instead of rejecting it outright. This module stays pure geometry --
- * the actual pixel resampling loop (which needs the HU data these
- * functions don't touch) lives in pipeline.ts.
+ * Oblique fallback: real neuro MR is routinely angled a few to ~20
+ * degrees off axial to align with the AC-PC line, so
+ * `computeObliqueResampleGrid`/`canonicalToSourceIndex` below let
+ * pipeline.ts's `assembleSeries` resample a genuinely oblique series onto
+ * a canonical-axis-aligned grid via trilinear interpolation instead of
+ * rejecting it. This module stays pure geometry -- the actual pixel
+ * resampling loop (which needs the HU data these functions don't touch)
+ * lives in pipeline.ts.
  */
 
 export type Axis = "x" | "y" | "z";
@@ -257,24 +256,17 @@ function dominantAxisIndex(v: Vec3): 0 | 1 | 2 {
  * itself is expressed in, so "projected onto" is just taking min/max of
  * each corner's X/Y/Z component directly, no extra rotation needed).
  *
- * Output spacing per canonical axis (bug fix, 2026-08-27, follow-up to
- * the UPENN-GBM report -- a *sagittal* series, T2 SAG SPACE, from the
- * same dataset, whose slice-stacking direction is ~X, not ~Z): each
- * output axis's step size must come from whichever of the source's three
- * spacings (pixelSpacingColumn along `row`, pixelSpacingRow along
- * `column`, sliceSpacing along `normal`) actually governs movement along
- * that physical direction -- not a fixed "spacingX always comes from
- * pixelSpacingColumn" mapping, which is only correct by coincidence when
- * `row`/`column`/`normal` already happen to point roughly along
- * X/Y/Z respectively (the near-axial-tilt case this function was
- * originally written and tested against). For a 90-degree-permuted
- * acquisition (sagittal/coronal) that assumption silently mislabels which
- * spacing applies to which output axis; it only produced a visually
- * correct result for the UPENN-GBM sagittal series by luck, because that
- * particular "SPACE" sequence happens to be near-isotropic (~0.9mm in all
- * three directions) -- see the sagittal-with-anisotropic-spacing test in
- * orientation.test.ts for a case that would have visibly failed under the
- * old fixed mapping.
+ * Output spacing per canonical axis: each output axis's step size must
+ * come from whichever of the source's three spacings (pixelSpacingColumn
+ * along `row`, pixelSpacingRow along `column`, sliceSpacing along
+ * `normal`) actually governs movement along that physical direction --
+ * not a fixed "spacingX always comes from pixelSpacingColumn" mapping,
+ * which is only correct when `row`/`column`/`normal` already point
+ * roughly along X/Y/Z (the near-axial-tilt case). For a 90-degree-permuted
+ * acquisition (sagittal/coronal) that assumption mislabels which spacing
+ * applies to which output axis -- see the sagittal-with-anisotropic-
+ * spacing test in orientation.test.ts for a case that fails under the
+ * fixed mapping.
  */
 export function computeObliqueResampleGrid(
   geometry: ObliqueSeriesGeometry,

@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * User request, 2026-08-26: Low-Memory Mode/Downsample Factor
- * (deviceTier.ts) only take effect at `_engine_load_volume` call time --
+ * Low-Memory Mode/Downsample Factor (deviceTier.ts) only take effect at
+ * `_engine_load_volume` call time --
  * toggling either with a volume already on screen previously had no way
  * to actually re-apply short of re-picking the same file(s) from a
  * native dialog. reloadVolumeControl.ts's `#reload-volume` button redoes
@@ -86,8 +86,8 @@ test("Reload Volume also works after Load Demo CT", async ({ page }) => {
   // 133 slices over the network takes materially longer than CT_small.dcm
   // -- 60s covers a slow CI runner, matching demo-ct-loader.spec.ts.
   await waitForLine(/WebGPUDevice::loadVolume: volumeId=\d+ .* loaded/, 60000);
-  // Toggle behavior (2026-08-26): re-selectable, not permanently disabled --
-  // .active is demoCtControls.ts's "this series is the one loaded" signal.
+  // Re-selectable, not permanently disabled -- .active is
+  // demoCtControls.ts's "this series is the one loaded" signal.
   await expect(page.locator("#load-demo-ct")).toBeEnabled();
   await expect(page.locator("#load-demo-ct")).toHaveClass(/active/);
 

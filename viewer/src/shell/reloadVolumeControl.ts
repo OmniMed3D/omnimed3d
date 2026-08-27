@@ -1,6 +1,6 @@
 /**
- * "Reload Volume" button (user request, 2026-08-26). Low-Memory Mode and
- * Downsample Factor (deviceTier.ts) are both load-time-only settings --
+ * "Reload Volume" button. Low-Memory Mode and Downsample Factor
+ * (deviceTier.ts) are both load-time-only settings --
  * toggling either after a volume is already loaded has no visible effect
  * until the volume loads again, and until this button existed there was
  * no way to trigger that short of re-picking the same file(s) from a

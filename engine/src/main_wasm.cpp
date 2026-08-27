@@ -1,7 +1,6 @@
-// WASM smoke-test entry point (roadmap step 2: minimal WebGPU canvas).
-// Not the real application entry point -- viewer/ wraps the WASM module
-// for that (roadmap step 6). This exists to visually prove the WebGPU
-// pipeline works end-to-end in Chrome.
+// WASM smoke-test entry point. Not the real application entry point --
+// viewer/ wraps the WASM module for that. This exists to visually prove
+// the WebGPU pipeline works end-to-end in Chrome.
 
 #include "rhi/webgpu/WebGPUDevice.hpp"
 
@@ -26,13 +25,12 @@ int main() {
     return 0;
 }
 
-// JS-callable exports (roadmap step 4). EMSCRIPTEN_KEEPALIVE alone makes
-// these callable as Module._engine_load_volume(...) / Module._engine_apply_mask_slice(...)
-// -- no additional -s EXPORTED_FUNCTIONS linker flag needed (main() itself
-// is already proof this mechanism works). Real orchestration (minting
-// volumeId, receiving Parse/Inference Worker output) is the future
-// viewer/-owned layer, PRD #5.3.2 -- this smoke test's shell.html simulates
-// it with synthetic data.
+// JS-callable exports. EMSCRIPTEN_KEEPALIVE alone makes these callable as
+// Module._engine_load_volume(...) / Module._engine_apply_mask_slice(...)
+// -- no additional -s EXPORTED_FUNCTIONS linker flag needed. Real
+// orchestration (minting volumeId, receiving Parse/Inference Worker
+// output) is the viewer/-owned layer, PRD #5.3.2 -- this smoke test's
+// shell.html simulates it with synthetic data.
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE
@@ -47,10 +45,10 @@ void engine_load_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uin
                          downsampleFactor);
 }
 
-// MPR + native-slice feature (2026-08-27 user request) -- the DICOM
-// series' own original per-file slices, see rhi::Device::loadNativeVolume's
-// header comment. No downsampleFactor: this view has no cinematic
-// rendering path to trade memory against.
+// MPR + native-slice feature -- the DICOM series' own original per-file
+// slices, see rhi::Device::loadNativeVolume's header comment. No
+// downsampleFactor: this view has no cinematic rendering path to trade
+// memory against.
 EMSCRIPTEN_KEEPALIVE
 void engine_load_native_volume(uint32_t volumeId, uint8_t* data, size_t byteLength, uint32_t width, uint32_t height,
                                  uint32_t depth, float spacingX, float spacingY, float spacingZ) {
@@ -63,23 +61,24 @@ void engine_apply_mask_slice(uint32_t volumeId, uint32_t sliceIndex, uint32_t wi
     g_device.applyMaskSlice(volumeId, sliceIndex, width, height, data, byteLength);
 }
 
-// Issue #29 (REQ-R02/R03): clinical window/level, set directly or via a
-// baseline preset. Both safe to call whether or not a volume is loaded yet
-// -- see rhi::Device::setWindowLevel's header comment.
+// REQ-R02/R03: clinical window/level, set directly or via a baseline
+// preset. Both safe to call whether or not a volume is loaded yet -- see
+// rhi::Device::setWindowLevel's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_window_level(float center, float width) {
     g_device.setWindowLevel(center, width);
 }
 
-// presetId: 0=Lung, 1=Bone, 2=Soft Tissue, 3=Brain, 4=Grayscale (default)
-// -- see kColormapPresets in WebGPUDevice.cpp for the concrete values.
+// presetId indexes kColormapPresets in WebGPUDevice.cpp: 0=Lung, 1=Bone,
+// 2=Soft Tissue (default), 3=Brain, 4=Mediastinum, 5=Abdomen/Liver,
+// 6=Stroke, 7=Subdural.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_colormap_preset(uint32_t presetId) {
     g_device.setColormapPreset(presetId);
 }
 
-// Issue #34 (REQ-R06): interactive orbit camera. dx/dy are raw mouse-drag
-// pixel deltas -- see rhi::Device::orbitCamera's header comment.
+// REQ-R06: interactive orbit camera. dx/dy are raw mouse-drag pixel
+// deltas -- see rhi::Device::orbitCamera's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_orbit_camera(float deltaYawPixels, float deltaPitchPixels) {
     g_device.orbitCamera(deltaYawPixels, deltaPitchPixels);
@@ -92,10 +91,9 @@ void engine_zoom_camera(float wheelDeltaSign) {
     g_device.zoomCamera(wheelDeltaSign);
 }
 
-// Issue #37 (PRD §9 slice-panning gap); MPR + native-slice modes added
-// 2026-08-27: view-mode toggle. mode: 0=Orbit3D, 1=Slice2D (Axial/
-// Sagittal/Coronal, see engine_set_slice_axis), 2=NativeSlice2D -- see
-// rhi::Device::setViewMode's header comment.
+// PRD §9 slice-panning gap: view-mode toggle. mode: 0=Orbit3D, 1=Slice2D
+// (Axial/Sagittal/Coronal, see engine_set_slice_axis), 2=NativeSlice2D --
+// see rhi::Device::setViewMode's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_view_mode(uint32_t mode) {
     g_device.setViewMode(mode);
@@ -109,9 +107,8 @@ void engine_set_slice_index(uint32_t index) {
     g_device.setSliceIndex(index);
 }
 
-// MPR (2026-08-27 user request): which physical axis the Slice2D view
-// slices along. axis: 0=Axial, 1=Sagittal, 2=Coronal -- see
-// rhi::Device::setSliceAxis's header comment.
+// MPR: which physical axis the Slice2D view slices along. axis: 0=Axial,
+// 1=Sagittal, 2=Coronal -- see rhi::Device::setSliceAxis's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_slice_axis(uint32_t axis) {
     g_device.setSliceAxis(axis);
@@ -124,8 +121,8 @@ void engine_set_native_slice_index(uint32_t index) {
     g_device.setNativeSliceIndex(index);
 }
 
-// Issue #40: canvas backing-store pixel dimensions (post-devicePixelRatio
-// scaling, not CSS pixels) -- see rhi::Device::resize's header comment.
+// Canvas backing-store pixel dimensions (post-devicePixelRatio scaling,
+// not CSS pixels) -- see rhi::Device::resize's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_resize(uint32_t width, uint32_t height) {
     g_device.resize(width, height);
@@ -139,10 +136,9 @@ void engine_set_quality_tier(uint32_t tier) {
 }
 
 // Gradient-based Lambert shading mode: 0=off, 1=on, 2=on-flat -- see
-// rhi::Device::setShadingMode's header comment. Export name kept as
-// `_enabled` (not renamed to `_mode`) even though it now accepts a
-// tri-state value, to avoid an unrelated JS-side rename churning every
-// call site for what's still fundamentally the same control.
+// rhi::Device::setShadingMode's header comment. Export name is `_enabled`
+// (not `_mode`) even though it accepts a tri-state value, to keep the
+// JS-side call sites stable.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_shading_enabled(uint32_t mode) {
     g_device.setShadingMode(mode);
@@ -165,9 +161,8 @@ void engine_set_threshold(float threshold) {
     g_device.setThreshold(threshold);
 }
 
-// Debug/tuning export (§5.3 follow-up, 2026-08-27) -- see
-// WebGPUDevice::setThresholdMax's own header comment: not wired to a UI
-// slider yet, callable from the browser console for now.
+// Debug/tuning export -- see WebGPUDevice::setThresholdMax's own header
+// comment: not wired to a UI slider, callable from the browser console.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_threshold_max(float thresholdMax) {
     g_device.setThresholdMax(thresholdMax);
@@ -192,8 +187,8 @@ void engine_set_occlusion_enabled(uint32_t enabled) {
     g_device.setOcclusionEnabled(enabled != 0);
 }
 
-// Custom colormap (on top of the 5 fixed presets above) -- low/high RGB
-// in [0,1]. See rhi::Device::setCustomColormap's header comment.
+// Custom colormap (on top of the fixed presets above) -- low/high RGB in
+// [0,1]. See rhi::Device::setCustomColormap's header comment.
 EMSCRIPTEN_KEEPALIVE
 void engine_set_custom_lut_colors(float lowR, float lowG, float lowB, float highR, float highG, float highB) {
     g_device.setCustomColormap(lowR, lowG, lowB, highR, highG, highB);
@@ -219,9 +214,8 @@ void engine_set_background_color(float r, float g, float b) {
     g_device.setBackgroundColor(r, g, b);
 }
 
-// Debug/perf overlay (baseline browser-performance measurement --
-// engine/tests/wasm_smoke/shell.html's stats panel). See
-// rhi::Device::getFrameStats/getHardwareInfo's header comments.
+// Debug/perf overlay (engine/tests/wasm_smoke/shell.html's stats panel).
+// See rhi::Device::getFrameStats/getHardwareInfo's header comments.
 EMSCRIPTEN_KEEPALIVE
 float engine_get_frame_time_ms() {
     return g_device.getFrameStats().frameTimeMs;

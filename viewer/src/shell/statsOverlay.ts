@@ -20,10 +20,10 @@
 const UPDATE_INTERVAL_MS = 250; // readable refresh rate, independent of actual frame rate
 const COPY_FEEDBACK_MS = 1200;
 
-// Issue #69: `?debug=1` starts this panel already visible -- on a phone,
-// reaching the Debug section's checkbox at all requires scrolling past
-// the rest of #control-panel, which the mobile browser's own bottom
-// toolbar can make awkward mid-test. Defaults to false (the pre-existing
+// `?debug=1` starts this panel already visible -- on a phone, reaching
+// the Debug section's checkbox at all requires scrolling past the rest
+// of #control-panel, awkward under the mobile browser's own bottom
+// toolbar mid-test. Defaults to false (the pre-existing
 // off-by-default behavior this file's own header comment already
 // documents) so normal/product usage is unaffected -- this only changes
 // anything when the URL param is explicitly present.
@@ -76,12 +76,9 @@ export function setupStatsOverlay(startVisible = false): void {
       const description = module.UTF8ToString(module._engine_get_gpu_description()) || "n/a";
       const canvasRes = `${canvas!.width}x${canvas!.height}`;
 
-      // FPS/Frame line matches Mini-Engine-reference's own Statistics panel
-      // format exactly (ImGuiManager.cpp: "FPS: %.1f  |  Frame: %.3f ms") --
-      // one line, pipe-separated, 3 decimal places on frame time. The GPU
-      // fields have no Mini-Engine equivalent (that codebase only logs its
-      // device name to stdout, never in-UI) -- they're this overlay's own
-      // addition for the hardware-baseline half of the original ask.
+      // FPS/Frame line: one line, pipe-separated, 3 decimal places on
+      // frame time. The GPU fields below are this overlay's own
+      // addition for the hardware-baseline half of the ask.
       const perfText = `${fps.toFixed(1)}  |  Frame: ${avgFrameMs.toFixed(3)} ms`;
 
       // GPU-side pass timing (WebGPU timestamp-query, optional feature --

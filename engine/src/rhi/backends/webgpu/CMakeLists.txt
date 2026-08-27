@@ -15,12 +15,8 @@ add_dependencies(rhi_webgpu compile_shaders)
 # glm (header-only, camera/projection math for the raymarch UBO) via
 # FetchContent, not vcpkg.json -- rhi_webgpu only builds under EMSCRIPTEN
 # today (no Vulkan Device implementation exists yet) and the wasm-windows
-# preset does not wire in vcpkg's toolchain file at all (confirmed: only
-# windows-default/macos-default do), so a vcpkg manifest dependency would
-# never resolve here. This matches CLAUDE.md #7's own stated convention
-# ("WASM-only deps should use FetchContent") and Mini-Engine-reference's
-# identical glm FetchContent block (CMakeLists.txt), version-pinned the
-# same way (1.0.1).
+# preset does not wire in vcpkg's toolchain file, so a vcpkg manifest
+# dependency would never resolve here.
 include(FetchContent)
 FetchContent_Declare(
     glm
@@ -40,8 +36,7 @@ set_target_properties(rhi_webgpu PROPERTIES
 )
 
 # webgpu.h/webgpu_cpp.h ship in emsdk's sysroot already -- no extra include
-# path needed. The emdawnwebgpu port (bundled directly in this emsdk, not
-# vendored -- see engine/docs/adr/0003) must be requested at both compile
-# and link time.
+# path needed. The emdawnwebgpu port (bundled in this emsdk, not vendored)
+# must be requested at both compile and link time.
 target_compile_options(rhi_webgpu PUBLIC "SHELL:--use-port=emdawnwebgpu")
 target_link_options(rhi_webgpu PUBLIC "SHELL:--use-port=emdawnwebgpu")

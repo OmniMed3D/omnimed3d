@@ -5,10 +5,9 @@
 // for the rendering WASM build. Not linked into that rendering build --
 // this is a separate EMSCRIPTEN-only target, see CMakeLists.txt.
 //
-// Deliberately minimal: only the fields the Parse Worker's Milestone 1
-// (Parse Worker -> Inference Worker, one HU slice per DICOM file) and
-// Milestone 2 (Parse Worker -> rendering engine, multi-file volume
-// assembly) need, not the full DicomImageInfo -- e.g. no
+// Deliberately minimal: only the fields the Parse Worker needs (image
+// geometry, pixel-data location, ordering/orientation hints, VOI LUT
+// window, Modality), not the full DicomImageInfo -- e.g. no
 // photometricInterpretation string (already validated inside
 // parseImageInfo; JS only needs the pass/fail error code).
 
@@ -35,10 +34,8 @@ int errorCode(dicom_parser::DicomParseError error) {
 
 // Packed output struct for dicom_wasm_parse_image -- layout is part of the
 // JS<->WASM contract, so every field's offset is pinned with a
-// static_assert below rather than left to the compiler to decide (the
-// "UBO sizes scattered across 4 places" trap this project's design
-// principles warn about -- one struct, one set of asserted offsets, one
-// size getter, instead of JS guessing).
+// static_assert below and JS reads the size from
+// dicom_wasm_image_info_size() rather than hardcoding it.
 struct DicomWasmImageInfo {
     uint32_t rows;
     uint32_t columns;
@@ -86,8 +83,8 @@ static_assert(sizeof(DicomWasmImageInfo) == 176);
 
 extern "C" {
 
-// So JS allocates exactly sizeof(DicomWasmImageInfo) bytes instead of
-// hardcoding 40 and hoping it never drifts from the struct above.
+// So JS allocates exactly sizeof(DicomWasmImageInfo) bytes rather than a
+// hardcoded size that could drift from the struct above.
 EMSCRIPTEN_KEEPALIVE
 uint32_t dicom_wasm_image_info_size() {
     return static_cast<uint32_t>(sizeof(DicomWasmImageInfo));
@@ -129,10 +126,9 @@ int dicom_wasm_parse_meta(uint8_t const* data, size_t size, size_t* outDataSetOf
 // `outModalityBuf` (NUL-terminated, truncated to outModalityBufLen - 1
 // bytes if needed) follows dicom_wasm_parse_meta's transferSyntaxUID
 // out-buffer convention rather than a fixed-size struct field -- Modality
-// (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT"/"MR") is a real string field, and
-// this WASM layer otherwise carries none (see this file's header comment
-// on why strings are normally left out); a short ASCII code string is
-// cheap enough to pass the same way transferSyntaxUID already is.
+// (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT"/"MR") is a string, and a short
+// ASCII code is cheap enough to pass the same way transferSyntaxUID
+// already is.
 EMSCRIPTEN_KEEPALIVE
 int dicom_wasm_parse_image(uint8_t const* data, size_t size, size_t dataSetOffset,
                             char const* transferSyntaxUID, DicomWasmImageInfo* out, char* outModalityBuf,

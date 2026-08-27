@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Regression test for a real data-loss bug (found via user report after
- * Issue #35): clicking "Load Demo CT" before "Load Segmentation Model"
- * finished loading silently dropped every hu-slice message that arrived in
+ * Regression test for a data-loss bug: clicking "Load Demo CT" before
+ * "Load Segmentation Model" finished loading silently dropped every
+ * hu-slice message that arrived in
  * that window -- permanently, with only a console.log as a trace, and no
  * code path ever revisited a dropped slice. A completely reasonable click
  * order (view the volume first, decide to segment it after) to lose all

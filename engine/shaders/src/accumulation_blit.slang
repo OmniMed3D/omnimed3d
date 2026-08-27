@@ -1,5 +1,4 @@
-// Blits the persistent raymarch accumulation buffer to the swapchain
-// (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §6.5) -- a
+// Blits the persistent raymarch accumulation buffer to the swapchain -- a
 // trivial full-screen-triangle passthrough, no UBO. Kept as its own tiny
 // shader/pipeline (not folded into volume_raymarch.slang) since it reads a
 // different texture with different bindings and runs in a separate render
@@ -19,8 +18,7 @@ struct VertexOutput
 
 // Same full-screen-triangle trick as the other shaders in this repo --
 // see volume_raymarch.slang's vertexMain for why it's duplicated rather
-// than shared (no cross-file include mechanism in this repo's slangc
-// build).
+// than shared.
 [shader("vertex")]
 VertexOutput vertexMain(uint vertexIndex : SV_VertexID)
 {

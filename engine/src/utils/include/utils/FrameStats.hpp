@@ -7,9 +7,8 @@
 namespace omnimed3d::utils {
 
 // Backend-agnostic CPU frame timer -- std::chrono::steady_clock works
-// identically native and WASM, so unlike GpuProfiler-style GPU timestamp
-// queries (deferred, see the debug-overlay plan), this needs no
-// EMSCRIPTEN ifdef and no RHI dependency at all.
+// identically on native and WASM, so this needs no EMSCRIPTEN ifdef and
+// no RHI dependency.
 class FrameStats {
 public:
     // Call once per renderFrame(), before any other FrameStats method is

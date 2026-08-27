@@ -3,12 +3,10 @@ import { expect, test } from "@playwright/test";
 /**
  * PRD §9 item 2 ("execution on 4x CPU-throttled environments... frame
  * rate performance documented per Section 4") -- re-measured at a
- * resolution that actually escapes vsync, per
- * `docs/current/PERF_BASELINE_2026-08-21.md` §2's own finding that
- * 1280x900 (the viewport §1's original CPU-throttle sweep used) is
- * capped at the display's own refresh rate regardless of throttle rate,
- * making that sweep's FPS numbers meaningless. §2 found 2560x1440
- * reliably GPU-bound on the reference desktop GPU; this file reuses that
+ * resolution that actually escapes vsync: 1280x900 is capped at the
+ * display's own refresh rate regardless of throttle rate, making its
+ * FPS numbers meaningless, while 2560x1440 is reliably GPU-bound on the
+ * reference desktop GPU. This file reuses that
  * resolution instead of 4K purely to keep frame times in a comfortable
  * range for a throttled CPU.
  *
@@ -39,7 +37,7 @@ import { expect, test } from "@playwright/test";
  * overlay DOM text, and CDP's `Emulation.setCPUThrottlingRate` directly
  * (the same mechanism Chrome DevTools' own throttling dropdown uses) --
  * both match this project's established measurement methodology
- * (PERF_BASELINE_2026-08-21.md §1/§2), just automated instead of manual.
+ * documented, just automated instead of manual.
  */
 
 const SETTLE_MS = 3000; // let temporal accumulation (§6.5) converge before reading
@@ -97,7 +95,7 @@ test.describe("4x CPU throttle @ 2560x1440 (vsync-escaping resolution, PRD §9 i
     );
 
     // Sanity assertions only -- this test's real output is the table
-    // above, meant to be read and transcribed into PERF_BASELINE by hand.
+    // above, meant to be read and transcribed by hand.
     for (const { fps } of Object.values(results)) {
       expect(fps).toBeGreaterThan(0);
     }

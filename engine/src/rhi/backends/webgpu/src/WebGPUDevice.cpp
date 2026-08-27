@@ -19,28 +19,25 @@ namespace omnimed3d::rhi::webgpu {
 namespace {
 constexpr uint32_t kLutSize = 256;
 
-// Pre-integrated (front,back) transfer-function table (§6.1) -- see
-// writePreintegratedLut()'s header comment for the bake algorithm.
+// Pre-integrated (front,back) transfer-function table -- see
+// writePreintegratedLutColors()'s header comment for the bake algorithm.
 constexpr uint32_t kPreintegratedLutSize = 256;
 constexpr uint32_t kPreintegrationSubSamples = 16;
 
-// REQ-R06 interactive camera tuning -- rad/px, matching Mini-Engine-
-// reference's WASM/mobile-tuned Camera::rotate() sensitivity (this is a
-// browser-only target, so their separate native-build constant doesn't
-// apply here).
+// REQ-R06 interactive camera tuning -- rad/px, tuned for a WASM/mobile
+// browser target.
 constexpr float kOrbitSensitivity = 0.0025F;
 
 // Nearest-neighbor subsample of a WxHxD (or single-slice, D=1) buffer to
 // (ceil(W/factor))x(ceil(H/factor))xD, in place of box-averaging: the
 // volume's uint16_t buffer is already float16-bit-pattern-encoded
-// upstream (viewer/src/workers/parse-worker/src/halfFloat.ts) -- treating
-// it as an opaque value and picking one texel per block needs no float16
-// codec in the Engine, whereas averaging would. Mask data (uint8_t) is
-// discrete class indices (REQ-C01), where averaging labels is meaningless
-// regardless -- nearest-neighbor is the correct choice there on its own
-// terms. Ceiling division on the output extent handles odd input
-// dimensions; the source-index clamp guards the last output row/column
-// when width/height isn't an exact multiple of factor.
+// upstream, so treating it as an opaque value and picking one texel per
+// block needs no float16 codec here, whereas averaging would. Mask data
+// (uint8_t) is discrete class indices (REQ-C01), where averaging labels
+// is meaningless -- nearest-neighbor is the correct choice there anyway.
+// Ceiling division on the output extent handles odd input dimensions;
+// the source-index clamp guards the last output row/column when
+// width/height isn't an exact multiple of factor.
 template <typename T>
 std::vector<T> downsampleNearestXY(T const* src, uint32_t width, uint32_t height, uint32_t depth, uint32_t factor,
                                     uint32_t& outWidth, uint32_t& outHeight) {
@@ -76,11 +73,10 @@ std::string stringViewToStdString(WGPUStringView view) {
     return (view.data && view.length > 0) ? std::string(view.data, view.length) : std::string();
 }
 
-// Mirrors RaymarchUBO in engine/shaders/src/volume_raymarch.slang field for
-// field -- every field is a vec4/mat4 specifically to avoid std140 padding
-// surprises (CLAUDE.md #8 "UBO-related sizes scattered across 4 places will
-// eventually disagree" -- one struct, asserted offsets, matching the
-// shader's own std140 layout that Dawn enforces strictly).
+// Mirrors RaymarchUBO in engine/shaders/src/volume_raymarch.slang field
+// for field -- every field is a vec4/mat4 specifically to avoid std140
+// padding surprises. One struct with asserted offsets, matching the
+// shader's own std140 layout that Dawn enforces strictly.
 struct RaymarchUBO {
     glm::mat4 invView;
     glm::mat4 invProj;
@@ -90,13 +86,13 @@ struct RaymarchUBO {
     glm::vec4 rayParams;      // x=stepSize, y=maxSteps, z=extinction, w unused
     glm::vec4 window;         // x=center, y=width, zw unused
     glm::vec4 maskParams;     // x=overlayEnabled, y=overlayAlpha, zw unused
-    glm::vec4 shadingParams;    // xyz=light direction (world, normalized), w=shading mode (0=off, 1=on, 2=on-flat -- issue #81)
+    glm::vec4 shadingParams;    // xyz=light direction (world, normalized), w=shading mode (0=off, 1=on, 2=on-flat)
     glm::vec4 jitterParams;     // x=accumFrameIndex, y=accumulation enabled (0/1), zw unused
-    glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound (§6.4)
-    glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound (§6.4)
+    glm::vec4 clipMin;          // xyz, world mm -- raymarch traversal bound
+    glm::vec4 clipMax;          // xyz, world mm -- raymarch traversal bound
     glm::vec4 occlusionParams;  // x=DOS enabled (0/1), y=strength, zw unused
     glm::vec4 tfParams;         // x=threshold, y=gradient-opacity strength, z=low-memory gradient fallback (0/1),
-                                // w=thresholdMax (upper cutoff, §5.3 follow-up)
+                                // w=thresholdMax (upper cutoff)
     glm::vec4 backgroundColor;  // xyz=RGB, w unused -- see setBackgroundColor()
 };
 
@@ -117,23 +113,20 @@ static_assert(offsetof(RaymarchUBO, tfParams) == 304);
 static_assert(offsetof(RaymarchUBO, backgroundColor) == 320);
 static_assert(sizeof(RaymarchUBO) == 336);
 
-// Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang (issue
-// #37) -- deliberately a separate, smaller struct rather than reusing
-// RaymarchUBO: the 2D slice view needs no camera/AABB/ray-march fields,
-// and forcing one shared struct would make RaymarchUBO's own "mirrors the
-// shader field for field" comment above untrue for whichever shader
-// didn't declare all its fields.
+// Mirrors AxialSliceUBO in engine/shaders/src/axial_slice.slang --
+// deliberately a separate, smaller struct rather than reusing RaymarchUBO:
+// the 2D slice view needs no camera/AABB/ray-march fields.
 struct AxialSliceUBO {
-    // w=sliceAxis (MPR, 2026-08-27: 0=Axial/fixes Z, 1=Sagittal/fixes X,
+    // w=sliceAxis (MPR: 0=Axial/fixes Z, 1=Sagittal/fixes X,
     // 2=Coronal/fixes Y -- always 0 for the NativeSlice2D view, which has
     // no axis concept of its own, see loadNativeVolume's header comment).
     glm::vec4 sliceParams;  // x=sliceIndex (raw voxel index), y=windowCenter, z=windowWidth, w=sliceAxis
     glm::vec4 maskParams;   // x=overlayEnabled, y=overlayAlpha, zw unused
-    // "Contain" letterbox fit (issue #40 follow-up) -- see
-    // axial_slice.slang's own comment on this field for the full
-    // rationale. x/y are NDC scale factors, computed fresh every frame in
-    // renderFrame() from the volume's physical aspect ratio (aabbMax_ -
-    // aabbMin_) vs. canvasWidth_/canvasHeight_'s aspect ratio.
+    // "Contain" letterbox fit -- see axial_slice.slang's own comment on
+    // this field for the full rationale. x/y are NDC scale factors,
+    // computed fresh every frame in renderFrame() from the volume's
+    // physical aspect ratio (aabbMax_ - aabbMin_) vs.
+    // canvasWidth_/canvasHeight_'s aspect ratio.
     glm::vec4 fitParams;
 };
 
@@ -142,121 +135,58 @@ static_assert(offsetof(AxialSliceUBO, maskParams) == 16);
 static_assert(offsetof(AxialSliceUBO, fitParams) == 32);
 static_assert(sizeof(AxialSliceUBO) == 48);
 
-// View modes for WebGPUDevice::setViewMode() (issue #37; MPR + native-slice
-// modes added 2026-08-27).
+// View modes for WebGPUDevice::setViewMode().
 constexpr uint32_t kViewModeOrbit3D = 0;
 constexpr uint32_t kViewModeSlice2D = 1;
 constexpr uint32_t kViewModeNativeSlice2D = 2;
 
-// Slice axes for WebGPUDevice::setSliceAxis() (MPR, 2026-08-27).
+// Slice axes for WebGPUDevice::setSliceAxis() (MPR).
 constexpr uint32_t kSliceAxisAxial = 0;
 constexpr uint32_t kSliceAxisSagittal = 1;
 constexpr uint32_t kSliceAxisCoronal = 2;
 
-// User request, 2026-08-27 (revised same day: "실제 병원 CT 판독화면대로
-// 그레이 스케일로 가자" -- match real clinical reading screens): every
-// fixed preset now shares one plain grayscale LUT (kGrayscaleLow/High
-// below) -- real radiology workstations never tint by window, so the
-// per-preset color ramp this struct used to carry (lowColor/highColor,
-// docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.2) was this
-// app's own invention, not a clinical convention, and is removed here
-// rather than kept as unused dead weight. Custom (§5.3, id 8) is
-// unaffected -- it never read from this struct, and still lets a user
-// pick any two colors via setCustomColormap()/writeLutColors() directly.
-// Grayscale itself is also removed as a *separate* preset here -- once
-// nothing carries a color tint, it was byte-for-byte identical to Soft
-// Tissue (same center/width, and now the same colorless LUT too), so
-// keeping both was two buttons for one behavior. Soft Tissue is the new
-// kDefaultColormapPreset.
+// Every fixed preset shares one plain grayscale LUT (kGrayscaleLow/High
+// below) -- clinical reading screens don't tint by window, so there is no
+// per-preset color ramp; only the "Custom" preset carries user-chosen
+// colors, applied through setCustomColormap()/writeLutColors() directly.
 //
 // Baseline clinical window/level presets (REQ-R03) -- center/width values
-// sourced from Mini-Engine-reference's medical-volume primer doc, per PRD
-// Appendix A's explicit "referencing Mini-Engine's preset values"
-// instruction.
+// per PRD Appendix A; the four added later (Mediastinum/Abdomen-Liver/
+// Stroke/Subdural) come from standard radiology window/level references.
 struct ColormapPreset {
     float center;
     float width;
-    // User request, 2026-08-27: per-preset default Threshold band (§5.3's
-    // `n < threshold || n > thresholdMax -> alpha = 0` cutoff,
-    // volume_raymarch.slang), applied by setColormapPreset() below.
-    // Empirically tuned (screenshot comparison, not derived analytically)
-    // against the LIDC-IDRI demo CTs in 3D Orbit mode -- without this,
-    // every preset saturated to opaque at the skin/fat surface before the
-    // ray ever reached the tissue the preset is named for, so switching
-    // presets only re-tinted the same body-surface silhouette.
+    // Per-preset default threshold band (volume_raymarch.slang's
+    // `n < threshold || n > thresholdMax -> alpha = 0` cutoff), applied
+    // by setColormapPreset() below. Empirically tuned (screenshot
+    // comparison) against the LIDC-IDRI demo CTs in 3D Orbit mode --
+    // without it, every preset saturated to opaque at the skin/fat
+    // surface before the ray reached the tissue the preset is named for.
     //
-    // Bone: skin/fat sit at n~0.3, bone at n>=0.4 within Bone's -450..1050
-    // HU window -- threshold=0.4 cuts skin while keeping bone (0.3 still
-    // mostly showed skin, 0.5 started eroding cortical bone surfaces).
-    // thresholdMax left at 1.0 (no upper cutoff needed).
+    // Bone: skin/fat sit at n~0.3, bone at n>=0.4 within Bone's window --
+    // threshold=0.4 cuts skin while keeping bone. No upper cutoff needed.
     //
-    // Lung: needed *both* ends of the band, for a reason that isn't the
-    // mirror image of Bone's -- found by rendering `n` itself as grayscale
-    // (bypassing the LUT) to see what density the visible "surface" in a
-    // plain 3D Orbit render actually sat at, since screenshot sweeps of
-    // thresholdMax alone (0.95 down to 0.3) changed *nothing* visible,
-    // which the "chest wall is denser than lung" theory alone couldn't
-    // explain. What that debug render showed: the surface sat at a *low*
-    // n (~0.15-0.2), not the high n skin/fat should occupy. Root cause --
-    // Lung's window floor (-1350 HU) is far enough below real background
-    // air (~-1000 HU, n~0.23 in this window) that air itself was *not*
-    // fully cut (alpha isn't proportionally tiny either: with the default
-    // extinction=8, n=0.23 alone gives a substantial per-step alpha, and
-    // Beer-Lambert compounds that over the hundreds of steps a ray spends
-    // crossing the AABB's own empty margin around the patient) -- so the
-    // ray was saturating to opaque from background air alone, well before
-    // it ever reached the patient, let alone the lung inside. threshold
-    // =0.25 (raw HU ~ -975, just above real background air and the most
-    // aerated lung tissue's own floor) cuts that air out; thresholdMax
-    // then cuts the chest wall the way it would for any denser-occluder
-    // preset, so what's left visible is the band in between -- the
-    // aerated lung fields and their internal vessel/airway-wall detail.
-    // 0.85 (raw HU ~ -75) alone was enough to remove the reported "solid
-    // cylinder" look, but a loaded segmentation mask (§5.3.2) still wasn't
-    // visible anywhere in 3D Orbit at that value -- the mask lives deeper,
-    // inside the lung parenchyma itself, and the still-fairly-wide 0.25-0.85
-    // band includes enough intermediate soft-tissue density (fat, vessel
-    // walls, etc.) that accum.a was still saturating before the ray got
-    // that far in. Narrowed to 0.45 (raw HU ~ -825) by re-testing with a
-    // real loaded lungmask R231 mask each step -- 0.5 still showed no mask
-    // anywhere, 0.4/0.45 both exposed it (confirmed via screenshot, a red
-    // patch visible from the volume's top). This band improves the
-    // reported "solid cylinder"/invisible-mask symptoms (confirmed via
-    // screenshot); it does not by itself produce a textbook two-lung-
-    // fields silhouette from every angle in a plain outside 3D Orbit view
-    // -- a ray through the thicker lateral chest wall still saturates
-    // before reaching the mask, only a ray through a thinner path (e.g.
-    // near the top of the volume) gets far enough. The 2D Slice view
-    // (axial_slice.slang, no threshold band
-    // involved at all) already renders lung fields perfectly, confirming
-    // the window/level values themselves were never the problem. Getting
-    // the same clarity in 3D from an unclipped outside view is a transfer-
-    // function-shape problem (a single linear alpha-vs-n ramp can't cut a
-    // denser layer to zero while keeping a less-dense one partially
-    // visible AND showing its internal detail) beyond what a threshold
-    // band alone can fix -- Clip box is today's workaround for actually
-    // looking inside.
+    // Lung: needs both ends of the band. Its window floor is far enough
+    // below real background air that air itself isn't fully cut, so the
+    // ray saturates to opaque from background air before reaching the
+    // patient; threshold=0.25 (raw HU ~ -975) cuts that out. thresholdMax
+    // then cuts the denser chest wall in front of the lung; it was
+    // narrowed to 0.45 (raw HU ~ -825) so a loaded lungmask R231 mask
+    // deep in the parenchyma stays visible. This improves the "solid
+    // cylinder"/invisible-mask symptoms but does not produce a textbook
+    // two-lung-fields silhouette from every outside angle -- a ray
+    // through the thick lateral chest wall still saturates first. A full
+    // fix is a transfer-function-shape problem; Clip box is the current
+    // workaround for looking inside.
     //
-    // Brain: skull (if present in the scan) clamps to n=1, above brain
-    // matter's ~0.25-0.56 -- the same "occluder is denser than target"
-    // shape as Lung, so a thresholdMax *could* help the same way, but none
-    // of this repo's demo CTs are head scans, so there's no real data to
-    // empirically tune or verify a value against (the mistake this same
-    // comment already warns about avoiding for Lung/Brain before this
-    // threshold band existed). Left at 1.0 (unfixed) rather than guessed.
+    // Brain and the four later presets are left at threshold=0.0,
+    // thresholdMax=1.0 -- none of this repo's demo CTs give real 3D-Orbit
+    // tuning data for them, and a guessed value would just repeat the
+    // failure mode the tuned values above were found to avoid.
     float threshold;
     float thresholdMax;
 };
 
-// User request, 2026-08-27 (clinical preset expansion): 4 more real
-// clinical windows (Mediastinum/Abdomen-Liver/Stroke/Subdural), sourced
-// from standard radiology window/level references, the same way the
-// original ones were sourced from Mini-Engine's medical-volume primer
-// (PRD Appendix A). None of these 4 get a nonzero threshold/thresholdMax
-// default -- unlike Bone/Lung (see ColormapPreset's own comment above),
-// there is no real per-preset 3D-Orbit tuning data for these yet, and a
-// guessed value would repeat exactly the mistake that comment warns
-// against for Brain.
 constexpr std::array<ColormapPreset, 8> kColormapPresets{{
     {-600.0F, 1500.0F, 0.25F, 0.45F},  // 0: Lung
     {300.0F, 1500.0F, 0.4F, 1.0F},     // 1: Bone
@@ -270,22 +200,16 @@ constexpr std::array<ColormapPreset, 8> kColormapPresets{{
 }};
 constexpr uint32_t kDefaultColormapPreset = 2;  // Soft Tissue
 
-// Every fixed preset's LUT ramp -- see this file's own "match real
-// clinical reading screens" comment above ColormapPreset. Not `alpha=t`
-// specific to grayscale -- shape(s)=s in writePreintegratedLutColors()
-// (identity, unrelated to color) still governs opacity; only hue is
-// fixed here.
+// The grayscale ramp every fixed preset shares. Only hue is fixed here;
+// opacity still comes from writePreintegratedLutColors()'s shape(s)=s.
 constexpr ColorRGB kGrayscaleLow{12, 12, 12};
 constexpr ColorRGB kGrayscaleHigh{245, 245, 245};
 
 // REQ-R04 quality/step-count tiers -- WebGPUDevice::setQualityTier().
 // stepsAcrossDiagonal sizes stepSize (diagonal / this); maxSteps is a
-// safety-margin multiple of that (1.33x, matching the previous fixed
-// 512/384 ratio) so grazing rays that need more than "diagonal / stepSize"
-// steps still get to traverse the full box before hitting the loop's own
-// cap. Medium reproduces the engine's original fixed behavior exactly
-// (diagonal/384, 512 steps) so this is a strict generalization, not a
-// behavior change, for anyone who never touches the new control.
+// 1.33x safety-margin multiple of that so grazing rays that need more
+// than "diagonal / stepSize" steps still traverse the full box before
+// hitting the loop's own cap.
 struct QualityTier {
     float stepsAcrossDiagonal;
     float maxSteps;
@@ -293,23 +217,21 @@ struct QualityTier {
 
 constexpr std::array<QualityTier, 3> kQualityTiers{{
     {192.0F, 256.0F},   // 0: Low
-    {384.0F, 512.0F},   // 1: Medium (default, matches the old hardcoded values)
+    {384.0F, 512.0F},   // 1: Medium (default)
     {768.0F, 1024.0F},  // 2: High
 }};
 constexpr uint32_t kDefaultQualityTier = 1;
 
 // Fixed world-space light direction for gradient-based Lambert shading
-// (setShadingMode()) -- a camera-independent key light (not exposed as
-// a setter this branch; ambient/diffuse strength are likewise fixed
-// constants in the shader itself). Chosen off-axis from the default
-// camera framing (frameCameraForVolume()'s 35deg yaw / 25deg pitch) so
-// shaded volumes show visible form from the default view, not a flat
-// silhouette.
+// (setShadingMode()) -- a camera-independent key light (not exposed as a
+// setter; ambient/diffuse strength are likewise fixed constants in the
+// shader). Chosen off-axis from the default camera framing
+// (frameCameraForVolume()'s 35deg yaw / 25deg pitch) so shaded volumes
+// show visible form from the default view, not a flat silhouette.
 const glm::vec3 kLightDirection = glm::normalize(glm::vec3{0.4F, -0.6F, 0.7F});
 
-// Anisotropic-spacing step-size guard (docs/current/
-// RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §6.6): the raymarch step size
-// is otherwise isotropic in world mm (derived from the AABB diagonal),
+// Anisotropic-spacing step-size guard: the raymarch step size is
+// otherwise isotropic in world mm (derived from the AABB diagonal),
 // which can undersample a volume's finest axis on thick-slice/anisotropic
 // data. Clamping stepSize to at most 1.5x the finest axis's physical
 // spacing keeps thin structures along that axis from being stepped over
@@ -319,17 +241,13 @@ const glm::vec3 kLightDirection = glm::normalize(glm::vec3{0.4F, -0.6F, 0.7F});
 constexpr float kFinestAxisStepMultiplier = 1.5F;
 constexpr float kMaxRayStepsHardCap = 2048.0F;
 
-// Caps accumFrameIndex_'s growth (mirrors Mini-Engine-reference's M4 v2
-// "Accumulation-N cap" lesson, docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
-// §6.5): the temporal blend weight is 1/(accumFrameIndex_+1), which decays
-// toward zero forever if left uncapped -- after enough idle
-// requestAnimationFrame ticks (easily thousands within a few seconds),
-// any genuinely new content (e.g. a mask slice arriving asynchronously
-// after the volume has already been sitting on screen for a while) would
-// blend in with a weight too small to survive 8-bit swapchain
-// quantization, silently "freezing" the displayed image. Capping means
-// the running average always has at least 1/(kMaxAccumFrames+1) weight on
-// the newest frame.
+// Caps accumFrameIndex_'s growth: the temporal blend weight is
+// 1/(accumFrameIndex_+1), which decays toward zero forever if left
+// uncapped -- after enough idle requestAnimationFrame ticks, genuinely
+// new content (e.g. a mask slice arriving asynchronously) would blend in
+// with a weight too small to survive 8-bit swapchain quantization,
+// silently "freezing" the displayed image. Capping keeps at least
+// 1/(kMaxAccumFrames+1) weight on the newest frame.
 constexpr float kMaxAccumFrames = 31.0F;
 
 }  // namespace
@@ -347,9 +265,9 @@ void WebGPUDevice::initialize() {
 
     WGPURequestAdapterCallbackInfo callbackInfo{};
     // AllowSpontaneous is safe here specifically because this engine never
-    // uses ASYNCIFY/emscripten_sleep -- CLAUDE.md #9's spontaneous-callback
-    // trap is about a spontaneous callback firing while the main stack is
-    // suspended inside ASYNCIFY, which cannot happen in this design.
+    // uses ASYNCIFY/emscripten_sleep -- the spontaneous-callback trap is a
+    // callback firing while the main stack is suspended inside ASYNCIFY,
+    // which cannot happen in this design.
     callbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
     callbackInfo.callback = &WebGPUDevice::onAdapterRequested;
     callbackInfo.userdata1 = this;
@@ -371,43 +289,21 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
 
     // `timestamp-query` is optional (rhi::Device::getGpuTiming's header
     // comment) -- only request it if the adapter actually supports it, and
-    // remember the result so the rest of this class knows whether to create
-    // the query set / write timestamps at all. Feature detection here, not
-    // just at device-creation time, matches CLAUDE.md #8's "feature
-    // detection and activation are different facts" principle -- checking
-    // now is what makes the later "activation" (creating the query set)
-    // correct instead of a guess.
+    // remember the result so the rest of this class knows whether to
+    // create the query set / write timestamps at all. Detecting the
+    // feature here, before device creation, is what makes the later
+    // activation (creating the query set) correct instead of a guess.
     self->timestampQuerySupported_ = wgpuAdapterHasFeature(adapter, WGPUFeatureName_TimestampQuery) != 0U;
 
-    // Default maxBufferSize (256 MiB) is too small for gradientTexture_
-    // (issue #81's own follow-up) on a volume of any real clinical size --
-    // Dawn's internal lazy-clear-before-first-use for a storage texture
-    // that size needs a staging buffer as large as the texture itself,
-    // which silently failed validation against the default limit
-    // (confirmed via a real "Buffer size ... exceeds the max buffer size
-    // limit" console warning firing every frame, not assumed) and left
-    // the raymarch output black. Requesting more than the default is safe
-    // -- wgpuAdapterGetLimits() reports what this adapter can actually
-    // support, and this file never asks for more than that (see below), so
-    // a weaker adapter that genuinely can't go past the default still gets
-    // exactly the default (feature-detected here, matching this file's own
-    // `timestamp-query` handling immediately above, not just assumed
-    // available).
-    //
-    // Bug fix, 2026-08-27: a fixed 512 MiB desired ceiling (this constant's
-    // prior value) covered the original single demo CT's ~266 MiB gradient
-    // texture (RGBA16Float, 4x the R16Float volume texture's own size) but
-    // not LIDC-IDRI-0002's 261-slice series added since (512x512x261 voxels
-    // -> a ~547 MiB gradient texture, confirmed via a real "Buffer size
-    // 547356672 exceeds the max buffer size limit 536870912" console error,
-    // not assumed) -- silently reproducing the exact bug this comment
-    // already describes, just at a larger volume size. Rather than pick
-    // another fixed number that the next larger volume can just as easily
-    // exceed again, request the adapter's own reported ceiling directly --
-    // requiredLimits only asks Dawn to *guarantee* a limit already reported
-    // as supported, it doesn't preallocate anything, so there's no cost to
-    // asking for all of it up front, and it scales automatically with
-    // whatever this adapter can actually do.
+    // The default maxBufferSize (256 MiB) is too small for gradientTexture_
+    // on a clinically-sized volume -- Dawn's internal lazy-clear needs a
+    // staging buffer as large as the texture itself (RGBA16Float, 4x the
+    // R16Float volume texture's size), which fails validation against the
+    // default limit and leaves the raymarch output black. Request the
+    // adapter's own reported ceiling instead of a fixed number the next
+    // larger volume could exceed again: requiredLimits only asks Dawn to
+    // guarantee a limit already reported as supported (no preallocation),
+    // so a weaker adapter still gets exactly its own default.
     WGPULimits adapterLimits = WGPU_LIMITS_INIT;
     wgpuAdapterGetLimits(adapter, &adapterLimits);
     WGPULimits requiredLimits = WGPU_LIMITS_INIT;
@@ -418,15 +314,10 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
     deviceCallbackInfo.callback = &WebGPUDevice::onDeviceRequested;
     deviceCallbackInfo.userdata1 = self;
 
-    // Must outlive the wgpuAdapterRequestDevice() call below -- declaring
-    // this inside the if-block and pointing deviceDesc.requiredFeatures at
-    // it left a dangling pointer once the block's closing brace ended the
-    // array's lifetime, since the request call itself happens after that
-    // brace. Emscripten's JS glue reads through the pointer when it
-    // marshals deviceDesc into a real GPUDeviceDescriptor, so a stale/
-    // garbage stack value there surfaced as a browser-side "requiredFeatures
-    // ... is not a valid enum value of type GPUFeatureName" TypeError
-    // instead of a native crash.
+    // Must outlive the wgpuAdapterRequestDevice() call below, so it can't
+    // be scoped to the if-block: Emscripten's JS glue reads through
+    // deviceDesc.requiredFeatures when it marshals deviceDesc, which
+    // happens after the block would have ended.
     WGPUFeatureName const requiredFeatures[1] = {WGPUFeatureName_TimestampQuery};
 
     WGPUDeviceDescriptor deviceDesc{};
@@ -435,12 +326,12 @@ void WebGPUDevice::onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapt
         deviceDesc.requiredFeatureCount = 1;
         deviceDesc.requiredFeatures = requiredFeatures;
     }
-    // Mobile OOM mitigation (rhi::Device::getDeviceLossState) -- registers
-    // both callbacks on this same descriptor rather than a separate
-    // post-creation setter call, since WGPUDeviceDescriptor is where
-    // Dawn's newer CallbackInfo-based API expects them. AllowSpontaneous
-    // is safe here for the same reason as callbackInfo.mode above (no
-    // ASYNCIFY in this engine).
+    // Mobile OOM mitigation (rhi::Device::getDeviceLossState) -- both
+    // callbacks are registered on this descriptor rather than a separate
+    // post-creation setter, since WGPUDeviceDescriptor is where Dawn's
+    // CallbackInfo-based API expects them. AllowSpontaneous is safe here
+    // for the same reason as callbackInfo.mode above (no ASYNCIFY in this
+    // engine).
     deviceDesc.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
     deviceDesc.deviceLostCallbackInfo.callback = &WebGPUDevice::onDeviceLost;
     deviceDesc.deviceLostCallbackInfo.userdata1 = self;
@@ -495,15 +386,11 @@ void WebGPUDevice::onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice 
     self->device_ = device;
     self->queue_ = wgpuDeviceGetQueue(device);
 
-    // vendor/architecture/device/description are WGPUStringView in this
-    // emsdk's actual compiled-against header (the emdawnwebgpu port package
-    // at cache/ports/emdawnwebgpu/, not the older copy under
-    // cache/sysroot/include -- confirmed by hitting a real compile error
-    // from assuming the sysroot copy's plain char const* shape, then
-    // checking the header the compiler actually used). Same .data/.length
-    // shape logStringView() above already handles for the async-callback
-    // message params. Dawn allocates the backing storage;
-    // wgpuAdapterInfoFreeMembers() releases it once copied into
+    // vendor/architecture/device/description are WGPUStringView in the
+    // emdawnwebgpu port's header (same .data/.length shape logStringView()
+    // handles for the async-callback message params), not plain char
+    // const*. Dawn allocates the backing storage;
+    // wgpuAdapterInfoFreeMembers() releases it once it's copied into
     // hardwareInfo_'s std::strings.
     WGPUAdapterInfo adapterInfo{};
     if (wgpuAdapterGetInfo(self->adapter_, &adapterInfo) == WGPUStatus_Success) {
@@ -608,14 +495,11 @@ void WebGPUDevice::createSamplerAndLut() {
     setColormapPreset(kDefaultColormapPreset);
 }
 
-// Writes a color ramp into lutTexture_ (§4.2) -- r/g/b lerp from lowColor
-// to highColor across the ramp, alpha keeps the original
-// linear-with-density ramp (a=t) regardless of color, so only hue
-// changes, not the existing opacity-vs-density behavior. Called from
-// createSamplerAndLut() (startup) and setColormapPreset() (every preset
-// click, with kGrayscaleLow/High -- see ColormapPreset's own comment on
-// why every fixed preset shares one plain grayscale ramp now) and from
-// setCustomColormap() (§5.3's 8th, user-defined preset, id 8, with
+// Writes a color ramp into lutTexture_ -- r/g/b lerp from lowColor to
+// highColor across the ramp, alpha a linear-with-density ramp (a=t)
+// regardless of color, so only hue changes. Called from
+// createSamplerAndLut() (startup), setColormapPreset() (every preset
+// click, with kGrayscaleLow/High), and setCustomColormap() (with
 // whatever the color pickers currently hold).
 void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
     std::array<uint8_t, kLutSize * 4> lutData{};
@@ -645,8 +529,8 @@ void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
     wgpuQueueWriteTexture(queue_, &dst, lutData.data(), lutData.size(), &layout, &writeSize);
 }
 
-// Bakes kColormapPresets[presetId] into preintegratedLutTexture_ (§6.1,
-// Engel et al. "High-Quality Pre-Integrated Volume Rendering"). For every
+// Bakes kColormapPresets[presetId] into preintegratedLutTexture_ (Engel
+// et al. "High-Quality Pre-Integrated Volume Rendering"). For every
 // (front, back) classification-value pair, numerically (trapezoidal)
 // integrates the segment assuming density varies linearly between them,
 // storing:
@@ -655,16 +539,14 @@ void WebGPUDevice::writeLutColors(ColorRGB lowColor, ColorRGB highColor) {
 //         (NOT scaled by extinction -- tau(s) = extinction*s is linear in
 //         s, so the extinction factor cancels out of the average and can
 //         stay a runtime-read UBO value; see volume_raymarch.slang's
-//         `alpha = 1 - exp(-extinction * sBar * stepSize)`). Note for a
-//         future branch: if a non-extinction-proportional feature (e.g. a
-//         hard threshold cutoff) is ever added to the absorption model,
-//         this bake must incorporate it directly rather than assuming
-//         tau(s)=s stays the whole shape -- shape and extinction would no
+//         `alpha = 1 - exp(-extinction * sBar * stepSize)`). If a
+//         non-extinction-proportional feature (e.g. a hard threshold
+//         cutoff) is ever folded into the absorption model, this bake
+//         must incorporate it directly -- shape and extinction would no
 //         longer factor apart cleanly.
-// Degenerates to the original single-point classification exactly when
-// front==back (no segment to integrate over). Only rebaked on a preset
-// (or custom-color) change, not per frame or per window/level change --
-// see setColormapPreset()/setCustomColormap().
+// Degenerates to single-point classification when front==back (no segment
+// to integrate over). Only rebaked on a preset (or custom-color) change,
+// not per frame or per window/level change.
 void WebGPUDevice::writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor) {
     auto classColor = [lowColor, highColor](float s) -> glm::vec3 {
         return glm::vec3{
@@ -757,17 +639,16 @@ WGPUShaderModule createShaderModuleFromWgsl(WGPUDevice device, char const* wgslS
 
 WGPURenderPipeline WebGPUDevice::createRenderPipelineFor(WGPUShaderModule module,
                                                            WGPUTextureFormat colorTargetFormat) {
-    // Constant/OneMinusConstant, not the shader-alpha-driven blend this
-    // used before jitter+temporal-accumulation existed (§6.5) --
+    // Constant/OneMinusConstant, not a shader-alpha-driven blend --
     // wgpuRenderPassEncoderSetBlendConstant() lets renderFrame() drive a
     // per-frame temporal blend weight (1/(accumFrameIndex_+1) for the
-    // raymarch pass into accumulationTexture_, always 1.0 -- a full
-    // overwrite -- for the axial-slice pass into the swapchain, which
-    // doesn't participate in accumulation). Both shaders now resolve
-    // their own volume-opacity-vs-background compositing internally and
-    // always output alpha=1 (see volume_raymarch.slang's fragmentMain
-    // header comment) specifically so this blend stage is purely a
-    // temporal weight, not entangled with per-pixel volume alpha.
+    // raymarch pass into accumulationTexture_, 1.0 -- a full overwrite --
+    // for the axial-slice pass into the swapchain, which doesn't
+    // participate in accumulation). Both shaders resolve their own
+    // volume-opacity-vs-background compositing internally and always
+    // output alpha=1 (see volume_raymarch.slang's fragmentMain header
+    // comment) so this blend stage is purely a temporal weight, not
+    // entangled with per-pixel volume alpha.
     WGPUBlendComponent colorBlend{};
     colorBlend.operation = WGPUBlendOperation_Add;
     colorBlend.srcFactor = WGPUBlendFactor_Constant;
@@ -810,10 +691,10 @@ void WebGPUDevice::createPipeline() {
     shaderModule_ = createShaderModuleFromWgsl(device_, kVolumeRaymarchWgsl);
     axialShaderModule_ = createShaderModuleFromWgsl(device_, kAxialSliceWgsl);
 
-    // Shared by both pipelines (issue #37) -- both shaders declare the
-    // exact same 6-entry layout (§6.1 added binding 5's pre-integrated
-    // LUT, declared but unused by axial_slice.slang -- see its own
-    // comment), see createRenderPipelineFor()'s header comment for why one
+    // Shared by both pipelines -- both shaders declare the same 7-entry
+    // layout (bindings 5 and 6, the pre-integrated LUT and gradient
+    // volume, are declared but unused by axial_slice.slang; see its own
+    // comment). See createRenderPipelineFor()'s header comment for why one
     // bind group layout/pipeline layout/UBO buffer is valid for both.
     std::array<WGPUBindGroupLayoutEntry, 7> entries{};
     entries[0].binding = 0;
@@ -844,10 +725,10 @@ void WebGPUDevice::createPipeline() {
     entries[5].texture.sampleType = WGPUTextureSampleType_Float;
     entries[5].texture.viewDimension = WGPUTextureViewDimension_2D;
 
-    // Precomputed gradient volume (issue #81's own follow-up,
-    // gradient_bake.slang) -- see volume_raymarch.slang's own binding-6
-    // comment. Sampled trilinearly (linearSampler_, entry 2 above), so
-    // Float (filterable), not UnfilterableFloat.
+    // Precomputed gradient volume (gradient_bake.slang) -- see
+    // volume_raymarch.slang's own binding-6 comment. Sampled trilinearly
+    // (linearSampler_, entry 2 above), so Float (filterable), not
+    // UnfilterableFloat.
     entries[6].binding = 6;
     entries[6].visibility = WGPUShaderStage_Fragment;
     entries[6].texture.sampleType = WGPUTextureSampleType_Float;
@@ -863,31 +744,30 @@ void WebGPUDevice::createPipeline() {
     layoutDesc.bindGroupLayouts = &bindGroupLayout_;
     pipelineLayout_ = wgpuDeviceCreatePipelineLayout(device_, &layoutDesc);
 
-    // pipeline_ (raymarch) now targets accumulationTexture_ (§6.5,
-    // RGBA16Float), not the swapchain -- axialPipeline_ still draws
-    // directly to the swapchain (BGRA8Unorm). See createRenderPipelineFor's
-    // header comment for why this format must match exactly.
+    // pipeline_ (raymarch) targets accumulationTexture_ (RGBA16Float),
+    // not the swapchain -- axialPipeline_ draws directly to the swapchain
+    // (BGRA8Unorm). See createRenderPipelineFor's header comment for why
+    // this format must match exactly.
     pipeline_ = createRenderPipelineFor(shaderModule_, WGPUTextureFormat_RGBA16Float);
     axialPipeline_ = createRenderPipelineFor(axialShaderModule_, WGPUTextureFormat_BGRA8Unorm);
 
-    // Sized for the larger of the two UBOs (RaymarchUBO, 256 bytes) --
-    // AxialSliceUBO (48 bytes) is written into the same buffer's leading
-    // bytes when the axial-slice pipeline is active. See
-    // createRenderPipelineFor()'s header comment for why WebGPU accepts
-    // one buffer/bind group across both pipelines.
+    // Sized for the larger of the two UBOs (RaymarchUBO) -- AxialSliceUBO
+    // (48 bytes) is written into the same buffer's leading bytes when the
+    // axial-slice pipeline is active. See createRenderPipelineFor()'s
+    // header comment for why WebGPU accepts one buffer/bind group across
+    // both pipelines.
     WGPUBufferDescriptor uboDesc{};
     uboDesc.size = sizeof(RaymarchUBO);
     uboDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     uboBuffer_ = wgpuDeviceCreateBuffer(device_, &uboDesc);
 }
 
-// One-time setup for the accumulation-blit pass (§6.5) -- a 2-entry bind
-// group layout (texture + sampler) distinct from bindGroupLayout_/
+// One-time setup for the accumulation-blit pass -- a 2-entry bind group
+// layout (texture + sampler) distinct from bindGroupLayout_/
 // pipelineLayout_ above, since this shader has entirely different
-// resources, not another consumer of the raymarch/axial-slice layout.
-// Blend is left at its WebGPU default (no blending -- a plain overwrite)
-// since accumulationTexture_ always holds a fully-resolved, opaque frame
-// by the time this pass reads it.
+// resources. Blend is left at its WebGPU default (no blending -- a plain
+// overwrite) since accumulationTexture_ always holds a fully-resolved,
+// opaque frame by the time this pass reads it.
 void WebGPUDevice::createCompositePipeline() {
     compositeShaderModule_ = createShaderModuleFromWgsl(device_, kAccumulationBlitWgsl);
 
@@ -1085,8 +965,8 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
                                          float spacingX, float spacingY, float spacingZ) {
     // World-space AABB, centered at the origin, in the same physical
     // millimeter units as spacingX/Y/Z. World axes already match the
-    // canonical LPS convention issue #21 established upstream (X=Left,
-    // Y=Posterior, Z=Superior) -- see this method's header comment.
+    // canonical LPS convention the Parse Worker normalizes to upstream
+    // (X=Left, Y=Posterior, Z=Superior) -- see this method's header comment.
     glm::vec3 const halfExtent{
         static_cast<float>(width) * spacingX * 0.5F,
         static_cast<float>(height) * spacingY * 0.5F,
@@ -1095,8 +975,8 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
     aabbMin_ = -halfExtent;
     aabbMax_ = halfExtent;
     finestSpacing_ = std::min({spacingX, spacingY, spacingZ});
-    // Reset the clip box (§6.4) to the full volume -- a clip region sized
-    // for a previously loaded (differently sized) volume would otherwise
+    // Reset the clip box to the full volume -- a clip region sized for a
+    // previously loaded (differently sized) volume would otherwise
     // misclip this new one.
     clipMin_ = aabbMin_;
     clipMax_ = aabbMax_;
@@ -1110,13 +990,10 @@ void WebGPUDevice::frameCameraForVolume(uint32_t width, uint32_t height, uint32_
 
 void WebGPUDevice::updateCameraMatrices() {
     // Spherical-coordinate orbit camera (yaw/pitch/distance around the
-    // AABB's center), matching Mini-Engine-reference's validated
-    // Camera::updateCameraVectors(). up=+Z (patient Superior) puts the
-    // top of the patient at the top of the frame -- Mini-Engine's own
-    // hard-learned lesson ("row 0 = Superior must map to screen top"),
-    // applied here to the camera rather than a pixel-row flip since this
-    // engine's world axes are already LPS-canonical by the time
-    // loadVolume() is called.
+    // AABB's center). up=+Z (patient Superior) puts the top of the patient
+    // at the top of the frame -- handled at the camera rather than with a
+    // pixel-row flip, since this engine's world axes are already
+    // LPS-canonical by the time loadVolume() is called.
     glm::vec3 const eye{
         cameraDistance_ * std::cos(cameraPitch_) * std::sin(cameraYaw_),
         cameraDistance_ * std::cos(cameraPitch_) * std::cos(cameraYaw_) * -1.0F,
@@ -1200,7 +1077,7 @@ void WebGPUDevice::renderFrame() {
 
     // Opaque full-overwrite blend constant -- used by the axial-slice pass
     // below (which doesn't participate in temporal accumulation) and as
-    // the raymarch pass's own weight on its first/dirty frame (§6.5).
+    // the raymarch pass's own weight on its first/dirty frame.
     WGPUColor const kOpaqueBlendConstant{1.0, 1.0, 1.0, 1.0};
 
     // How many of timestampQuerySet_'s 4 slots this frame's branch below
@@ -1209,18 +1086,16 @@ void WebGPUDevice::renderFrame() {
     // composite). Read after the if/else chain to decide whether/how much
     // to resolve and read back.
     //
-    // Gated on !timestampReadbackPending_, not just timestampQuerySupported_
-    // -- confirmed via a real Dawn validation warning ("[Buffer (unlabeled)]
-    // used in submit while mapped"/"while pending map"), not assumed: this
-    // frame's resolveQuerySet()+copyBufferToBuffer() write into
-    // timestampReadbackBuffer_, the exact same buffer a previous frame's
-    // still-in-flight wgpuBufferMapAsync() has pending/mapped. WebGPU
-    // forbids using a buffer in a submitted command while its map request is
-    // pending or fulfilled. GPU readback latency is typically several
-    // frames at this frame rate, so without this guard nearly every
-    // submission hit the warning -- Dawn's response to it (dropping or
-    // otherwise mishandling that submission) was the actual cause of the
-    // rapid rendering flicker this fixes.
+    // Gated on !timestampReadbackPending_, not just
+    // timestampQuerySupported_: this frame's
+    // resolveQuerySet()+copyBufferToBuffer() write into
+    // timestampReadbackBuffer_, the same buffer a previous frame's
+    // still-in-flight wgpuBufferMapAsync() has pending/mapped, and WebGPU
+    // forbids using a buffer in a submitted command while its map request
+    // is pending. GPU readback latency is several frames at this frame
+    // rate, so without the guard nearly every submission tripped that
+    // validation error, and Dawn's handling of it caused rapid rendering
+    // flicker.
     bool const wantTimestamps = timestampQuerySupported_ && !timestampReadbackPending_;
     uint32_t timestampQueryCountThisFrame = 0;
     WGPUPassTimestampWrites axialTimestampWrites{};
@@ -1259,13 +1134,13 @@ void WebGPUDevice::renderFrame() {
         }
         WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
 
-        // "Contain" letterbox fit (issue #40 follow-up) -- see
-        // axial_slice.slang's fitParams comment. aabbMax_-aabbMin_ already
-        // encodes the volume's physical (spacing-aware) extent on all
-        // three axes (frameCameraForVolume()), so no separate spacing
-        // storage is needed here. Which two components form the displayed
-        // plane depends on sliceAxis_ (MPR, 2026-08-27) -- Axial shows
-        // X/Y, Sagittal shows Y/Z, Coronal shows X/Z.
+        // "Contain" letterbox fit -- see axial_slice.slang's fitParams
+        // comment. aabbMax_-aabbMin_ already encodes the volume's physical
+        // (spacing-aware) extent on all three axes
+        // (frameCameraForVolume()), so no separate spacing storage is
+        // needed here. Which two components form the displayed plane
+        // depends on sliceAxis_ -- Axial shows X/Y, Sagittal shows Y/Z,
+        // Coronal shows X/Z.
         glm::vec3 const physicalExtent = aabbMax_ - aabbMin_;
         float volumeAspect;
         if (sliceAxis_ == kSliceAxisSagittal) {
@@ -1295,9 +1170,9 @@ void WebGPUDevice::renderFrame() {
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
     } else if (hasNativeVolume_ && nativeBindGroup_ && viewMode_ == kViewModeNativeSlice2D && axialPipeline_) {
-        // Native-slice view (2026-08-27 user request) -- the DICOM
-        // series' own original per-file slices, entirely separate from
-        // the (possibly reformatted) primary volume. Reuses
+        // Native-slice view -- the DICOM series' own original per-file
+        // slices, entirely separate from the (possibly reformatted)
+        // primary volume. Reuses
         // axialPipeline_/axial_slice.slang unchanged: this view always
         // scans nativeBindGroup_'s own volume texture along its Z axis
         // (sliceAxis=0/Axial-style in the shader's terms, since the
@@ -1368,10 +1243,9 @@ void WebGPUDevice::renderFrame() {
             }
         }
 
-        // §6.5: dirty (accumFrameIndex_==0) means this frame fully
-        // overwrites accumulationTexture_ (Clear + weight 1.0); otherwise
-        // it blends in with weight 1/(n+1), a running average across
-        // static frames.
+        // dirty (accumFrameIndex_==0) means this frame fully overwrites
+        // accumulationTexture_ (Clear + weight 1.0); otherwise it blends
+        // in with weight 1/(n+1), a running average across static frames.
         bool const dirty = accumFrameIndex_ <= 0.0F;
         float const blendWeight = 1.0F / (accumFrameIndex_ + 1.0F);
 
@@ -1450,8 +1324,7 @@ void WebGPUDevice::renderFrame() {
         wgpuRenderPassEncoderEnd(compositePass);
         wgpuRenderPassEncoderRelease(compositePass);
     } else {
-        // No volume loaded yet (or pipelines not ready): a plain clear,
-        // matching the pre-§6.5 no-volume behavior exactly.
+        // No volume loaded yet (or pipelines not ready): a plain clear.
         WGPURenderPassColorAttachment colorAttachment{};
         colorAttachment.view = view;
         colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -1489,7 +1362,7 @@ void WebGPUDevice::renderFrame() {
 
     // No wgpuSurfacePresent call -- unsupported in Emscripten, present
     // happens automatically via requestAnimationFrame under
-    // emscripten_set_main_loop (CLAUDE.md #9).
+    // emscripten_set_main_loop.
     wgpuCommandBufferRelease(cmdBuffer);
     wgpuCommandEncoderRelease(encoder);
     wgpuTextureViewRelease(view);
@@ -1526,13 +1399,13 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     // volume -- old mask data no longer applies (PRD #5.3.2).
     releaseVolumeResources();
 
-    // Mobile OOM mitigation, on top of Option A's gradient-texture skip:
+    // Mobile OOM mitigation, on top of skipping the gradient texture:
     // downsampleFactor_ > 1 also shrinks the volume texture itself
     // in-plane (X/Y only -- see downsampleNearestXY's own comment for why
     // depth is untouched and nearest-neighbor is used instead of
-    // averaging). uint16_t const* reinterpret is safe here: data is
+    // averaging). The uint16_t const* reinterpret is safe here: data is
     // already validated above to be exactly width*height*depth*
-    // sizeof(uint16_t) bytes, the same buffer layout downsampleNearestXY
+    // sizeof(uint16_t) bytes, the buffer layout downsampleNearestXY
     // expects.
     std::vector<uint16_t> downsampledVolume;
     uint32_t textureWidth = width;
@@ -1557,11 +1430,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     std::printf("WebGPUDevice::volumeTexture: %ux%ux%u (downsampleFactor=%u)\n", textureWidth, textureHeight, depth,
                  downsampleFactor_);
 
-    // Precomputed gradient volume (issue #81's own follow-up) -- same
-    // voxel dimensions as volumeTexture_, baked by bakeGradientVolume()
-    // below once volumeTextureView_ exists. StorageBinding for the
-    // compute pass's write-only access, TextureBinding for the raymarch
-    // fragment shader's later trilinear read.
+    // Precomputed gradient volume -- same voxel dimensions as
+    // volumeTexture_, baked by bakeGradientVolume() below once
+    // volumeTextureView_ exists. StorageBinding for the compute pass's
+    // write-only access, TextureBinding for the raymarch fragment
+    // shader's later trilinear read.
     //
     // Mobile OOM mitigation: with downsampleFactor_ > 1, this texture
     // would be the single largest allocation this function makes
@@ -1585,11 +1458,11 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
                               ? WGPUTextureUsage_TextureBinding
                               : (WGPUTextureUsage_StorageBinding | WGPUTextureUsage_TextureBinding);
     gradientTexture_ = wgpuDeviceCreateTexture(device_, &gradientDesc);
-    // Reports the *actual* chosen extent (gradientDesc.size), not just an
+    // Reports the actual chosen extent (gradientDesc.size), not just an
     // echo of the downsampleFactor input -- a test asserting on this line
-    // catches a regression where the branch above silently stops honoring
-    // the flag (e.g. always allocating full-size), which a pixel-only
-    // comparison of the two modes' rendered output would not.
+    // catches a regression where the branch above stops honoring the flag
+    // (e.g. always allocating full-size), which a pixel-only comparison of
+    // the two modes' output would not.
     std::printf("WebGPUDevice::gradientTexture: %ux%ux%u\n", gradientDesc.size.width,
                  gradientDesc.size.height, gradientDesc.size.depthOrArrayLayers);
 
@@ -1609,14 +1482,12 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     renderGraph_.transition("volume", core::ResourceState::TransferDst);
 
     // Mask texture is created here (not lazily on the first applyMaskSlice
-    // call, as an earlier version of this code did) so the raymarch bind
-    // group always has a valid mask texture view to reference, even before
-    // any segmentation slice has arrived -- PRD #5.3.2's decoupling model
-    // ("the volume renders immediately, mask overlay fills in as slices
-    // arrive") requires the volume to be drawable on its own. WebGPU
-    // zero-initializes new textures, so an all-background (class 0) mask
-    // is already the correct initial state without this code clearing it
-    // itself -- same property the old lazy-creation comment relied on.
+    // call) so the raymarch bind group always has a valid mask texture
+    // view to reference, even before any segmentation slice has arrived --
+    // PRD #5.3.2's decoupling model ("the volume renders immediately, mask
+    // overlay fills in as slices arrive") requires the volume to be
+    // drawable on its own. WebGPU zero-initializes new textures, so an
+    // all-background (class 0) mask is already the correct initial state.
     WGPUTextureDescriptor maskDesc{};
     maskDesc.dimension = WGPUTextureDimension_3D;
     maskDesc.size = WGPUExtent3D{textureWidth, textureHeight, depth};
@@ -1651,10 +1522,10 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     gradientViewDesc.aspect = WGPUTextureAspect_All;
     gradientTextureView_ = wgpuTextureCreateView(gradientTexture_, &gradientViewDesc);
 
-    // Bakes gradientTexture_ from the just-written volumeTexture_ (issue
-    // #81's own follow-up) -- must run after both texture views above
-    // exist, before rebuildBindGroup() references gradientTextureView_.
-    // Skipped in low-memory mode: gradientTexture_ is a 1x1x1 placeholder
+    // Bakes gradientTexture_ from the just-written volumeTexture_ -- must
+    // run after both texture views above exist, before rebuildBindGroup()
+    // references gradientTextureView_. Skipped in low-memory mode:
+    // gradientTexture_ is a 1x1x1 placeholder
     // there, and dispatching a bake against it would be meaningless (the
     // shader falls back to computeGradient() instead of sampling it).
     if (downsampleFactor_ <= 1) {
@@ -1669,10 +1540,10 @@ void WebGPUDevice::loadVolume(uint32_t volumeId, void const* data, size_t byteLe
     volumeWidth_ = textureWidth;
     volumeHeight_ = textureHeight;
     volumeDepth_ = depth;
-    // Defaults the Slice2D view to Axial at the volume's middle slice
-    // (issue #37; axis reset added 2026-08-27/MPR) -- mirrors
-    // frameCameraForVolume()'s own reset-defaults-on-load pattern for the
-    // Orbit3D camera below. A new series' Sagittal/Coronal extents are
+    // Defaults the Slice2D view to Axial at the volume's middle slice --
+    // mirrors frameCameraForVolume()'s own reset-defaults-on-load pattern
+    // for the Orbit3D camera below. A new series' Sagittal/Coronal extents
+    // are
     // unrelated to the previous one's, so keeping a stale non-Axial axis
     // selected across loads would show a slice index with no clear
     // relationship to the new volume.
@@ -1956,10 +1827,9 @@ void WebGPUDevice::zoomCamera(float wheelDeltaSign) {
     float const extent = glm::length(halfExtent);
 
     // Adaptive step (faster when already far away, via cameraDistance_'s
-    // own contribution), matching Mini-Engine-reference's Camera::zoom()
-    // -- but with a floor relative to this volume's own size rather than
-    // their fixed absolute 1.5, since world units here are physical mm
-    // and vary per volume.
+    // own contribution), with a floor relative to this volume's own size
+    // -- world units here are physical mm and vary per volume, so a fixed
+    // absolute floor wouldn't generalize.
     float const zoomSpeed = std::max(extent * 0.05F, cameraDistance_ * 0.08F);
     cameraDistance_ -= wheelDeltaSign * zoomSpeed;
     cameraDistance_ = std::clamp(cameraDistance_, extent * 0.3F, extent * 10.0F);
@@ -2214,12 +2084,11 @@ void WebGPUDevice::onTimestampBufferMapped(WGPUMapAsyncStatus status, WGPUString
         return;
     }
 
-    // wgpuBufferGetMappedRange() (mutable) is write-mode only -- Dawn's own
-    // emdawnwebgpu shim (webgpu.cpp, WGPUBufferImpl::GetMappedRange) asserts
-    // `mPendingMapRequest.mode == WGPUMapMode_Write` and returns nullptr
-    // otherwise; confirmed by reading that source directly after hitting the
-    // assertion, not assumed. This buffer is mapped WGPUMapMode_Read, so the
-    // const-returning accessor is the correct one for a read-only mapping.
+    // wgpuBufferGetMappedRange() (mutable) is write-mode only -- Dawn's
+    // emdawnwebgpu shim asserts `mPendingMapRequest.mode ==
+    // WGPUMapMode_Write` and returns nullptr otherwise. This buffer is
+    // mapped WGPUMapMode_Read, so the const-returning accessor is the
+    // correct one.
     size_t const byteSize = self->pendingTimestampQueryCount_ * sizeof(uint64_t);
     auto const* timestamps =
         static_cast<uint64_t const*>(wgpuBufferGetConstMappedRange(self->timestampReadbackBuffer_, 0, byteSize));

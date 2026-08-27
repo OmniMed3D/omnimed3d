@@ -18,11 +18,9 @@
 // each manifest's file list is still sorted for a reproducible, diffable
 // output across runs.
 //
-// 2026-08-27: the third "Load Demo CT" button was replaced with a UPENN-GBM
-// brain MR series (a different TCIA collection, own directory/README/
-// license, see test-data/upenn_gbm/README.md) -- COLLECTIONS below maps
-// each series to its own source collection directory instead of assuming
-// every series lives under test-data/lidc_idri/ like before.
+// Series can come from different TCIA collections (each with its own
+// directory/README/license under test-data/), so COLLECTIONS below maps
+// each series to its own source collection directory.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

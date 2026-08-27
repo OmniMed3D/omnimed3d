@@ -1,8 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Control tooltip DoD verification (user request, 2026-08-21) --
- * tooltipManager.ts's hover/focus tooltips actually appear with the
+ * Verifies tooltipManager.ts's hover/focus tooltips appear with the
  * right text and stay within the viewport, including near the panel's
  * edges where a naive CSS popup would get clipped by #control-panel's
  * own overflow-y:auto (see tooltipManager.ts's header comment for why

@@ -5,9 +5,8 @@ import { expect, test } from "@playwright/test";
  * mask, checking that the rendered output places the mask overlay at the
  * geometrically correct location -- not a segmentation-accuracy check
  * (that's the AI track's half of REQ-C03), and not a Vulkan-vs-WebGPU
- * backend diff (`claude.md` §6 directory map already corrects that
- * mischaracterization). See docs/current/TESTS_PARITY_TODO_2026-08-24.md
- * §2 for why this lives here (real WebGPU render output is the only way
+ * backend diff. This lives here (rather than as a native unit test)
+ * because real WebGPU render output is the only way
  * to catch a coordinate-flip bug -- `WebGPUDevice::applyMaskSlice` itself
  * does no coordinate transform to unit-test natively) rather than under
  * `engine/tests/parity/` as a native CTest.
@@ -33,9 +32,8 @@ import { expect, test } from "@playwright/test";
  * Reads pixels via clipped `page.screenshot()` (the same real-render
  * capture `mask-opacity-controls.spec.ts` already relies on), not a
  * page-JS `drawImage(sourceCanvas, ...)` readback -- that route was
- * tried first and empirically always returned a fully transparent
- * buffer for this WebGPU-backed canvas (confirmed via a throwaway debug
- * script, not assumed), so it can't be used here. The control panel is
+ * tried first and always returned a fully transparent buffer for this
+ * WebGPU-backed canvas, so it can't be used here. The control panel is
  * collapsed first since it's an opaque DOM overlay covering most of the
  * viewport -- `page.screenshot()` captures the composited page, not the
  * canvas element's own backing store.
@@ -67,8 +65,8 @@ test("known-answer synthetic mask renders at the geometrically correct quadrant,
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
-  // MPR feature (2026-08-27): Axial/Sagittal/Coronal now share
-  // data-view-mode="1", disambiguated by data-slice-axis.
+  // MPR: Axial/Sagittal/Coronal share data-view-mode="1",
+  // disambiguated by data-slice-axis.
   await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
 
   await page.evaluate(

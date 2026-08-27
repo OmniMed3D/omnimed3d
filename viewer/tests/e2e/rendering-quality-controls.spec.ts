@@ -3,8 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §4.1/§4.3 DoD
- * verification: the new Quality-tier buttons and Shading checkbox
+ * Verifies the Quality-tier buttons and Shading checkbox
  * (qualityControls.ts) actually change what the raymarch pass draws, the
  * same "real, not fabricated" screenshot-diff pattern
  * shell-mask-integration.spec.ts already uses (byte-identical PNGs would
@@ -74,12 +73,9 @@ test("shading toggle changes the rendered frame (§4.3)", async ({ page }) => {
   expect(unshadedShot.equals(reshadedShot)).toBe(false);
 });
 
-// User request, 2026-08-27: every fixed preset lost its per-preset color
-// tint (grayscale-only now, matching a real clinical reading screen --
-// see ColormapPreset's own comment, WebGPUDevice.cpp) -- this test used
-// to assert that specifically ("not just window/level," comparing Lung's
-// cool blue against Bone's warm ivory). Renamed/reworded rather than
-// deleted: switching presets still visibly changes the render (different
+// Fixed presets are grayscale-only (see ColormapPreset's own comment,
+// WebGPUDevice.cpp), so this checks only that switching presets still
+// visibly changes the render (different
 // window/level *and*, for these two, a different threshold band --
 // Bone's skeleton vs. Lung's aerated fields), just never because of color
 // anymore.

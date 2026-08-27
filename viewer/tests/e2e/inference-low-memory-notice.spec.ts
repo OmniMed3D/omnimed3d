@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * User request, 2026-08-26: Low-Memory Mode pauses rendering for the
- * duration of each inference batch (renderPauseBanner.ts,
+ * Low-Memory Mode pauses rendering for the duration of each inference
+ * batch (renderPauseBanner.ts,
  * render-pause-during-inference.spec.ts) and runs against downsampled
  * textures (volume-downsample-low-memory-mode.spec.ts) -- without a
  * heads-up, that combination reads as "stuck" to a first-time user

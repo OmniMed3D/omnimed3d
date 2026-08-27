@@ -9,19 +9,14 @@
  *   the same pattern engine/tests/wasm_smoke/shell.html already proved.
  *
  * `loadVolumeFromFiles` below is the shared entry point for turning
- * picked files into a loaded volume -- both `filePicker.ts` (issue #34,
- * REQ-R06) and `omnimed3dTestHooks` (kept for the Playwright e2e tests in
+ * picked files into a loaded volume -- both `filePicker.ts` (REQ-R06) and
+ * `omnimed3dTestHooks` (kept for the Playwright e2e tests in
  * viewer/tests/e2e/) go through the same Worker instances and volumeId
  * bookkeeping, so out-of-order/stale-volumeId behavior is identical
  * regardless of which one drove the load. `cameraControls.ts`/
  * `windowLevelControls.ts` call the engine's WASM camera/window-level
  * exports directly (no Shell-owned state to route through -- unlike
  * volume/mask data, those calls don't need a volumeId or Worker hop).
- *
- * Issue #20 ("Finalize Mask Data Contract and Rendering Integration")
- * tracks the original mask-routing wiring; an earlier version of this
- * file's comment mislabeled it "issue #21" (that number is unrelated --
- * see docs/prd/CHANGELOG.md's own correction of the same mistake).
  */
 import { setupFilePicker } from "./filePicker.js";
 import { setupDragAndDrop } from "./dragAndDropControls.js";
@@ -67,8 +62,8 @@ interface EngineModule {
     spacingZ: number,
     downsampleFactor: number,
   ): void;
-  // MPR + native-slice feature (2026-08-27 user request) -- see
-  // rhi::Device::loadNativeVolume's header comment. No downsampleFactor.
+  // MPR + native-slice feature -- see rhi::Device::loadNativeVolume's
+  // header comment. No downsampleFactor.
   _engine_load_native_volume(
     volumeId: number,
     dataPtr: number,
@@ -96,7 +91,7 @@ interface EngineModule {
   // _engine_set_slice_axis), 2=NativeSlice2D.
   _engine_set_view_mode(mode: number): void;
   _engine_set_slice_index(index: number): void;
-  // axis: 0=Axial, 1=Sagittal, 2=Coronal (MPR, 2026-08-27 user request).
+  // axis: 0=Axial, 1=Sagittal, 2=Coronal (MPR).
   _engine_set_slice_axis(axis: number): void;
   _engine_set_native_slice_index(index: number): void;
   _engine_resize(width: number, height: number): void;
@@ -187,19 +182,17 @@ interface VolumeReadyMessage {
   spacingY: number;
   spacingZ: number;
   data: ArrayBuffer;
-  // Bug report, 2026-08-27: mirrors pipeline.ts's VolumeReadyMessage --
-  // this local interface had silently drifted out of sync with it (no
-  // typecheck script exists for this package; Vite/esbuild transpile
-  // main.ts without type-checking it, so a missing field here doesn't
-  // fail any build, only weakens editor/tsc feedback). Keep these two
-  // definitions in sync by hand when either changes.
+  // Mirrors pipeline.ts's VolumeReadyMessage. Vite/esbuild transpile
+  // main.ts without type-checking it, so a missing field here fails no
+  // build -- keep these two definitions in sync by hand when either
+  // changes.
   windowCenter?: number;
   windowWidth?: number;
 }
 
-// MPR + native-slice feature (2026-08-27 user request) -- mirrors
-// pipeline.ts's NativeVolumeReadyMessage, same hand-sync caveat as
-// VolumeReadyMessage above.
+// MPR + native-slice feature -- mirrors pipeline.ts's
+// NativeVolumeReadyMessage, same hand-sync caveat as VolumeReadyMessage
+// above.
 interface NativeVolumeReadyMessage {
   type: "native-volume-ready";
   volumeId: string;
@@ -226,7 +219,7 @@ interface MaskSliceMessage {
   data: ArrayBuffer;
 }
 
-// Issue #40: resolves false on timeout instead of polling forever --
+// Resolves false on timeout instead of polling forever --
 // previously a WebGPU-unavailable browser/device (no adapter, so
 // _engine_is_ready() never becomes true) left the Shell stuck at "shell:
 // loading..." indefinitely with no user-facing signal. 15s matches the
@@ -255,10 +248,9 @@ function waitForEngineReady(timeoutMs = 15000): Promise<boolean> {
 /**
  * `volumeId`s crossing into WASM are `uint32_t` (engine_load_volume's ABI),
  * distinct from the `string` volumeId used at every JS-to-JS boundary --
- * this Shell is exactly the layer responsible for that conversion (see
- * docs/current/SESSION_STATUS_2026-08-16.md's "volumeId is a string..."
- * note). A simple incrementing counter is enough since only this Shell
- * ever mints one.
+ * this Shell is exactly the layer responsible for that conversion. A
+ * simple incrementing counter is enough since only this Shell ever
+ * mints one.
  */
 let nextNumericVolumeId = 1;
 const volumeIdMap = new Map<string, number>();
@@ -304,20 +296,16 @@ let inferenceWorkerReady = false;
 // correctness bug.
 const pendingHuSlices: HuSliceMessage[] = [];
 
-// User feedback, 2026-08-27: once a segmentation model was loaded, every
-// *subsequent* new volume load immediately ran inference on it too, with
-// no way to just look at a new file without triggering a (potentially
-// slow, and on Low-Memory Mode, render-pausing) segmentation pass. hu-slice
-// only forwards to the Inference Worker when its volumeId matches this --
-// set by armSegmentationForCurrentVolume() (main(), called from
-// inferenceControls.ts's button both on the model's first successful load
-// and on every subsequent explicit "run it on this volume too" click), and
-// reset to null by mintVolumeId() on every new volume so a freshly loaded
-// one never inherits the previous volume's armed state.
+// hu-slice only forwards to the Inference Worker when its volumeId
+// matches this -- set by armSegmentationForCurrentVolume() (called from
+// inferenceControls.ts's button on the model's first successful load and
+// on every subsequent explicit "run it on this volume too" click), and
+// reset to null by mintVolumeId() on every new volume so a freshly
+// loaded one never inherits the previous volume's armed state.
 let segmentationArmedVolumeId: string | null = null;
 
-// Issue #69: runs once, after the first volume actually renders --
-// checked here rather than at engine-ready time because an empty canvas
+// Runs once, after the first volume actually renders -- checked here
+// rather than at engine-ready time because an empty canvas
 // renders trivially fast on any device and says nothing about real
 // raymarch cost. 2000ms gives FrameStats's 60-sample rolling average
 // (engine/src/utils/FrameStats.cpp) enough new post-load frames to
@@ -358,20 +346,19 @@ function mintVolumeId(): string {
 }
 
 /**
- * Shared entry point for turning picked files into a loaded volume
- * (issue #34) -- mints a volumeId and posts a `parse-series` message to
- * the real Parse Worker, the same pattern `omnimed3dTestHooks`-driven
+ * Shared entry point for turning picked files into a loaded volume --
+ * mints a volumeId and posts a `parse-series` message to the real Parse
+ * Worker, the same pattern `omnimed3dTestHooks`-driven
  * flows already used by hand. `files` may be a single- or multi-file
  * series (e.g. one file per axial slice).
  */
 /**
  * File-agnostic core of loadVolumeFromFiles -- mints a volumeId and posts
- * a `parse-series` message to the real Parse Worker. Split out (2026-08-21,
- * demo-CT loader follow-up) because nothing downstream of this point ever
- * touches `File`-specific APIs (confirmed against parse-worker/src/
- * worker.ts and pipeline.ts -- the `ParseSeriesMessage` contract is plain
- * `ArrayBuffer[]`), so a caller that already has buffers (e.g. from
- * `fetch()` rather than a picked `File`) can skip straight to this.
+ * a `parse-series` message to the real Parse Worker. Split out because
+ * nothing downstream of this point touches `File`-specific APIs (the
+ * `ParseSeriesMessage` contract is plain `ArrayBuffer[]`), so a caller
+ * that already has buffers (e.g. from `fetch()` rather than a picked
+ * `File`) can skip straight to this.
  */
 export async function loadVolumeFromBuffers(buffers: ArrayBuffer[]): Promise<string> {
   if (!parseWorkerInstance) {
@@ -396,10 +383,10 @@ export async function loadVolumeFromBuffers(buffers: ArrayBuffer[]): Promise<str
 }
 
 /**
- * Shared entry point for turning picked files into a loaded volume
- * (issue #34) -- the same pattern `omnimed3dTestHooks`-driven flows
- * already used by hand. `files` may be a single- or multi-file series
- * (e.g. one file per axial slice).
+ * Shared entry point for turning picked files into a loaded volume --
+ * the same pattern `omnimed3dTestHooks`-driven flows already used by
+ * hand. `files` may be a single- or multi-file series (e.g. one file
+ * per axial slice).
  */
 export async function loadVolumeFromFiles(files: File[]): Promise<string> {
   // Registered before the load itself so "Reload Volume" (reloadVolumeControl.ts)
@@ -477,12 +464,12 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   notifyVolumeLoaded(msg.width, msg.height, msg.depth);
   notifyVolumeAabbLoaded(msg.width, msg.height, msg.depth, msg.spacingX, msg.spacingY, msg.spacingZ);
   notifyVolumeLoadedForInference(msg.volumeId, msg.depth);
-  // Bug report, 2026-08-27 (revised same day): the file's own VOI LUT
-  // window (pipeline.ts's assembleSeries, from the first slice) is the
-  // only reliable per-series display hint for data that isn't in
-  // Hounsfield Units at all (e.g. MR), but *auto-applying* it here turned
-  // out wrong -- it permanently discarded whatever the user had picked as
-  // soon as a new volume loaded, and looks bad as the first-seen 3D Orbit
+  // The file's own VOI LUT window (pipeline.ts's assembleSeries, from
+  // the first slice) is the only reliable per-series display hint for
+  // data that isn't in Hounsfield Units (e.g. MR), but *auto-applying*
+  // it here is wrong -- it permanently discards whatever the user had
+  // picked as soon as a new volume loads, and looks bad as the
+  // first-seen 3D Orbit
   // view (a 2D-slice-tuned window, raymarched). Just store it (always,
   // even when undefined, to clear a stale value from a previous volume
   // that didn't carry one) -- setFileWindowLevel wires it into the "From
@@ -496,8 +483,8 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   document.getElementById("empty-hint")!.hidden = true;
 }
 
-// MPR + native-slice feature (2026-08-27 user request) -- loads the DICOM
-// series' own original per-file slices into a second, independent GPU
+// MPR + native-slice feature -- loads the DICOM series' own original
+// per-file slices into a second, independent GPU
 // texture (rhi::Device::loadNativeVolume) for the NativeSlice2D view mode.
 // Deliberately minimal compared to engineLoadVolume: no downsampling, no
 // low-memory-mode bookkeeping, no mask/inference notification -- this view
@@ -547,7 +534,7 @@ function engineApplyMaskSlice(msg: MaskSliceMessage): void {
 async function main() {
   const engineReady = await waitForEngineReady();
   if (!engineReady) {
-    // Issue #40: WebGPU-unavailable (or otherwise stuck) fallback -- see
+    // WebGPU-unavailable (or otherwise stuck) fallback -- see
     // waitForEngineReady's own comment. Stop here rather than proceeding
     // to construct Workers/wire message routing against an engine that
     // will never respond.
@@ -566,15 +553,14 @@ async function main() {
     type: "module",
   });
 
-  // Follow-up: a bad/unsupported file (e.g. not real DICOM, or a
-  // compressed transfer syntax dicom-parser doesn't support -- see
-  // CLAUDE.md #10) is now caught inside worker.ts's onmessage and
-  // reported via a "parse-error" message (see below) -- self.onmessage
-  // there is async, so a synchronous throw inside it becomes an
-  // unhandled promise rejection rather than the worker's "error" event,
-  // and onerror here never fires for it (confirmed via real browser e2e
-  // testing). onerror stays wired as the fallback for genuinely uncaught
-  // worker failures (e.g. a syntax error in worker.ts itself).
+  // A bad/unsupported file (not real DICOM, or a compressed transfer
+  // syntax dicom-parser doesn't support) is caught inside worker.ts's
+  // onmessage and reported via a "parse-error" message (see below) --
+  // self.onmessage there is async, so a synchronous throw inside it
+  // becomes an unhandled promise rejection rather than the worker's
+  // "error" event, and onerror here never fires for it. onerror stays
+  // wired as the fallback for genuinely uncaught worker failures (e.g. a
+  // syntax error in worker.ts itself).
   parseWorker.onerror = (event: ErrorEvent) => {
     console.error("Shell: Parse Worker error", event.message, event);
     showLoadError();
@@ -582,15 +568,14 @@ async function main() {
 
   // A full absolute URL (not an origin-relative path) is required here --
   // a dynamic import() of a root-relative specifier from inside a Worker
-  // module fails to resolve in Chromium (empirically confirmed), even
-  // though the exact same specifier resolves fine from the main thread.
+  // module fails to resolve in Chromium, even though the same specifier
+  // resolves fine from the main thread.
   const wasmModulePath = new URL("/engine/dicom-parser/dicom_parser_wasm.mjs", location.origin).href;
 
   // Wait for parse-worker's own async WASM load to finish before sending
   // it anything else -- without this, a caller (or this Shell itself)
   // sending parse-file/parse-series right after "init" races the load
-  // and hits worker.ts's "received a file before 'init'" error (found via
-  // real browser e2e testing, not assumed safe).
+  // and hits worker.ts's "received a file before 'init'" error.
   const parseWorkerReady = new Promise<void>((resolve) => {
     parseWorker.onmessage = (event: MessageEvent<{ type: string }>) => {
       if (event.data.type === "init-complete") {
@@ -621,10 +606,9 @@ async function main() {
     }
   };
 
-  // User feedback, 2026-08-27: called once the model first finishes loading
-  // (inferenceControls.ts arms whatever volume is currently loaded at that
-  // moment automatically, matching the previously-expected "load the model,
-  // it segments what I'm looking at" flow) and again on every subsequent
+  // Called once the model first finishes loading (inferenceControls.ts
+  // arms whatever volume is currently loaded at that moment) and again
+  // on every subsequent
   // explicit "run it on this volume too" button click (a *new* volume load
   // no longer arms itself -- see segmentationArmedVolumeId's own comment).
   // Flushes whatever hu-slices for this volume already arrived and got
@@ -680,16 +664,16 @@ async function main() {
     inferenceWorker,
     startNewVolume: mintVolumeId,
     currentVolumeId: () => currentVolumeId,
-    // User feedback, 2026-08-27: segmentation no longer auto-arms a newly
-    // loaded volume just because the model is already active (see
-    // segmentationArmedVolumeId's own comment) -- tests that want a
-    // hu-slice round trip for a given volume must arm it explicitly here,
-    // same as a real user clicking "Run Segmentation" would.
+    // Segmentation does not auto-arm a newly loaded volume just because
+    // the model is already active (see segmentationArmedVolumeId's own
+    // comment) -- tests that want a hu-slice round trip for a given
+    // volume must arm it explicitly here, same as a real user clicking
+    // "Run Segmentation" would.
     armSegmentationForCurrentVolume,
   };
 
-  // Issue #69: ?debug=1 starts the stats overlay visible and the control
-  // panel collapsed, so a real-device test doesn't need to reach a
+  // ?debug=1 starts the stats overlay visible and the control panel
+  // collapsed, so a device test doesn't need to reach a
   // checkbox that can end up under the mobile browser's own bottom
   // toolbar -- see setupStatsOverlay/setupPanelCollapse's own comments.
   const debugMode = new URLSearchParams(location.search).get("debug") === "1";

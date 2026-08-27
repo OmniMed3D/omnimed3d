@@ -1,45 +1,36 @@
 /**
- * Interactive orbit camera (issue #34, REQ-R06) -- forwards raw drag
- * pixel deltas and normalized wheel direction directly to the engine's
+ * Interactive orbit camera (REQ-R06) -- forwards raw drag pixel deltas and
+ * normalized wheel direction directly to the engine's
  * `engine_orbit_camera`/`engine_zoom_camera` WASM exports every event, no
  * batching/queueing. That's safe specifically because `WebGPUDevice`
  * never uses ASYNCIFY (see its own `AllowSpontaneous` comment,
- * engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp) -- Mini-Engine-
- * reference's equivalent JS shell needed a `_pending`-command queue
- * gated on a `Module._wasmBusy` flag specifically to avoid re-entering a
- * suspended ASYNCIFY call stack, a constraint that doesn't exist here.
+ * engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp), so there is no
+ * suspended call stack to re-enter.
  *
- * Drag lifecycle matches Mini-Engine-reference's validated
- * Camera::rotate() usage: pointerdown on the canvas starts a drag,
+ * Drag lifecycle: pointerdown on the canvas starts a drag,
  * pointermove/pointerup are listened for on `window` (not just the
  * canvas) so a drag already in progress isn't dropped if the pointer
  * leaves the canvas bounds or is released outside it.
  *
- * Issue #79: uses Pointer Events (not mouse events) specifically so this
- * works on touch -- a real-device mobile test found orbit simply didn't
- * respond to a finger drag at all, since `mousedown`/`mousemove` never
- * fire for touch input. Pointer Events unify mouse/touch/pen into one
- * model (`pointerType` distinguishes them when it matters), and browsers
- * still dispatch the matching pointer events for real/simulated mouse
- * input too, so this is a drop-in replacement for what was here before --
- * confirmed by this file's own existing mouse-driven e2e coverage (issue
- * #34) still passing unchanged. `touch-action: none` on #canvas
- * (style.css) is required alongside this: without it, a touch drag still
- * triggers the browser's own native scroll/pan gesture on the canvas
- * before JS ever sees pointermove, `preventDefault()` here or not.
- * Only the first pointer of a multi-touch gesture is tracked (a second
- * finger touching mid-drag is ignored, not treated as a new drag) --
- * pinch-to-zoom is not implemented; mobile has no zoom gesture yet.
+ * Uses Pointer Events (not mouse events) so this works on touch --
+ * `mousedown`/`mousemove` never fire for touch input. Pointer Events
+ * unify mouse/touch/pen into one model (`pointerType` distinguishes them
+ * when it matters), and browsers still dispatch matching pointer events
+ * for mouse input, so this is a drop-in replacement for mouse-only
+ * handling. `touch-action: none` on #canvas (style.css) is required
+ * alongside this: without it, a touch drag triggers the browser's own
+ * native scroll/pan gesture on the canvas before JS ever sees
+ * pointermove, `preventDefault()` here or not. Only the first pointer of
+ * a multi-touch gesture is tracked; pinch-to-zoom is not implemented.
  *
- * Issue #69: this same start/end lifecycle also drives
- * qualityControls.ts's interaction-adaptive quality tier -- notified
- * here rather than duplicating drag-state tracking in that module.
+ * This same start/end lifecycle also drives qualityControls.ts's
+ * interaction-adaptive quality tier -- notified here rather than
+ * duplicating drag-state tracking in that module.
  *
- * User request, 2026-08-27: the wheel handler now branches on the current
- * view mode -- Orbit3D zooms the camera as before, but Axial Slice 2D
- * scrubs the slice slider instead (previously the wheel just did nothing
- * there, since engine_zoom_camera no-ops outside Orbit3D). Mode lives in
- * viewControls.ts, not duplicated here -- see getViewMode()'s own comment.
+ * The wheel handler branches on the current view mode -- Orbit3D zooms
+ * the camera, Axial Slice 2D scrubs the slice slider instead (where
+ * engine_zoom_camera no-ops). Mode lives in viewControls.ts, not
+ * duplicated here -- see getViewMode()'s own comment.
  */
 
 import { notifyInteractionEnd, notifyInteractionStart } from "./qualityControls";

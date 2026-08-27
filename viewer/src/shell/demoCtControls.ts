@@ -1,21 +1,16 @@
 /**
  * "Load Demo CT" toggle -- lets the user pick one of three bundled, real,
- * de-identified patient series to load without a file dialog (issue #34's
- * file-picker equivalent for demo data). User request, 2026-08-26: a
- * 3-way toggle instead of a single button, reusing the .preset-buttons
- * active-state pattern (backgroundControls.ts/qualityControls.ts) --
- * clicking a series makes it .active, and re-clicking an already-loaded
- * series reloads it fresh rather than being permanently disabled (the
- * previous single-button behavior), since the whole point of a toggle is
- * being able to switch back and forth between series. Each button gets
- * its own gauge overlay (buttonGauge.ts) so its own fetch progress is
- * independently visible, and every other series button is disabled while
- * one is in flight to avoid overlapping fetches.
+ * de-identified patient series to load without a file dialog. A 3-way
+ * toggle reusing the .preset-buttons active-state pattern
+ * (backgroundControls.ts/qualityControls.ts) -- clicking a series makes
+ * it .active, and re-clicking an already-loaded series reloads it fresh.
+ * Each button gets its own gauge overlay (buttonGauge.ts) so its own
+ * fetch progress is independently visible, and every other series button
+ * is disabled while one is in flight to avoid overlapping fetches.
  *
  * Two of the three (LIDC-IDRI-0001/0002) are lung CT from the same
- * LIDC-IDRI collection; the third (UPENN-GBM-00001, 2026-08-27, replacing
- * a third LIDC-IDRI lung CT patient) is a brain MR series from a
- * different collection entirely -- deliberately so, since it's also this
+ * LIDC-IDRI collection; the third (UPENN-GBM-00001) is a brain MR series
+ * from a different collection -- deliberately so, since it's also this
  * app's real-world stress case for oblique/non-axial resampling, the
  * "From File" window/level preset, and MPR/Native view modes (see
  * test-data/upenn_gbm/README.md), not just another axial CT demo.
@@ -43,9 +38,8 @@
  * requires wherever this data is used (copied from
  * test-data/lidc_idri/README.md and test-data/upenn_gbm/README.md --
  * kept in sync by hand, not fetched at runtime). ATTRIBUTIONS below is
- * keyed by seriesId since, as of 2026-08-27 (the third button's LIDC-IDRI
- * lung CT patient was replaced with a UPENN-GBM brain MR series), the
- * three demo buttons no longer all share one collection/citation.
+ * keyed by seriesId because the three demo buttons no longer all share
+ * one collection/citation.
  */
 
 import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";

@@ -1,6 +1,6 @@
 /**
- * Drag-and-drop DICOM loading (user request, 2026-08-27) -- drop a
- * folder or a handful of files anywhere on the page to load them,
+ * Drag-and-drop DICOM loading -- drop a folder or a handful of files
+ * anywhere on the page to load them,
  * alongside the existing "Load DICOM folder"/"Load DICOM files" pickers
  * (filePicker.ts). Both end up calling the same `loadVolumeFromFiles`
  * (main.ts), so this module's only real job is turning a `DragEvent`

@@ -1,6 +1,5 @@
 /**
- * Custom colormap controls (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
- * §5.3) -- two `<input type="color">` pickers driving
+ * Custom colormap controls -- two `<input type="color">` pickers driving
  * `engine_set_custom_lut_colors` directly and synchronously on every
  * `input` event (no queueing needed -- see cameraControls.ts's comment on
  * why). Unlike the fixed presets, Custom doesn't change window/level and

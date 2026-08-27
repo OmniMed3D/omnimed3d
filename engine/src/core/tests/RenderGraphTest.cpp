@@ -1,7 +1,6 @@
-// Native-only automated regression test for core::RenderGraph -- hand-rolled
-// assertions (no GoogleTest/Catch2 dependency, per CLAUDE.md #4's "no new
-// dependencies without explicit consent") wired into CTest, same pattern as
-// dicom-parser/tests/DicomFileTest.cpp.
+// Native-only regression test for core::RenderGraph -- hand-rolled
+// assertions (no GoogleTest/Catch2 dependency) wired into CTest, same
+// pattern as dicom-parser/tests/DicomFileTest.cpp.
 
 #include "core/RenderGraph.hpp"
 

@@ -1,83 +1,42 @@
 /**
- * Clinical window/level UI (issue #34, REQ-R06) -- two range sliders
- * (center/width) plus a baseline preset `<select>`, calling the engine's
+ * Clinical window/level UI (REQ-R06) -- two range sliders (center/width)
+ * plus a baseline preset `<select>`, calling the engine's
  * `engine_set_window_level`/`engine_set_colormap_preset` WASM exports
  * directly and synchronously on every input event (no queueing needed --
  * see cameraControls.ts's comment on why). Preset `<option>` order/values
  * must match `kColormapPresets` in
  * engine/src/rhi/backends/webgpu/src/WebGPUDevice.cpp exactly (0=Lung,
  * 1=Bone, 2=Soft Tissue (default), 3=Brain, 4=Mediastinum, 5=Abdomen/Liver,
- * 6=Stroke, 7=Subdural). Custom (`CUSTOM_PRESET_ID`, 8) is a 9th,
- * user-defined colormap layered on top -- see customColormapControls.ts.
+ * 6=Stroke, 7=Subdural). Custom (`CUSTOM_PRESET_ID`, 8) is a user-defined
+ * colormap layered on top -- see customColormapControls.ts.
  *
- * User request, 2026-08-27 (clinical preset expansion): switched from a
- * button grid to a single `<select>` -- the fixed presets plus Custom
- * stopped fitting comfortably as a row of buttons once 4 new ones
- * (Mediastinum/Abdomen-Liver/Stroke/Subdural) were added.
+ * A `<select>`, not a button grid: the fixed presets plus Custom don't
+ * fit comfortably as a row of buttons. Fixed presets carry no per-preset
+ * color tint (WebGPUDevice.cpp's ColormapPreset), matching a real
+ * clinical reading screen.
  *
- * User request, 2026-08-27 (revised same day: "실제 병원 CT 판독화면대로
- * 그레이 스케일로 가자" -- match real clinical reading screens): every
- * fixed preset lost its per-preset color tint (WebGPUDevice.cpp's
- * ColormapPreset no longer carries lowColor/highColor at all), which made
- * the old separate Grayscale preset byte-for-byte identical to Soft
- * Tissue (same center/width, now the same colorless LUT too) -- removed
- * as a redundant 9th button/option rather than kept as a confusing exact
- * duplicate. Soft Tissue (index 2, unchanged) is the new default;
- * Mediastinum/Abdomen-Liver/Stroke/Subdural each shift down by one index
- * (5->4, 6->5, 7->6, 8->7) to close the gap Grayscale's removal left at 4,
- * and Custom moves from 9 to 8.
+ * Sliders initialize to the Soft Tissue preset's values (40/400) to match
+ * `WebGPUDevice`'s own default-on-load preset -- there is no read-back
+ * export, so both sides agree on the same default independently.
  *
- * Sliders initialize to the Soft Tissue preset's values (40/400) to
- * match `WebGPUDevice`'s own default-on-load preset -- no read-back
- * export from the engine exists (or is needed) to sync this; both sides
- * just agree on the same default independently, the same way
- * `kDefaultColormapPreset` is a plain constant on the C++ side.
+ * A preset click also syncs tfDetailControls.ts's #threshold slider
+ * (PRESET_THRESHOLDS below), the same way it syncs
+ * #window-center/#window-width -- setColormapPreset() applies a per-preset
+ * default Threshold natively (WebGPUDevice.cpp's ColormapPreset::threshold)
+ * so Bone shows the skeleton rather than the skin/fat surface in 3D
+ * Orbit; without the sync the slider would silently disagree with engine
+ * state.
  *
- * User request, 2026-08-27: a preset click also syncs tfDetailControls.ts's
- * #threshold slider (PRESET_THRESHOLDS below), the same way it already
- * syncs #window-center/#window-width -- setColormapPreset() now applies a
- * per-preset default Threshold natively (WebGPUDevice.cpp's
- * ColormapPreset::threshold) so Bone actually shows the skeleton rather
- * than the skin/fat surface in 3D Orbit; without this sync the slider
- * would silently disagree with engine state after a preset click, same
- * class of bug PRESET_WINDOW_LEVELS already exists to avoid.
- *
- * User feedback, 2026-08-27 (MPR + native-slice follow-up): the loaded
- * series' own VOI LUT window (see setFileWindowLevel below) used to be
- * *applied* automatically on load, landing on the blank "Custom
- * window/level" state -- two problems: (1) picking any other preset
- * afterward, or dragging a slider, permanently lost that value with no way
- * back, and (2) a per-slice DICOM window often looks wrong as the *first*
- * screen (3D Orbit's raymarch, not the 2D slice view it was tuned for) --
- * e.g. an MR window renders as a blown-out white block in 3D. Fixed by
- * turning it into a 10th, dynamic preset (`FROM_FILE_PRESET_ID`, "From
- * File") instead of an auto-applied override: the value is *stored*
- * durably (survives switching to/from other presets or manual drags) and
- * only *applied* when the user actually picks it.
- *
- * User feedback, 2026-08-27 (follow-up to the above, same day): with
- * FROM_FILE_THRESHOLD now suppressing the background/air haze (see its own
- * comment), starting a volume that *has* a file window/level on plain Soft
- * Tissue was reported as still showing a solid, undifferentiated box in 3D
- * Orbit on first load of the UPENN-GBM brain MR demo -- Soft Tissue's
- * threshold is 0, and a CT-calibrated window has no reason to clip a
- * non-HU (e.g. MR) volume's background correctly. Since a present file
- * window/level is this codebase's own signal for "likely non-HU data" (see
- * setFileWindowLevel's own comment), setFileWindowLevel now applies "From
- * File" as that volume's starting preset instead of leaving Soft Tissue
- * selected -- a volume with no file window/level (the common CT case)
- * still starts on Soft Tissue, unchanged.
- *
- * User report, 2026-08-27 (follow-up to the above, same day): "has a file
- * window/level" turned out to be a bad proxy for "likely non-HU data" on
- * its own -- this app's own LIDC-IDRI Lung1/Lung2 demo CTs both carry a
- * VOI LUT window too (real CT commonly does), so both were silently
- * starting on "From File" instead of their ordinary CT presets. Fixed by
- * reading the file's actual Modality tag (added to the shared DICOM
- * parser for this) instead: setFileWindowLevel now only auto-applies
- * "From File" when Modality names something other than CT (e.g. MR);
- * unknown/absent Modality falls back to the plain-CT behavior (stays on
- * Soft Tissue) rather than guessing. See setFileWindowLevel's own comment.
+ * The loaded series' own VOI LUT window (see setFileWindowLevel below) is
+ * exposed as a dynamic "From File" preset (`FROM_FILE_PRESET_ID`), not
+ * auto-applied as an override: the value is *stored* durably (survives
+ * switching presets or manual drags) and only *applied* when picked or
+ * auto-selected. A per-slice DICOM window is often wrong as the first 3D
+ * Orbit screen anyway (it was tuned for the 2D slice view).
+ * setFileWindowLevel auto-selects "From File" only when the file's
+ * Modality names something other than CT (e.g. MR) -- "has a file
+ * window/level" alone is a bad proxy for non-HU data, since real CT
+ * commonly carries one too. Unknown/absent Modality stays on Soft Tissue.
  */
 
 const DEFAULT_WINDOW_CENTER = 40;
@@ -106,14 +65,13 @@ export function bindRangeInput(
   });
 }
 
-// Follow-up: numeric direct-entry (critique heuristic #7, Flexibility
-// and Efficiency -- drag-only precision on a 1-4000-wide range was a
-// real gap for anyone dialing in an exact HU window). #window-center-value
-// / #window-width-value are real <input type=number> elements now, not
+// Numeric direct-entry -- drag-only precision on a 1-4000-wide range is a
+// real gap for dialing in an exact HU window. #window-center-value /
+// #window-width-value are real <input type=number> elements, not
 // read-only <span>s -- kept as a separate helper from bindRangeInput
 // (still used as-is by viewControls.ts's slice slider, a read-only-label
-// case that doesn't need this) rather than changing that shared function's
-// contract for every caller.
+// case that doesn't need this) rather than changing that shared
+// function's contract for every caller.
 function bindRangeWithNumericEntry(
   rangeId: string,
   valueId: string,
@@ -168,42 +126,30 @@ const PRESET_WINDOW_LEVELS: Record<number, { center: number; width: number }> = 
   7: { center: 70, width: 200 }, // Subdural
 };
 
-// Custom (§5.3) isn't one of kColormapPresets' 0-7 indices -- it's the
-// 9th <option> in #colormap-preset-select, handled specially below (its
-// color application is owned by customColormapControls.ts, which also
-// imports this constant to mark itself active the same way).
+// Custom isn't one of kColormapPresets' 0-7 indices -- it's an <option>
+// in #colormap-preset-select handled specially below (its color
+// application is owned by customColormapControls.ts, which also imports
+// this constant to mark itself active the same way).
 export const CUSTOM_PRESET_ID = 8;
 
-// "From File" (MPR + native-slice follow-up, 2026-08-27) -- the 10th
-// <option>, also not one of kColormapPresets' fixed indices. Unlike every
-// other entry here, its center/width value is per-volume (set by
+// "From File" -- an extra <option>, also not one of kColormapPresets'
+// fixed indices. Its center/width value is per-volume (set by
 // setFileWindowLevel, not a compile-time constant), so it can't live in
 // PRESET_WINDOW_LEVELS -- handled specially in the change handler below,
 // same pattern as Custom.
 export const FROM_FILE_PRESET_ID = 9;
 
-// User feedback, 2026-08-27 (3D Orbit follow-up to the "From File" window/
-// level preset): every fixed CT preset except Lung/Bone leaves threshold
-// at 0 because real CT air (~-1000 HU) already clamps to n=0 on its own,
-// far below any of those windows' floors -- no explicit cutoff is needed.
-// That safety margin doesn't exist for non-HU data (e.g. MR): its raw
-// background/air value is a small *positive* number near the noise floor
-// (magnitude images can't be negative), which lands as a *mid-range* n
-// under a plausible window instead of clamping to 0 -- so in 3D Orbit,
-// background/air renders with real, visible opacity instead of staying
-// transparent (the same window/threshold interaction that made Stroke
-// render like Bone and Bone render like Soft Tissue against this app's
-// UPENN-GBM demo, diagnosed 2026-08-27). "From File"'s window comes from
-// the series' own DICOM VOI LUT, which has no comparable per-file
-// threshold recommendation to read -- this is a fixed approximation, not
-// a per-file-calibrated value: 0.15 is chosen to sit comfortably above
-// where a typical file-provided window's own floor tends to land relative
-// to a near-zero background (empirically, roughly 0.1-0.125 for this
-// project's own UPENN-GBM test series), without cutting into real tissue
-// signal, which typically extends well past that. Revisit if a real file
-// still shows a visibly hazy background under "From File" in 3D Orbit --
-// same "revisit when a real case demonstrates the need" trigger as
-// docs/adr/0002-dicom-parser-uncompressed-pixel-data.md's own precedent.
+// Every fixed CT preset except Lung/Bone leaves threshold at 0 because
+// real CT air (~-1000 HU) already clamps to n=0, far below any of those
+// windows' floors -- no explicit cutoff is needed. That margin doesn't
+// exist for non-HU data (e.g. MR): its background/air is a small
+// positive value near the noise floor, which lands mid-range under a
+// plausible window rather than clamping to 0, so in 3D Orbit background
+// renders with visible opacity. "From File"'s window comes from the
+// series' own DICOM VOI LUT, which has no per-file threshold hint, so
+// this is a fixed approximation: 0.15 sits above where a typical
+// file-provided window's floor lands relative to a near-zero background
+// without cutting into real tissue signal.
 const FROM_FILE_THRESHOLD = 0.15;
 
 // Mirrors kColormapPresets[presetId].threshold (WebGPUDevice.cpp) -- kept
@@ -234,25 +180,21 @@ const PRESET_THRESHOLDS: Record<number, number> = {
 // agrees with engine state from the first frame, not just after a click.
 const DEFAULT_PRESET_ID = 2;
 
-// Visual polish pass: presets get the same selected-state feedback the
-// view-mode toggle already had (critique heuristic #4, Consistency).
+// Presets get the same selected-state feedback as the view-mode toggle.
 // Manually dragging a slider afterward clears the active state -- the
 // displayed values no longer necessarily match any preset once the user
 // has diverged from it, so claiming one is still "selected" would
-// misrepresent state (the same class of bug the preset/slider desync fix
-// closed). Exported (not a setupWindowLevelControls()-local closure) so
-// customColormapControls.ts's §5.3 Custom preset (CUSTOM_PRESET_ID, 8)
+// misrepresent state. Exported (not a setupWindowLevelControls()-local
+// closure) so customColormapControls.ts's Custom preset (CUSTOM_PRESET_ID)
 // can drive the same active-state feedback when a custom color is
 // picked, without duplicating this logic.
 let activePresetId: number | null = DEFAULT_PRESET_ID;
 
-// User request, 2026-08-27 (clinical preset expansion): the preset picker
-// is a native <select> now, not a button grid -- the fixed presets plus
-// Custom no longer fit comfortably as a row of buttons. "Active" state is
-// just the select's own displayed value; a null presetId (manually
-// dragged Center/Width, matching a preset by coincidence or not) shows
-// the blank/disabled placeholder <option value=""> instead of any real
-// preset, the same way no button used to read as selected.
+// The preset picker is a native <select>. "Active" state is just the
+// select's own displayed value; a null presetId (manually dragged
+// Center/Width, matching a preset by coincidence or not) shows the
+// blank/disabled placeholder <option value=""> instead of any real
+// preset.
 export function setActivePreset(presetId: number | null): void {
   activePresetId = presetId;
   const select = document.getElementById("colormap-preset-select") as HTMLSelectElement | null;
@@ -261,14 +203,13 @@ export function setActivePreset(presetId: number | null): void {
   }
 }
 
-// User request, 2026-08-27: "Reset TF Detail" (tfDetailControls.ts) should
-// put Threshold back at the *active preset's own* default (e.g. Bone's
-// 0.4), not always the plain hardcoded 0 -- otherwise resetting TF Detail
-// while Bone is selected would undo exactly the preset behavior
-// setColormapPreset() just set up. Returns undefined when no preset is
-// currently active (manually dragged Center/Width, or Custom, id 5, which
-// isn't in PRESET_THRESHOLDS) -- tfDetailControls.ts falls back to its own
-// hardcoded default in that case.
+// "Reset TF Detail" (tfDetailControls.ts) puts Threshold back at the
+// *active preset's own* default (e.g. Bone's 0.4), not the plain
+// hardcoded 0 -- otherwise resetting TF Detail while Bone is selected
+// would undo what setColormapPreset() set up. Returns undefined when no
+// preset is currently active (manually dragged Center/Width, or Custom,
+// which isn't in PRESET_THRESHOLDS) -- tfDetailControls.ts falls back to
+// its own hardcoded default then.
 export function getActiveThresholdDefault(): number | undefined {
   return activePresetId === null ? undefined : PRESET_THRESHOLDS[activePresetId];
 }
@@ -306,9 +247,9 @@ function applyWindowLevel(center: number, width: number): void {
 let currentFileWindowLevel: { center: number; width: number } | null = null;
 
 // Shared by the preset-select change handler's "From File" branch and
-// setFileWindowLevel's own auto-select (2026-08-27 follow-up, see this
-// module's header comment) -- both need to apply the file's window/level,
-// its threshold, and mark the preset active in exactly the same way.
+// setFileWindowLevel's own auto-select (see this module's header
+// comment) -- both apply the file's window/level, its threshold, and
+// mark the preset active in the same way.
 function applyFromFilePreset(center: number, width: number): void {
   applyWindowLevel(center, width);
   const thresholdInput = document.getElementById("threshold") as HTMLInputElement | null;
@@ -321,24 +262,18 @@ function applyFromFilePreset(center: number, width: number): void {
   setActivePreset(FROM_FILE_PRESET_ID);
 }
 
-// Called by main.ts on every volume load (2026-08-27 bug report: UPENN-GBM
-// brain MR rendered as a blown-out white block under the app's CT "Brain"
-// preset, center 40/width 80 HU -- MR pixel values aren't Hounsfield
-// Units, so every fixed CT-calibrated preset is meaningless against them).
-// `center`/`width` come from `VolumeReadyMessage.windowCenter`/`windowWidth`
-// (the series' own DICOM VOI LUT window, PS3.3 C.11.2) -- `undefined` when
-// the loaded series carries none, which disables the "From File" option
-// and clears any previous volume's stale stored value rather than leaving
-// it selectable for a series it no longer describes.
+// Called by main.ts on every volume load. For non-HU data (e.g. MR),
+// every fixed CT-calibrated preset is meaningless. `center`/`width` come
+// from `VolumeReadyMessage.windowCenter`/`windowWidth` (the series' own
+// DICOM VOI LUT window, PS3.3 C.11.2) -- `undefined` when the loaded
+// series carries none, which disables the "From File" option and clears
+// any previous volume's stale stored value.
 //
-// Auto-applies as the starting preset (20e99bc) only when `modality` names
-// something other than CT -- user report, 2026-08-27 (follow-up to
-// 20e99bc): "does this file carry a VOI LUT window" turned out to be a bad
-// signal for "is this non-HU data" on its own, since real CT series
-// commonly carry one too (this app's own LIDC-IDRI Lung1/Lung2 demo CTs
-// do), which was silently overriding their ordinary CT presets with
-// whatever per-slice window the scanner happened to recommend. Modality
-// (DICOM PS3.3 C.7.3.1.1.1) is the actual signal; unknown/absent modality
+// Auto-applies as the starting preset only when `modality` names
+// something other than CT. "Does this file carry a VOI LUT window" alone
+// is a bad signal for "is this non-HU data", since real CT series
+// commonly carry one too. Modality (DICOM PS3.3 C.7.3.1.1.1) is the
+// signal; unknown/absent modality
 // (empty string) falls back to the pre-this-feature default (stays on
 // Soft Tissue, same as the plain CT case) rather than guessing either way.
 // "From File" stays selectable from the dropdown regardless -- this only
@@ -404,8 +339,8 @@ export function setupWindowLevelControls(): void {
 
   presetSelect.addEventListener("change", () => {
     const presetId = Number(presetSelect.value);
-    // Custom (§5.3, id 8) isn't one of kColormapPresets' 0-7 indices --
-    // its color application is owned by customColormapControls.ts (the
+    // Custom isn't one of kColormapPresets' 0-7 indices -- its color
+    // application is owned by customColormapControls.ts (the
     // color pickers call engine_set_custom_lut_colors directly), and it
     // doesn't imply a specific window/level. This handler only needs to
     // give it the same active-state feedback the other presets get.
@@ -413,8 +348,8 @@ export function setupWindowLevelControls(): void {
       setActivePreset(presetId);
       return;
     }
-    // "From File" (2026-08-27 follow-up) -- unlike every fixed preset,
-    // there's no engine_set_colormap_preset equivalent that natively knows
+    // "From File" -- unlike every fixed preset, there's no
+    // engine_set_colormap_preset equivalent that natively knows
     // this per-volume value, so this branch calls engine_set_window_level
     // itself via the shared applyWindowLevel helper (also used nowhere
     // else in this file -- the fixed-preset branch below intentionally

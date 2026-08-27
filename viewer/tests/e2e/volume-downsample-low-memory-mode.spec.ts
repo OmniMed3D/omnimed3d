@@ -1,13 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Mobile OOM mitigation, on top of Option A's gradient-texture skip: in
- * low-memory mode the volume/mask textures themselves are now also
- * shrunk in-plane (X/Y, depth untouched) -- see
- * engine/docs/MOBILE_OOM_DIAGNOSTIC_2026-08-25.md for why the earlier
- * unload/reload approach (PR #116) turned out not to be enough on its
- * own, and engine/docs/RENDERING_SPEC.md's matching Change History entry
- * for the actual design.
+ * Mobile OOM mitigation, on top of skipping the gradient texture: in
+ * low-memory mode the volume/mask textures themselves are also shrunk
+ * in-plane (X/Y, depth untouched) -- see engine/docs/RENDERING_SPEC.md's
+ * Change History entry for the design.
  *
  * Same direct-injection technique as mask-geometry-parity.spec.ts
  * (bypasses the DICOM parser and Inference Worker entirely -- this isn't
@@ -56,8 +53,8 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
 
   await page.goto("/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
-  // MPR feature (2026-08-27): Axial/Sagittal/Coronal now share
-  // data-view-mode="1", disambiguated by data-slice-axis.
+  // MPR: Axial/Sagittal/Coronal share data-view-mode="1",
+  // disambiguated by data-slice-axis.
   await page.locator('[data-view-mode="1"][data-slice-axis="0"]').click();
   await page.locator("#panel-collapse-toggle").click();
 

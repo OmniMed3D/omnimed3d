@@ -1,8 +1,8 @@
 # One-shot pipeline for local iteration: build the engine's WASM target,
 # sync the resulting artifacts into viewer/src/shell/public/engine/, then
-# start the dev server -- collapses the three manual steps (see engine's
-# CLAUDE.md sec7 / viewer/scripts/sync-engine-wasm.mjs / dev-server.ps1) into
-# one command. Windows-only, matching dev-server.ps1's existing scope --
+# start the dev server -- collapses the three manual steps
+# (viewer/scripts/sync-engine-wasm.mjs and dev-server.ps1) into one
+# command. Windows-only, matching dev-server.ps1's existing scope --
 # macOS/Linux devs run engine/scripts/wasm-build.sh + the npm steps by hand.
 #
 # Usage (from viewer/):

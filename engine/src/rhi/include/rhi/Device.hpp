@@ -79,8 +79,8 @@ public:
 
     // Dispatches async adapter/device acquisition and returns immediately --
     // callers must poll isReady() before renderFrame(). Deliberately
-    // non-blocking: a blocking wait here would need ASYNCIFY, which
-    // CLAUDE.md #9 flags as a real trap to avoid where possible.
+    // non-blocking: a blocking wait here would need ASYNCIFY, which this
+    // engine avoids.
     virtual void initialize() = 0;
 
     virtual bool isReady() const = 0;
@@ -107,8 +107,8 @@ public:
                              float spacingX, float spacingY, float spacingZ, uint32_t downsampleFactor) = 0;
 
     // Loads a second, independent volume for the NativeSlice2D view mode
-    // (MPR/native-slice feature, 2026-08-27 user request) -- the DICOM
-    // series' own original per-file slices in their native acquisition
+    // (MPR/native-slice feature) -- the DICOM series' own original per-file
+    // slices in their native acquisition
     // order/resolution, as opposed to loadVolume's canonical-LPS-oriented
     // (possibly trilinear-resampled, see the Parse Worker's oblique-series
     // fallback) volume. Deliberately minimal compared to loadVolume: no
@@ -146,9 +146,8 @@ public:
     virtual void setColormapPreset(uint32_t presetId) = 0;
 
     // Interactive orbit camera (REQ-R06). Raw mouse-drag pixel deltas --
-    // yaw/pitch accumulate internally (pitch clamped to +-89 degrees, a
-    // gimbal-flip guard matching Mini-Engine-reference's validated
-    // camera). No-op (logged) if no volume is loaded -- unlike
+    // yaw/pitch accumulate internally (pitch clamped to +-89 degrees as a
+    // gimbal-flip guard). No-op (logged) if no volume is loaded -- unlike
     // setWindowLevel/setColormapPreset, the zoom clamp this pairs with
     // needs real AABB data, so there is nothing sensible to orbit yet.
     // Also a no-op (logged) when the current view mode is not Orbit3D
@@ -166,7 +165,7 @@ public:
     virtual void zoomCamera(float wheelDeltaSign) = 0;
 
     // Selects which render pipeline drives renderFrame() (PRD §9 slice-
-    // panning gap, issue #37; MPR + native-slice modes added 2026-08-27):
+    // panning gap):
     // 0 = Orbit3D (default -- the existing REQ-R06 orbit-camera raymarch
     // view), 1 = Slice2D (a real 2D single-slice cross-sectional view of
     // the canonical-oriented volume, along whichever axis setSliceAxis
@@ -189,9 +188,9 @@ public:
     // defaults this to depth/2 (the volume's middle axial slice).
     virtual void setSliceIndex(uint32_t index) = 0;
 
-    // Selects which physical axis the Slice2D view slices along (MPR,
-    // 2026-08-27 user request): 0 = Axial (fixes Z, the original single-
-    // axis behavior), 1 = Sagittal (fixes X), 2 = Coronal (fixes Y). An
+    // Selects which physical axis the Slice2D view slices along (MPR):
+    // 0 = Axial (fixes Z, the original single-axis behavior),
+    // 1 = Sagittal (fixes X), 2 = Coronal (fixes Y). An
     // invalid value is rejected (logged), leaving the current axis
     // unchanged. Changing axis resets setSliceIndex's value to the middle
     // of the new axis's own valid range (its previous value may be out of
@@ -219,44 +218,40 @@ public:
     virtual void setQualityTier(uint32_t tier) = 0;
 
     // Controls gradient-based Lambert shading on the raymarch pass.
-    // 0=off (original flat density-only look), 1=on (default -- adds
-    // depth/form cues from simulated lighting via a per-step forward-
-    // difference density gradient as a pseudo-normal), 2=on-flat (issue
-    // #81: the viewer's interaction-adaptive quality drops to this
-    // during a camera drag -- applies the same ambient/diffuse falloff
-    // as mode 1 but with a fixed representative diffuse term instead of
-    // computing the gradient, so a drag doesn't pay the gradient's
-    // sampling cost, the raymarch pass's dominant per-step cost -- but
-    // also doesn't cause the jarring brightness jump mode 0 does, since
-    // mode 0 skips the ambient/diffuse falloff entirely rather than
-    // approximating it). Any other value is rejected (logged), leaving
-    // the current mode unchanged. Safe to call before any volume is
-    // loaded, like setQualityTier.
+    // 0=off (flat density-only look), 1=on (default -- adds depth/form
+    // cues from simulated lighting via a per-step forward-difference
+    // density gradient as a pseudo-normal), 2=on-flat (the viewer's
+    // interaction-adaptive quality drops to this during a camera drag --
+    // applies the same ambient/diffuse falloff as mode 1 but with a fixed
+    // representative diffuse term instead of computing the gradient, so a
+    // drag doesn't pay the gradient's sampling cost, the raymarch pass's
+    // dominant per-step cost -- while still avoiding the brightness jump
+    // mode 0 causes by skipping the falloff entirely). Any other value is
+    // rejected (logged), leaving the current mode unchanged. Safe to call
+    // before any volume is loaded, like setQualityTier.
     virtual void setShadingMode(uint32_t mode) = 0;
 
-    // Beer-Lambert absorption coefficient for the raymarch pass (was a
-    // fixed constant before this control existed). Higher values make the
-    // volume look denser/more opaque at the same window/level. Safe to
-    // call before any volume is loaded, like setQualityTier.
+    // Beer-Lambert absorption coefficient for the raymarch pass (default
+    // 8.0). Higher values make the volume look denser/more opaque at the
+    // same window/level. Safe to call before any volume is loaded, like
+    // setQualityTier.
     virtual void setExtinction(float extinction) = 0;
 
     // Scales the pre-integrated classification value ("sBar") used for
     // absorption before it reaches the extinction term -- a global
-    // density multiplier independent of window/level. 1.0 leaves behavior
-    // unchanged from before this control existed.
+    // density multiplier independent of window/level. Default 1.0.
     virtual void setDensityScale(float scale) = 0;
 
-    // Hard cutoff (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md
-    // §5.3): normalized density samples below this threshold contribute
-    // no opacity, letting background/noise be cut out independently of
-    // window/level. In normalized [0,1] units, same space as the
-    // window/level-mapped density. 0.0 (default) disables the cutoff
-    // entirely.
+    // Hard cutoff: normalized density samples below this threshold
+    // contribute no opacity, letting background/noise be cut out
+    // independently of window/level. In normalized [0,1] units, same
+    // space as the window/level-mapped density. 0.0 (default) disables
+    // the cutoff entirely.
     virtual void setThreshold(float threshold) = 0;
 
     // Restricts the raymarch traversal to an axis-aligned sub-box of the
-    // loaded volume's world-space AABB (§6.4) -- reveals interior
-    // structure without a full MPR view. Values are clamped to stay
+    // loaded volume's world-space AABB -- reveals interior structure
+    // without a full MPR view. Values are clamped to stay
     // within the volume's own AABB and min<max per axis; texture sampling
     // coordinates are unaffected (still derived from the full AABB), only
     // the ray's traversal range changes. Reset to the full AABB on every
@@ -265,15 +260,14 @@ public:
     virtual void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) = 0;
 
     // Scales each raymarch step's opacity by a function of the local
-    // density-gradient magnitude (§6.3, a scoped-down stand-in for a full
-    // 2D transfer function -- see engine/docs/RENDERING_SPEC.md for why).
-    // 0.0 (default) leaves opacity exactly as before; higher values
-    // increasingly suppress homogeneous-region noise and emphasize
-    // boundaries. Reuses the gradient already computed for shading when
-    // shading is enabled.
+    // density-gradient magnitude (a scoped-down stand-in for a full 2D
+    // transfer function -- see engine/docs/RENDERING_SPEC.md for why).
+    // 0.0 (default) leaves opacity unchanged; higher values increasingly
+    // suppress homogeneous-region noise and emphasize boundaries. Reuses
+    // the gradient already computed for shading when shading is enabled.
     virtual void setGradientOpacityStrength(float strength) = 0;
 
-    // Toggles Directional Occlusion Shading (§6.2) -- a handful of short
+    // Toggles Directional Occlusion Shading -- a handful of short
     // secondary density samples toward the light per raymarch step,
     // approximating self-shadowing far more cheaply than a full
     // self-shadow ray march. Only has a visible effect when shading
@@ -285,8 +279,8 @@ public:
     // volume, in raymarch and axial-slice shading alike (PRD §5.3.1's mask
     // overlay compositor). 0.0 makes the mask invisible; 1.0 fully replaces
     // the underlying volume color where a mask class is present. Clamped to
-    // [0,1]. Was a fixed 0.6 constant before this control existed. Safe to
-    // call before any volume/mask is loaded, like setQualityTier.
+    // [0,1], default 0.6. Safe to call before any volume/mask is loaded,
+    // like setQualityTier.
     virtual void setMaskOverlayAlpha(float alpha) = 0;
 
     // Shows/hides the AI segmentation mask overlay entirely, independent of
@@ -297,11 +291,10 @@ public:
     // like setQualityTier.
     virtual void setMaskOverlayEnabled(bool enabled) = 0;
 
-    // Sets a fifth, user-defined colormap (§5.3's "Custom" preset) --
-    // low/high RGB in [0,1], distinct from setColormapPreset's fixed
-    // 0-3 index range. Does not change window/level (unlike
-    // setColormapPreset) -- Custom is purely a color choice layered on
-    // whatever window/level is already set.
+    // Sets a user-defined "Custom" colormap -- low/high RGB in [0,1],
+    // distinct from setColormapPreset's fixed index range. Does not change
+    // window/level (unlike setColormapPreset) -- Custom is purely a color
+    // choice layered on whatever window/level is already set.
     virtual void setCustomColormap(float lowR, float lowG, float lowB, float highR, float highG,
                                     float highB) = 0;
 
@@ -312,14 +305,12 @@ public:
     // cosmetic (unlike setColormapPreset, no clinical window/level meaning
     // attached), so presets live caller-side rather than as an engine-owned
     // enum -- matching setCustomColormap's direct-RGB shape, not
-    // setColormapPreset's index shape. Default (0.05, 0.05, 0.12) matches
-    // pre-existing behavior for anyone who never touches this control.
+    // setColormapPreset's index shape. Default (0.05, 0.05, 0.12).
     virtual void setBackgroundColor(float r, float g, float b) = 0;
 
     // Resizes the render surface and recomputes the Orbit3D camera's
-    // aspect ratio to match (issue #40 -- the canvas was previously a
-    // fixed 640x480 box with no way to reconfigure it). width/height are
-    // the canvas's backing-store pixel dimensions (post-devicePixelRatio
+    // aspect ratio to match. width/height are the canvas's backing-store
+    // pixel dimensions (post-devicePixelRatio
     // scaling), not CSS pixels -- the caller (viewer/) owns that
     // conversion via ResizeObserver, matching how orbitCamera/zoomCamera
     // already push caller-normalized values rather than raw browser
@@ -341,10 +332,9 @@ public:
     // accumulating from where it left off, with no visual reset/flash.
     virtual void setRenderPaused(bool paused) = 0;
 
-    // Debug/perf overlay support (baseline browser-performance measurement --
-    // see engine/tests/wasm_smoke/shell.html's stats panel). Both are cheap,
-    // side-effect-free snapshots safe to call every frame from JS-exported
-    // getters; neither affects rendering.
+    // Debug/perf overlay support (see engine/tests/wasm_smoke/shell.html's
+    // stats panel). Both are cheap, side-effect-free snapshots safe to
+    // call every frame from JS-exported getters; neither affects rendering.
     virtual FrameStatsSnapshot getFrameStats() const = 0;
     virtual HardwareInfo getHardwareInfo() const = 0;
     virtual GpuTimingSnapshot getGpuTiming() const = 0;

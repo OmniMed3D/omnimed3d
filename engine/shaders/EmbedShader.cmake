@@ -1,9 +1,9 @@
 # Turns a compiled WGSL file into a constexpr C string header, so
 # WebGPUDevice.cpp can #include the shader source directly instead of
-# reading it from a filesystem at runtime (no --preload-file needed for
-# shaders at all -- CLAUDE.md #9). Invoked via `cmake -P` from
-# CMakeLists.txt's compile_slang_shader() custom command, one process per
-# shader so it participates correctly in the build-time dependency DAG.
+# reading it from a filesystem at runtime (no --preload-file needed).
+# Invoked via `cmake -P` from CMakeLists.txt's compile_slang_shader()
+# custom command, one process per shader so it participates correctly in
+# the build-time dependency DAG.
 #
 # Expects IN_FILE, OUT_FILE, SYMBOL_NAME on the command line (-D...).
 

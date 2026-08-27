@@ -1,16 +1,14 @@
-# Slang -> WGSL/SPIR-V cross-compilation (ADR-0002). Included unconditionally
-# from the top-level CMakeLists.txt (not EMSCRIPTEN-gated) -- slangc always
-# runs on the host regardless of which target (native Vulkan or WASM/WebGPU)
-# is being configured, so this has nothing toolchain-specific in it.
+# Slang -> WGSL/SPIR-V cross-compilation (ADR-0002). Included
+# unconditionally from the top-level CMakeLists.txt (not EMSCRIPTEN-gated)
+# -- slangc always runs on the host regardless of which target (native
+# Vulkan or WASM/WebGPU) is being configured.
 #
-# slangc itself is NOT a vcpkg.json manifest dependency: the wasm-windows
-# CMake preset does not use vcpkg's toolchain file at all (only
-# windows-default/macos-default do -- confirmed by reading CMakePresets.json),
-# so a manifest dependency would simply never be available when configuring
-# the WASM preset. Instead, slangc is treated like emsdk: an external,
-# per-machine-installed host tool resolved via find_program (PATH, or vcpkg's
-# classic -- not manifest -- install location as a hint), not vendored into
-# either preset's dependency graph. See CLAUDE.md #7 for install instructions.
+# slangc is NOT a vcpkg.json manifest dependency: the wasm-windows CMake
+# preset does not use vcpkg's toolchain file (only
+# windows-default/macos-default do), so a manifest dependency would never
+# be available when configuring the WASM preset. slangc is treated like
+# emsdk: an external, per-machine-installed host tool resolved via
+# find_program (PATH, or vcpkg's classic install location as a hint).
 
 find_program(SLANGC_EXECUTABLE slangc
     HINTS
@@ -24,21 +22,19 @@ if(NOT SLANGC_EXECUTABLE)
         "not a linked library, so it is not part of engine/vcpkg.json's "
         "manifest) or download a prebuilt release from "
         "https://github.com/shader-slang/slang/releases and ensure slangc "
-        "is on PATH. See CLAUDE.md #7.")
+        "is on PATH.")
 endif()
 
 set(SHADER_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(SHADER_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")
 file(MAKE_DIRECTORY "${SHADER_GENERATED_DIR}")
 
-# Compiles one .slang source into WGSL + SPIR-V, then embeds the WGSL output
-# as a constexpr C string header -- avoids needing Emscripten's
-# --preload-file virtual-FS machinery at runtime entirely (CLAUDE.md #9's "no
-# host filesystem on WASM" trap sidestepped by never touching a filesystem at
-# runtime in the first place). SPIR-V output is generated per ADR-0002's
-# stated consequence (compiled to both targets) but unused today -- no
-# Vulkan Device implementation exists yet; cheap to generate now rather than
-# revisit the shader-build step when Vulkan lands.
+# Compiles one .slang source into WGSL + SPIR-V, then embeds the WGSL
+# output as a constexpr C string header -- so the runtime never touches a
+# filesystem and needs no Emscripten --preload-file machinery. SPIR-V
+# output is generated per ADR-0002 (compiled to both targets) but unused
+# today -- no Vulkan Device implementation exists yet; cheap to generate
+# now rather than revisit the shader-build step when Vulkan lands.
 function(compile_slang_shader NAME SYMBOL)
     set(SLANG_SRC "${SHADER_SRC_DIR}/${NAME}.slang")
     set(WGSL_OUT "${SHADER_GENERATED_DIR}/${NAME}.wgsl")

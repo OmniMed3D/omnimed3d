@@ -134,11 +134,11 @@ describe("applyTransform", () => {
   });
 });
 
-// Oblique-resample fallback (2026-08-27, bug report: UPENN-GBM brain MR --
-// real neuro MR is routinely angled a few to ~20 degrees off axial). Uses a
-// 30-degree in-plane rotation (row/column cosines rotated about Z, so the
-// slice normal stays exactly Z) -- hand-verified below, not derived from
-// the code under test, same policy as the rest of this file.
+// Oblique-resample fallback: real neuro MR is routinely angled a few to
+// ~20 degrees off axial. Uses a 30-degree in-plane rotation (row/column
+// cosines rotated about Z, so the slice normal stays exactly Z) --
+// hand-derived below, not taken from the code under test, same policy as
+// the rest of this file.
 describe("computeObliqueResampleGrid / canonicalToSourceIndex", () => {
   const COS30 = Math.sqrt(3) / 2; // 0.8660254...
   const SIN30 = 0.5;
@@ -220,19 +220,14 @@ describe("computeObliqueResampleGrid / canonicalToSourceIndex", () => {
     expect(reconstructed[2]).toBeCloseTo(patientPos[2], 6);
   });
 
-  // Bug fix, 2026-08-27 (follow-up to the same UPENN-GBM report -- a
-  // *sagittal* series, "T2 SAG SPACE", whose slice-stacking direction
-  // (normal) is ~X, not ~Z). The 30-degree-about-Z case above never
-  // exercises this: its normal stays exactly Z, so the old fixed mapping
-  // (spacingX always from pixelSpacingColumn, spacingY from
-  // pixelSpacingRow, spacingZ from sliceSpacing) happened to agree with
+  // A sagittal series' slice-stacking direction (normal) is ~X, not ~Z.
+  // The 30-degree-about-Z case above never exercises this: its normal
+  // stays exactly Z, so a fixed mapping (spacingX from pixelSpacingColumn,
+  // spacingY from pixelSpacingRow, spacingZ from sliceSpacing) agrees with
   // the correct dominant-axis assignment by construction. A permuted
-  // (sagittal/coronal-style) orientation with *anisotropic* spacing is
-  // the case that actually distinguishes them -- it only produced a
-  // visually correct result for the real UPENN-GBM sagittal series by
-  // luck, because that series happens to be near-isotropic (~0.9mm in
-  // every direction); this fixture uses deliberately distinct spacings so
-  // a mislabeling bug can't hide.
+  // (sagittal/coronal-style) orientation with anisotropic spacing is the
+  // case that actually distinguishes them, so this fixture uses
+  // deliberately distinct spacings.
   it("assigns each output axis's spacing from whichever source direction actually dominates it (permuted/sagittal orientation)", () => {
     // Pure sagittal, no tilt: row=+Y, column=-Z, normal=cross(row,column)=-X.
     // computeOrientationTransform's fast path would reject this too (column

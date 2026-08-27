@@ -45,9 +45,7 @@ if ($nmakeCandidates) {
 }
 
 # Bridge via a temp .bat file rather than `cmd /c "call ... && $Command"` directly --
-# avoids PowerShell -> cmd quote-escaping issues (same approach as
-# Mini-Engine-reference/scripts/wasm.ps1's Invoke-Emsdk helper, verified against
-# this repo's own setup rather than copied as-is).
+# avoids PowerShell -> cmd quote-escaping issues.
 $tmpBat = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.bat'
 try {
     $lines = [System.Collections.Generic.List[string]]::new()

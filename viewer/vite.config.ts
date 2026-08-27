@@ -86,10 +86,9 @@ export default defineConfig({
     // relocates those files into node_modules/.vite/deps/ without also
     // copying the .wasm binaries, so the resulting fetch 404s (silently
     // served as index.html by Vite's dev server, which then fails to
-    // parse as WASM -- confirmed via network trace, not assumed).
-    // Excluding it from pre-bundling keeps its own asset-relative-path
-    // logic intact. Production `vite build` is unaffected (already
-    // verified working before this fix).
+    // parse as WASM). Excluding it from pre-bundling keeps its own
+    // asset-relative-path logic intact. Production `vite build` is
+    // unaffected.
     exclude: ["onnxruntime-web"],
   },
 });

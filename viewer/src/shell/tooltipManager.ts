@@ -1,9 +1,6 @@
 /**
  * Hover/keyboard-focus tooltips for control-panel adjustment controls
- * (user request, 2026-08-21) -- explains what each slider/toggle/preset
- * button actually does. This codebase had no tooltip infrastructure
- * before this (no `title` attribute usage, no `data-tooltip` CSS pattern
- * anywhere).
+ * -- explains what each slider/toggle/preset button actually does.
  *
  * Rendered as a single shared element appended to <body> (position:fixed),
  * NOT a CSS ::after pseudo-element on each control: #control-panel has
@@ -32,14 +29,12 @@
 const TOOLTIP_TEXT: Record<string, string> = {
   "window-center": "Shifts the visible HU range up or down (window center).",
   "window-width": "Widens or narrows the visible HU range (window width).",
-  // User request, 2026-08-27 (clinical preset expansion): the fixed
-  // presets + Custom used to be individual buttons, each with its own
-  // data-tooltip-key entry here. Now they're <option>s inside one
-  // <select> (#colormap-preset-select) -- this custom mouseenter-driven
-  // tooltip overlay can't attach to a native option list the browser
-  // renders itself, so each <option> carries a plain `title` attribute
-  // instead (native per-item hover text, index.html), and this single
-  // entry covers the closed/focused <select> element itself.
+  // The presets + Custom are <option>s inside one <select>
+  // (#colormap-preset-select) -- this custom mouseenter-driven tooltip
+  // overlay can't attach to a native option list the browser renders
+  // itself, so each <option> carries a plain `title` attribute instead
+  // (index.html), and this single entry covers the closed/focused
+  // <select> element itself.
   "colormap-preset-select": "Clinical window/level preset. Hover an option for its exact HU values.",
   "custom-low-color": "Low end of the custom color gradient.",
   "custom-high-color": "High end of the custom color gradient.",

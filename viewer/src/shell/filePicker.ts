@@ -1,8 +1,5 @@
 /**
- * Real file-picker UI (issue #34, REQ-R06) -- two entry points, matching
- * Mini-Engine-reference's validated UX pattern (docs/current/medical-
- * volume/VIEWERS.md, referenced from PRD Appendix A's "referencing
- * Mini-Engine-reference's UI patterns" instruction): a `webkitdirectory`
+ * Real file-picker UI (REQ-R06) -- two entry points: a `webkitdirectory`
  * folder picker as the primary, convenient way to select a whole series
  * at once, and a plain multi-file picker as a fallback for
  * browsers/situations where folder selection isn't available or wanted.
@@ -10,17 +7,16 @@
  * `omnimed3dTestHooks`-driven flows already use by hand -- same Worker
  * instance, same volumeId bookkeeping.
  *
- * Unlike Mini-Engine-reference's native-filesystem (MEMFS) staging
- * approach, this project's Parse Worker does the actual DICOM decoding
- * off the main thread -- this module only ever reads File objects into
- * ArrayBuffers and hands them off; it never touches DICOM bytes itself.
+ * The Parse Worker does the actual DICOM decoding off the main thread --
+ * this module only ever reads File objects into ArrayBuffers and hands
+ * them off; it never touches DICOM bytes itself.
  */
 
 export type LoadVolumeFromFiles = (files: File[]) => Promise<string>;
 
-// Follow-up (critique heuristic #5, Error Prevention): #dicom-folder-input
-// has no `accept` filter at all, and even where `accept` is set
-// (#dicom-files-input), it's browser-advisory, not enforced. A real DICOM
+// #dicom-folder-input has no `accept` filter at all, and even where
+// `accept` is set (#dicom-files-input) it's browser-advisory, not
+// enforced. A real DICOM
 // file conventionally has NO extension at all (common in real-world
 // datasets), so an allow-list requiring ".dcm" would wrongly reject valid
 // files -- this is a deny-list of common non-DICOM junk instead

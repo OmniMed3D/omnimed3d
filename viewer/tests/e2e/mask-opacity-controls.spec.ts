@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 /**
- * DoD verification for the mask overlay opacity slider
+ * Verifies the mask overlay opacity slider
  * (`engine_set_mask_opacity`) and show/hide toggle
  * (`engine_set_mask_overlay_enabled`) -- the same "real, not fabricated"
  * screenshot-diff pattern shell-mask-integration.spec.ts's own mask test

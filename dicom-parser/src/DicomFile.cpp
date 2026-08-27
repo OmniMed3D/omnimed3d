@@ -478,17 +478,13 @@ std::optional<DicomMetaInfo> DicomFile::parseFromBuffer(std::byte const* data, s
     size_t offset = kPreambleSize + 4;
     DicomMetaInfo info;
 
-    // First element must be (0002,0000) UL FileMetaInformationGroupLength --
-    // its value is the byte length of everything else in group 0002. Some
-    // real-world files (e.g. TCIA's TCGA-GBM MR series -- bug report,
-    // 2026-08-27) omit this element entirely and go straight to
-    // (0002,0010) TransferSyntaxUID, even though DICOM PS3.10 nominally
-    // requires it. Confirmed via a raw hex dump of those files: right
-    // after "DICM" comes group=0002/element=0010 directly, no
-    // group=0002/element=0000 first. Rather than reject those files
-    // outright, fall back to scanning group 0002 element-by-element until
-    // the group number changes, the same way most real DICOM readers
-    // tolerate this.
+    // First element should be (0002,0000) UL FileMetaInformationGroupLength
+    // -- its value is the byte length of everything else in group 0002.
+    // Some real-world files (seen in TCIA MR series) omit this element
+    // entirely and go straight to (0002,0010) TransferSyntaxUID, even
+    // though DICOM PS3.10 nominally requires it. Rather than reject those
+    // files, fall back to scanning group 0002 element-by-element until the
+    // group number changes, the way most real DICOM readers tolerate it.
     if (offset + 8 > size) {
         return fail(DicomParseError::Truncated);
     }
@@ -598,9 +594,9 @@ std::optional<DicomImageInfo> DicomFile::parseImageInfo(std::byte const* data, s
         // 0xFFFFFFFF always means a sequence. None of kKnownTags is ever
         // SQ-valued, so this parser only needs to skip past it to keep
         // walking the rest of the dataset (see docs/adr/0002's "revisit
-        // this decision" trigger -- a real UPENN-GBM MR file hit exactly
-        // this, 2026-08-27). A malformed/truncated sequence still fails
-        // loudly via UnsupportedSequenceEncoding rather than misparsing.
+        // this decision" trigger). A malformed/truncated sequence still
+        // fails loudly via UnsupportedSequenceEncoding rather than
+        // misparsing.
         if (valueLength == 0xFFFFFFFFu) {
             auto const after = skipUndefinedLengthSequence(data, valueOffset, size, explicitVR);
             if (!after) {

@@ -4,24 +4,21 @@
 // nativeVolumeTexture_), applies the same clinical window/level +
 // transfer-function LUT and mask-overlay logic per pixel instead of per
 // raymarch step, and draws it directly to the swapchain -- a traditional
-// DICOM-style 2D cross-sectional view (REQ-R02, PRD §9 slice-panning gap,
-// issue #37).
+// DICOM-style 2D cross-sectional view (REQ-R02, PRD §9 slice-panning gap).
 //
-// MPR (2026-08-27 user request): sliceAxis picks which of the volume's
-// three physical axes is held fixed while the other two vary as the
-// on-screen U/V -- Axial fixes Z (the original, only behavior before this
-// change), Sagittal fixes X, Coronal fixes Y. Always Axial-style for
-// NativeSlice2D (WebGPUDevice.cpp forces sliceAxis=0 for that view; the
-// native volume's own "depth" is file order, not a real spatial axis, so
-// MPR has no meaning there). No anatomical left/right calibration claim
-// for any axis, same as the original Axial-only version -- out of scope
-// per PRD §7.2 and viewer/README.md's own documented gap.
+// MPR: sliceAxis picks which of the volume's three physical axes is held
+// fixed while the other two vary as the on-screen U/V -- Axial fixes Z,
+// Sagittal fixes X, Coronal fixes Y. Always Axial-style for NativeSlice2D
+// (WebGPUDevice.cpp forces sliceAxis=0 there; the native volume's own
+// "depth" is file order, not a real spatial axis, so MPR has no meaning).
+// No anatomical left/right calibration claim for any axis -- out of scope
+// per PRD §7.2.
 //
 // WebGPU/Dawn cannot bind a single plane of a 3D-dimension texture as a
 // native 2D view (WGPUTextureViewDimension_2D only applies to textures
-// created with dimension=2D), so this shader keeps sampling the same full
-// 3D volumeTex/maskTex WebGPUDevice already binds for the raymarch
-// pipeline, at a fixed coordinate instead of a varying one. See
+// created with dimension=2D), so this shader samples the same full 3D
+// volumeTex/maskTex WebGPUDevice binds for the raymarch pipeline, at a
+// fixed coordinate instead of a varying one. See
 // engine/docs/adr/0002-shader-source-strategy.md for why shader source is
 // written once here and cross-compiled rather than hand-maintained
 // per-backend.
@@ -32,13 +29,11 @@ struct AxialSliceUBO
     // (fixes Y) -- see this file's own header comment (MPR).
     float4 sliceParams;  // x=sliceIndex (raw voxel index, not normalized), y=windowCenter, z=windowWidth, w=sliceAxis
     float4 maskParams;   // x=overlayEnabled (0/1), y=overlayAlpha, zw unused
-    // "Contain" letterbox fit (issue #40 follow-up -- the canvas is no
-    // longer a fixed near-4:3 640x480 box, so filling it edge-to-edge
-    // stretched/over-scaled the slice on wide or unusually-shaped
-    // viewports). x/y are the NDC scale factors WebGPUDevice::renderFrame
-    // computes from the volume's physical aspect ratio vs. the canvas's;
-    // >1 on the axis that must be cropped to letterbox bars so the other
-    // axis fills fully without distortion. zw unused.
+    // "Contain" letterbox fit -- filling a non-4:3 canvas edge-to-edge
+    // would stretch/over-scale the slice. x/y are the NDC scale factors
+    // WebGPUDevice::renderFrame computes from the volume's physical aspect
+    // ratio vs. the canvas's; >1 on the axis that must be cropped to
+    // letterbox bars so the other axis fills without distortion. zw unused.
     float4 fitParams;
 };
 
@@ -48,15 +43,13 @@ struct AxialSliceUBO
 [[vk::binding(3, 0)]] Texture3D<uint> maskTex;      // R8Uint class indices -- Load only, never filtered
 [[vk::binding(4, 0)]] Texture2D<float4> lutTex;     // 256x1 transfer-function LUT
 // Declared (not sampled) only so this shader's bind group layout stays
-// identical to volume_raymarch.slang's, which the two pipelines share
-// (docs/current/RENDERING_TECH_GAP_ANALYSIS_2026-08-20.md §6.1) -- a 2D
-// per-pixel slice has no ray segment to pre-integrate over, so this view
-// keeps using lutTex's direct per-pixel classification above instead.
+// identical to volume_raymarch.slang's, which the two pipelines share --
+// a 2D per-pixel slice has no ray segment to pre-integrate over, so this
+// view uses lutTex's direct per-pixel classification above instead.
 [[vk::binding(5, 0)]] Texture2D<float4> preintegratedLutTex;  // unused in this shader
-// Declared for the same shared-bind-group-layout reason as
-// preintegratedLutTex above -- a single-plane view has no ray to shade
-// along, so this shader never samples the precomputed gradient volume
-// (gradient_bake.slang, issue #81's own follow-up) volume_raymarch.slang
+// Declared for the same shared-bind-group-layout reason -- a single-plane
+// view has no ray to shade along, so this shader never samples the
+// precomputed gradient volume (gradient_bake.slang) volume_raymarch.slang
 // uses.
 [[vk::binding(6, 0)]] Texture3D<float4> gradientTex;  // unused in this shader
 
@@ -70,11 +63,9 @@ struct VertexOutput
     float2 ndc : TEXCOORD0;
 };
 
-// Same classic full-screen-triangle trick as volume_raymarch.slang's
-// vertexMain -- no shared-include mechanism is wired into this repo's
-// slangc build (compile_slang_shader compiles one file per invocation in
-// isolation), so this ~10-line duplication is consistent with the
-// existing single-file-per-shader design, not new debt.
+// Same full-screen-triangle trick as volume_raymarch.slang's vertexMain
+// -- this repo's slangc build compiles one file per invocation with no
+// shared-include mechanism, so the ~10-line duplication is intentional.
 [shader("vertex")]
 VertexOutput vertexMain(uint vertexIndex : SV_VertexID)
 {
@@ -91,10 +82,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target
 {
     // NDC -> [0,1] UV, screen-top (ndc.y=+1) maps to texel row 0 (image
     // top). No clinical left/right orientation claim beyond that --
-    // anatomical calibration is out of scope per PRD §7.2 ("display
-    // calibration/strict DICOM color pipeline compliance") and
-    // viewer/README.md's own documented gap (no suitable fixture exists
-    // yet to verify against).
+    // anatomical calibration is out of scope per PRD §7.2.
     //
     // fitParams scales the NDC range before mapping to [0,1] so the
     // image "contain"-fits the canvas at its own aspect ratio instead of
@@ -118,22 +106,18 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     const bool maskEnabled = ubo.maskParams.x > 0.5;
     const float maskAlpha = ubo.maskParams.y;
 
-    // MPR (2026-08-27): which texture axis is held fixed, and which two
-    // vary as uv.x/uv.y, depends on sliceAxis -- see this file's own
-    // header comment. +0.5 samples the fixed axis's texel center,
-    // matching how uv.x/uv.y already land mid-texel for a full-resolution
-    // sample grid.
+    // MPR: which texture axis is held fixed, and which two vary as
+    // uv.x/uv.y, depends on sliceAxis -- see this file's own header
+    // comment. +0.5 samples the fixed axis's texel center, matching how
+    // uv.x/uv.y already land mid-texel for a full-resolution sample grid.
     //
-    // Fixed 2026-08-27 (user-reported vertical flip in Sagittal/Coronal):
-    // pipeline.ts's geometricSortKey sorts the volume's Z axis so that an
-    // increasing Z texel index moves toward patient Superior (head) --
-    // see pipeline.ts's own comment on that key. uv.y is screen-top=0,
-    // screen-bottom=1 (see this shader's header comment on Axial). Using
-    // uv.y directly as the Z coordinate therefore put Inferior (feet) at
-    // the screen top and Superior (head) at the bottom -- backwards from
-    // the radiological convention of head-up. depthV inverts that so
+    // The Parse Worker sorts the volume's Z axis so that an increasing Z
+    // texel index moves toward patient Superior (head). uv.y is
+    // screen-top=0, screen-bottom=1, so using it directly as the Z
+    // coordinate would put Inferior (feet) at the screen top -- backwards
+    // from the head-up radiological convention. depthV inverts that so
     // Superior renders at the top, matching Axial's own row-0-is-top
-    // convention instead of contradicting it.
+    // convention.
     float depthV = 1.0 - uv.y;
     float3 uvw;
     if (sliceAxis == 1) // Sagittal: fix X, uv.x -> Y (rows), depthV -> Z (depth)

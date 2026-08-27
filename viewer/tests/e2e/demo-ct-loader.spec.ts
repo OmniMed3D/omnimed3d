@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * "Load Demo CT" DoD verification (user request, 2026-08-21) --
- * demoCtControls.ts's fetch-manifest-then-fetch-all-slices path actually
+ * "Load Demo CT" verification -- demoCtControls.ts's
+ * fetch-manifest-then-fetch-all-slices path actually
  * loads a real volume through the same engine_load_volume path the
  * file-picker uses, and shows the required CC BY 3.0 attribution.
  *
- * User request, 2026-08-26: now a 3-way toggle (one series each), so
- * "loaded" is asserted via the .active class (same idiom as
+ * A 3-way toggle (one series each), so "loaded" is asserted via the
+ * .active class (same idiom as
  * rendering-quality-controls.spec.ts/clinical-shading-controls.spec.ts's
  * preset-button checks) rather than a permanently-disabled button with
  * "Demo CT loaded" text -- #load-demo-ct (data-demo-ct-id="LIDC-IDRI-0001")
