@@ -18,18 +18,12 @@ no server involved.
 **WebGPU volume rendering** — real-time raymarch of a CT volume with
 clinical window/level and cinematic lighting:
 
-<video src="https://github.com/OmniMed3D/omnimed3d/raw/main/docs/media/omnimed3d_rendering.mp4" controls muted playsinline width="800">
-  Your browser can't play this video —
-  <a href="https://github.com/OmniMed3D/omnimed3d/raw/main/docs/media/omnimed3d_rendering.mp4">download it here</a>.
-</video>
+https://github.com/user-attachments/assets/5ac43295-b217-4cd2-8f95-6d7688953cbb
 
 **On-device AI segmentation** — the lung mask (ONNX Runtime Web) fills
 in progressively over the rendered volume:
 
-<video src="https://github.com/OmniMed3D/omnimed3d/raw/main/docs/media/omnimed3d_segmentation.mp4" controls muted playsinline width="800">
-  Your browser can't play this video —
-  <a href="https://github.com/OmniMed3D/omnimed3d/raw/main/docs/media/omnimed3d_segmentation.mp4">download it here</a>.
-</video>
+https://github.com/user-attachments/assets/b214d844-690f-496f-94dc-a1f61ac8dc84
 
 ## Why
 
