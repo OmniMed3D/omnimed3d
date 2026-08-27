@@ -30,12 +30,9 @@ test("a burst of hu-slice messages is meaningfully faster per-slice than sending
   // a shared CI runner's per-call scheduling noise (GC pause, thermal
   // throttle, noisy-neighbor VM contention) can occasionally be large
   // enough to flip a single-sample comparison even when the underlying
-  // BATCH_WINDOW_MS/MAX_BATCH_SIZE speedup is real and working (observed
-  // directly: a macos-latest run where burst measured ~17% slower despite
-  // this project's own repeated local measurements showing burst ~15-20%
-  // faster). Summing across trials keeps the same "must be faster, not
-  // merely equal" assertion while diluting one noisy trial's influence on
-  // the outcome.
+  // BATCH_WINDOW_MS/MAX_BATCH_SIZE speedup is real and working. Summing
+  // across trials keeps the same "must be faster, not merely equal"
+  // assertion while diluting one noisy trial's influence on the outcome.
   const TRIALS = 3;
   test.setTimeout(60_000);
 

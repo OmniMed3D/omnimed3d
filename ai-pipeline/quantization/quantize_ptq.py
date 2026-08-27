@@ -38,15 +38,13 @@ class LungCTCalibrationDataReader(CalibrationDataReader):
 
 def quantize(model_input: Path, model_output: Path, calibration_dir: Path) -> None:
     # ORT recommends running quant_pre_process (shape inference) before
-    # static quantization. Tried it here: symbolic shape inference fails on
-    # this graph ("Incomplete symbolic shape inference" — a gap for some op
-    # patterns from torch's newer dynamo-based exporter), and working around
-    # that by skipping just the symbolic step ran into a second issue with
-    # how it re-loads external-data models from a temp directory. Given
-    # quantize_static already runs cleanly without it (just an advisory
-    # warning) and check_quantized_parity.py empirically confirms the
-    # result (99.95% argmax agreement with FP32 on real CT slices), skipping
-    # quant_pre_process rather than fighting the external-data path.
+    # static quantization, but symbolic shape inference fails on this graph
+    # (a gap for some op patterns from torch's dynamo-based exporter) and
+    # re-loading external-data models from a temp directory has its own
+    # issue. quantize_static runs cleanly without it (just an advisory
+    # warning), and check_quantized_parity.py empirically confirms the
+    # result (99.95% argmax agreement with FP32 on real CT slices), so this
+    # skips quant_pre_process rather than fighting the external-data path.
     reader = LungCTCalibrationDataReader(calibration_dir)
     quantize_static(
         model_input=str(model_input),
