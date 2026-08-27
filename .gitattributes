@@ -19,3 +19,6 @@ viewer/src/shell/public/models/lungmask_r231_fp16.onnx filter=lfs diff=lfs merge
 # pattern as the two lines above.
 ai-pipeline/quantization/calibration_data/inference_fixtures/*.bin filter=lfs diff=lfs merge=lfs -text
 ai-pipeline/quantization/calibration_data/ground_truth_fixtures/*.bin filter=lfs diff=lfs merge=lfs -text
+# Screen-capture clips embedded in README.md -- binary, tracked via Git
+# LFS so they don't bloat every clone's .git history.
+docs/media/*.mp4 filter=lfs diff=lfs merge=lfs -text
