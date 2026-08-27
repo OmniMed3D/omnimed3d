@@ -9,8 +9,7 @@
 #   .\engine\scripts\wasm-build.ps1 -EmsdkDir C:\dev\emsdk
 #
 # Resolves emsdk dir the same way emsdk-shell.ps1 does ($env:EMSDK if set,
-# else -EmsdkDir), falling back to C:\dev\emsdk (this machine's documented
-# install path -- CLAUDE.md sec7) only if neither is given.
+# else -EmsdkDir), falling back to C:\dev\emsdk only if neither is given.
 
 param(
     [string]$EmsdkDir = $(if ($env:EMSDK) { $env:EMSDK } else { "C:\dev\emsdk" })

@@ -7,22 +7,19 @@
         html, body { margin: 0; background: #111; color: #ddd; font-family: monospace; }
         #canvas { display: block; margin: 16px auto; background: #000; }
         #status { text-align: center; }
-        /* Debug/perf overlay ("test palette") -- baseline browser-performance
-           measurement tooling. Toggleable, off the render path entirely (pure
-           JS/DOM driven by exported C++ getters, see engine_get_frame_time_ms
-           etc. in src/main_wasm.cpp) so it can't itself skew the numbers it
-           displays. */
+        /* Debug/perf overlay -- toggleable, off the render path entirely
+           (pure JS/DOM driven by exported C++ getters, see
+           engine_get_frame_time_ms etc. in src/main_wasm.cpp) so it can't
+           skew the numbers it displays. */
         #stats-panel {
             position: fixed;
             top: 8px;
             right: 8px;
             width: 260px;
-            /* max-width + wrapping, not a fixed/unbounded width with
-               white-space: pre -- a long GPU description string (real
-               examples run 60+ chars) previously forced this panel wider
-               than the viewport with no wrap, pushing it past the left
-               edge and forcing the whole page to scroll horizontally to
-               read even the FPS line above it. */
+            /* max-width + wrapping, not a fixed width with white-space:
+               pre -- a long GPU description string (60+ chars) would
+               otherwise push this panel wider than the viewport and force
+               the page to scroll horizontally. */
             max-width: calc(100vw - 16px);
             padding: 8px 10px;
             background: rgba(0, 0, 0, 0.65);
@@ -108,12 +105,9 @@
             document.getElementById('status').textContent = 'error: ' + msg;
         };
 
-        // Debug/perf overlay ("test palette", disableable) -- baseline
-        // browser-performance measurement, since there was previously no way
-        // to see actual frame time / GPU identity in the browser at all. Pure
-        // JS/DOM, driven by the EMSCRIPTEN_KEEPALIVE getters in
-        // src/main_wasm.cpp (engine_get_frame_time_ms etc.) -- no ImGui or
-        // other new dependency, see the debug-overlay design notes.
+        // Debug/perf overlay (toggleable). Pure JS/DOM, driven by the
+        // EMSCRIPTEN_KEEPALIVE getters in src/main_wasm.cpp
+        // (engine_get_frame_time_ms etc.).
         var statsPanelVisible = true;
         function setStatsPanelVisible(visible) {
             statsPanelVisible = visible;
@@ -158,10 +152,8 @@
                         }
                     }
 
-                    // FPS/Frame line matches Mini-Engine-reference's own Statistics
-                    // panel format exactly (ImGuiManager.cpp: "FPS: %.1f  |  Frame:
-                    // %.3f ms") -- one line, pipe-separated, 3 decimal places on
-                    // frame time.
+                    // FPS/Frame line: one line, pipe-separated, 3 decimal
+                    // places on frame time.
                     panel.textContent =
                         'FPS: ' + fps.toFixed(1) + '  |  Frame: ' + avgFrameMs.toFixed(3) + ' ms\n' +
                         'GPU pass: ' + gpuPassText + '\n' +
@@ -176,12 +168,11 @@
             requestAnimationFrame(tick);
         }
 
-        // Roadmap step 4 smoke test: proves the JS -> WASM volume/mask
-        // transport pipeline, not HU-value correctness or rendering (that's
-        // step 5) -- so the "volume" is arbitrary Uint16 data, not real
-        // half-floats. Simulates the future viewer/-owned orchestration
-        // layer (PRD #5.3.2) with a hardcoded volumeId instead of one minted
-        // per file load.
+        // Smoke test: proves the JS -> WASM volume/mask transport
+        // pipeline, not HU-value correctness or rendering -- so the
+        // "volume" is arbitrary Uint16 data, not real half-floats.
+        // Simulates the viewer/-owned orchestration layer (PRD #5.3.2)
+        // with a hardcoded volumeId instead of one minted per file load.
         function runVolumeMaskSmokeTest() {
             var width = 32, height = 32, depth = 8;
             var volumeId = 1;

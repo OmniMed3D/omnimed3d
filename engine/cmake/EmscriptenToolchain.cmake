@@ -1,6 +1,4 @@
-# Emscripten toolchain file for the WASM/WebGPU build (ADR-0001, engine draft roadmap step 1).
-# Informed by Mini-Engine-reference/cmake/EmscriptenToolchain.cmake (read-only reference,
-# not copied as-is -- see claude.md #5), verified against this repo's own CMakeLists.txt.
+# Emscripten toolchain file for the WASM/WebGPU build (ADR-0001).
 
 set(CMAKE_SYSTEM_NAME Emscripten)
 set(CMAKE_C_COMPILER emcc)
@@ -9,8 +7,7 @@ set(EMSCRIPTEN ON)
 
 # Register cmake/Platform/Emscripten.cmake so CMake's Platform/<CMAKE_SYSTEM_NAME>.cmake
 # lookup finds it -- without it, CXX_STANDARD/target_compile_features() silently
-# resolve to no -std= flag at all (see that file's header comment for how this
-# was caught).
+# resolve to no -std= flag at all.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
 # On Windows, emar/emranlib are .bat wrappers. CMake's compiler-test CreateProcess
@@ -31,14 +28,13 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
 
-# CMAKE_CXX_STANDARD alone isn't enough here: CMake's own compiler-ID detection
-# for em++ (via em++.bat on Windows) resolves to an empty CMAKE_CXX_COMPILER_ID
-# (verified -- CMakeCXXCompiler.cmake ends up with COMPILER_ID ""), and without a
-# resolved compiler ID, CMake has no flag-mapping table to turn CXX_STANDARD 20
-# into an actual -std= flag -- flags.make came out with an empty CXX_FLAGS even
-# with Platform/Emscripten.cmake's CACHE FORCE compiler-ID override in place (it
-# doesn't survive CMake's own detection re-run). Force the flag directly instead
-# of depending on that resolution path.
+# CMAKE_CXX_STANDARD alone isn't enough here: CMake's compiler-ID detection
+# for em++ (via em++.bat on Windows) resolves to an empty
+# CMAKE_CXX_COMPILER_ID, and without a resolved compiler ID CMake has no
+# flag-mapping table to turn CXX_STANDARD 20 into an actual -std= flag
+# (flags.make comes out with empty CXX_FLAGS even with
+# Platform/Emscripten.cmake's CACHE FORCE compiler-ID override). Force the
+# flag directly instead.
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
 
 # Emscripten's compiler-test/try_compile path doesn't support C++20 module

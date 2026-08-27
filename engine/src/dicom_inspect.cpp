@@ -1,7 +1,7 @@
-// Native-only CLI tool proving the shared DICOM parser (repo-root
-// dicom-parser/, docs/adr/0001-shared-dicom-parser-module.md) works
-// against a real file. Not built for WASM -- the browser Parse Worker gets
-// bytes from the File API via JS, never reads a file itself (CLAUDE.md #9).
+// Native-only CLI tool that runs the shared DICOM parser (repo-root
+// dicom-parser/) against a real file. Not built for WASM -- the browser
+// Parse Worker receives bytes from the File API via JS and never reads a
+// file itself.
 
 #include "dicom-parser/DicomFile.hpp"
 

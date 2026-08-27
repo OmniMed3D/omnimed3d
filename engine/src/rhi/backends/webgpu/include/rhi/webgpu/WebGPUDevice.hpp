@@ -13,8 +13,7 @@ namespace omnimed3d::rhi::webgpu {
 // Plain 8-bit RGB color -- shared between the compile-time colormap
 // preset table (WebGPUDevice.cpp's anonymous namespace) and the
 // writeLutColors()/writePreintegratedLutColors() helpers declared below,
-// which both the fixed presets and setCustomColormap() (§5.3) funnel
-// through.
+// which both the fixed presets and setCustomColormap() funnel through.
 struct ColorRGB {
     uint8_t r;
     uint8_t g;
@@ -22,10 +21,9 @@ struct ColorRGB {
 };
 
 // WebGPU implementation of rhi::Device, targeting the browser canvas via
-// Emscripten's emdawnwebgpu port. Verified against the exact struct/callback
-// shapes in this repo's installed webgpu.h (emsdk 4.0.10) -- see
-// engine/docs/adr/ and claude.md #7 for why that verification mattered here
-// (naming has drifted across Dawn/Emscripten versions in the past).
+// Emscripten's emdawnwebgpu port. Struct/callback shapes match this repo's
+// installed webgpu.h (emsdk 4.0.10) -- naming has drifted across
+// Dawn/Emscripten versions in the past.
 class WebGPUDevice final : public Device {
 public:
     void initialize() override;
@@ -53,11 +51,11 @@ public:
     void setExtinction(float extinction) override;
     void setDensityScale(float scale) override;
     void setThreshold(float threshold) override;
-    // Not part of the rhi::Device interface (yet) -- a debug/tuning knob
-    // for the upper half of the threshold band (§5.3 follow-up,
-    // 2026-08-27), set today only via setColormapPreset()'s per-preset
-    // defaults. Promote to the interface (+ a WASM export + a UI slider)
-    // if this ever needs to be user-adjustable rather than preset-only.
+    // Not part of the rhi::Device interface -- a debug/tuning knob for the
+    // upper half of the threshold band, set only via setColormapPreset()'s
+    // per-preset defaults. Promote to the interface (+ a WASM export + a
+    // UI slider) if it ever needs to be user-adjustable rather than
+    // preset-only.
     void setThresholdMax(float thresholdMax);
     void setClipBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) override;
     void setGradientOpacityStrength(float strength) override;
@@ -75,24 +73,19 @@ public:
     DeviceLossSnapshot getDeviceLossState() const override;
     void clearUncapturedError() override;
 
-    // Not part of the rhi::Device interface -- exposing a live GPUDevice
-    // handle to JS purely to call the real device.destroy() from a test
-    // would mean reaching into Emscripten's internal WebGPU handle table
-    // (WebGPU.mgrDevice), which is undocumented/version-fragile. Instead,
-    // an e2e test can trigger the exact same onDeviceLost() code path a
-    // real Dawn-fired callback would (same reason/message plumbing,
-    // same renderFrame() guard, same getDeviceLossState() result) --
-    // WASM-debug-only, not part of the abstract Device interface since a
-    // future native Vulkan backend has no equivalent notion of this.
+    // Not part of the rhi::Device interface -- lets an e2e test trigger
+    // the same onDeviceLost() code path a real Dawn-fired callback would
+    // (same reason/message plumbing, same renderFrame() guard, same
+    // getDeviceLossState() result), without reaching into Emscripten's
+    // undocumented internal WebGPU handle table for a real
+    // device.destroy(). WASM-debug-only.
     void debugSimulateDeviceLost();
 
 private:
-    // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback in
-    // the emdawnwebgpu port's webgpu.h exactly -- this is the newer
-    // CallbackInfo/Future-based Dawn API (message is WGPUStringView, two
-    // userdata slots), not the older 4-arg raw-callback style some docs and
-    // Mini-Engine-reference still show. Confirmed by reading the actual
-    // header the port fetches, not assumed.
+    // Signatures match WGPURequestAdapterCallback/WGPURequestDeviceCallback
+    // in the emdawnwebgpu port's webgpu.h -- the newer CallbackInfo/
+    // Future-based Dawn API (message is WGPUStringView, two userdata
+    // slots), not the older 4-arg raw-callback style.
     static void onAdapterRequested(WGPURequestAdapterStatus status, WGPUAdapter adapter,
                                     WGPUStringView message, void* userdata1, void* userdata2);
     static void onDeviceRequested(WGPURequestDeviceStatus status, WGPUDevice device,
@@ -101,9 +94,7 @@ private:
     // Mobile OOM mitigation -- registered on deviceDesc in
     // onAdapterRequested(), fired by Dawn itself (not something this
     // engine calls). Signatures match WGPUDeviceLostCallback/
-    // WGPUUncapturedErrorCallback in the emdawnwebgpu port's webgpu.h
-    // exactly, same "confirmed by reading the actual header" standard as
-    // onAdapterRequested/onDeviceRequested above.
+    // WGPUUncapturedErrorCallback in the emdawnwebgpu port's webgpu.h.
     static void onDeviceLost(WGPUDevice const* device, WGPUDeviceLostReason reason, WGPUStringView message,
                               void* userdata1, void* userdata2);
     static void onUncapturedError(WGPUDevice const* device, WGPUErrorType type, WGPUStringView message,
@@ -115,11 +106,9 @@ private:
     // ran (raymarch accumulation pass in Orbit3D mode, or the axial-slice
     // pass in AxialSlice2D mode -- only one of the two ever runs in a given
     // frame), [2,3] = begin/end of the composite pass (Orbit3D only, runs
-    // right after the raymarch pass). Reused every frame rather than
-    // multiplexed across frames-in-flight -- this engine has no other
-    // frames-in-flight concept to hook into, and a single pending-readback
-    // guard (timestampReadbackPending_) is enough to avoid mapping a buffer
-    // that's already being mapped.
+    // right after the raymarch pass). Reused every frame; the single
+    // pending-readback guard (timestampReadbackPending_) is enough to
+    // avoid mapping a buffer that's already being mapped.
     void createTimestampQuery();
     // Maps timestampReadbackBuffer_ async and reads it back in
     // onTimestampBufferMapped() -- no-ops if a previous readback is still
@@ -131,25 +120,25 @@ private:
     static void onTimestampBufferMapped(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1,
                                          void* userdata2);
 
-    // Uses canvasWidth_/canvasHeight_ (issue #40) -- called once from
+    // Uses canvasWidth_/canvasHeight_ -- called once from
     // onDeviceRequested() with whatever those hold at that point (a
     // placeholder default until resize() is called at least once; the
-    // Shell calls it once on startup, see viewer/src/shell/main.ts), and
-    // again from resize() itself on every subsequent call.
+    // Shell calls it once on startup), and again from resize() itself on
+    // every subsequent call.
     void configureSurface();
 
     // Raymarch pipeline setup -- built once when the device becomes ready,
     // independent of any loaded volume (bind group *layout* is static; the
     // bind group itself, which references specific texture views, is
     // rebuilt per loadVolume() call -- see rebuildBindGroup()). Also builds
-    // the axial-slice pipeline (issue #37) -- both pipelines share
+    // the axial-slice pipeline -- both pipelines share
     // bindGroupLayout_/pipelineLayout_/uboBuffer_/bindGroup_ unchanged (see
     // createRenderPipelineFor()'s own comment for why that's valid).
     void createPipeline();
     void createSamplerAndLut();
-    // One-time creation of the accumulation-blit pipeline/layout/shader
-    // (§6.5) -- called once from createPipeline(), analogous to the
-    // raymarch/axial pipelines it builds alongside.
+    // One-time creation of the accumulation-blit pipeline/layout/shader --
+    // called once from createPipeline(), analogous to the raymarch/axial
+    // pipelines it builds alongside.
     void createCompositePipeline();
     // (Re)creates accumulationTexture_/View sized to canvasWidth_/
     // canvasHeight_, and the compositeBindGroup_ that references it --
@@ -162,8 +151,7 @@ private:
     // pre-integrated (front,back) table into preintegratedLutTexture_ --
     // shared by setColormapPreset() (every fixed preset writes the same
     // plain grayscale pair, see ColormapPreset's own comment) and
-    // setCustomColormap() (§5.3's Custom preset) -- see the .cpp
-    // definitions' header comments.
+    // setCustomColormap() -- see the .cpp definitions' header comments.
     void writeLutColors(ColorRGB lowColor, ColorRGB highColor);
     void writePreintegratedLutColors(ColorRGB lowColor, ColorRGB highColor);
     void rebuildBindGroup();
@@ -180,12 +168,12 @@ private:
     // two volumes are entirely independent GPU resources.
     void releaseNativeVolumeResources();
 
-    // One-time creation of the gradient-bake compute pipeline (issue #81's
-    // own follow-up) -- called once from createPipeline(), analogous to
-    // createCompositePipeline(). Its own 3-entry bind group layout (HU
-    // volume read, gradient volume storage-write, a small spacing uniform)
-    // is unrelated to bindGroupLayout_/pipelineLayout_ above -- a genuinely
-    // different (compute, not render) pipeline with different resources.
+    // One-time creation of the gradient-bake compute pipeline -- called
+    // once from createPipeline(), analogous to createCompositePipeline().
+    // Its own 3-entry bind group layout (HU volume read, gradient volume
+    // storage-write, a small spacing uniform) is unrelated to
+    // bindGroupLayout_/pipelineLayout_ above -- a genuinely different
+    // (compute, not render) pipeline with different resources.
     void createGradientBakePipeline();
     // Dispatches the gradient-bake compute pass over the just-loaded
     // volume's full extent -- called once from loadVolume(), after
@@ -197,34 +185,31 @@ private:
                              float spacingX, float spacingY, float spacingZ);
 
     // Factors out the blend-state/color-target/pipeline-descriptor
-    // boilerplate shared by both render pipelines (issue #37) -- the only
-    // difference between the raymarch and axial-slice pipelines is which
-    // shader module they run and which color target format they're built
-    // against; bindGroupLayout_/pipelineLayout_ are built once by
-    // createPipeline() and passed in unchanged. Both shaders declare the
-    // exact same 6-entry bind group layout (uniform buffer, volume tex,
-    // sampler, mask tex, LUT tex, pre-integrated LUT tex), so one
-    // WGPUBindGroup (bindGroup_, referencing uboBuffer_ sized for the
-    // larger RaymarchUBO) is valid for whichever pipeline is bound --
-    // WebGPU validates the bound buffer range against each shader's own
-    // reflected minimum size, and RaymarchUBO's 256 bytes comfortably
-    // covers AxialSliceUBO's 48. colorTargetFormat must match whatever
-    // render pass attachment the resulting pipeline is later used with --
-    // WebGPU bakes a pipeline's color target format at creation time and
-    // validates it against the actual attachment at draw time (§6.5: the
-    // raymarch pipeline now targets accumulationTexture_'s RGBA16Float,
-    // not the swapchain's BGRA8Unorm the axial-slice pipeline still uses;
-    // passing the wrong format here produces an invalid pipeline that
-    // silently no-ops every draw using it -- confirmed by hitting exactly
-    // this while first wiring the accumulation buffer up).
+    // boilerplate shared by both render pipelines -- the only difference
+    // between the raymarch and axial-slice pipelines is which shader module
+    // they run and which color target format they're built against;
+    // bindGroupLayout_/pipelineLayout_ are built once by createPipeline()
+    // and passed in unchanged. Both shaders declare the same 7-entry bind
+    // group layout, so one WGPUBindGroup (bindGroup_, referencing
+    // uboBuffer_ sized for the larger RaymarchUBO) is valid for whichever
+    // pipeline is bound -- WebGPU validates the bound buffer range against
+    // each shader's own reflected minimum size, and RaymarchUBO
+    // comfortably covers AxialSliceUBO's 48 bytes. colorTargetFormat must
+    // match whatever render pass attachment the resulting pipeline is
+    // later used with -- WebGPU bakes a pipeline's color target format at
+    // creation time and validates it against the actual attachment at draw
+    // time (the raymarch pipeline targets accumulationTexture_'s
+    // RGBA16Float, not the swapchain's BGRA8Unorm the axial-slice pipeline
+    // uses; the wrong format here produces an invalid pipeline that
+    // silently no-ops every draw using it).
     WGPURenderPipeline createRenderPipelineFor(WGPUShaderModule module, WGPUTextureFormat colorTargetFormat);
 
     // Frames a default camera and world-space AABB from the loaded
     // volume's voxel dimensions + physical spacing, resetting
     // cameraYaw_/cameraPitch_/cameraDistance_ to their defaults. World
     // axes already match the canonical LPS convention the Parse Worker
-    // normalizes to upstream (viewer/README.md) -- up=+Z puts
-    // patient-Superior at the top of the frame.
+    // normalizes to upstream -- up=+Z puts patient-Superior at the top of
+    // the frame.
     void frameCameraForVolume(uint32_t width, uint32_t height, uint32_t depth,
                                float spacingX, float spacingY, float spacingZ);
 
@@ -271,24 +256,23 @@ private:
     // flash for no visual reason (see setRenderPaused()'s own comment).
     bool pauseRendering_ = false;
 
-    // Backing-store pixel dimensions of the render surface (issue #40) --
-    // replaces the previous fixed 640x480 constants. Defaulted to a
+    // Backing-store pixel dimensions of the render surface. Defaulted to a
     // placeholder so configureSurface() has something valid to use even
     // if resize() is never called (shouldn't happen in practice; the
     // Shell always calls it once on startup), and updated by resize().
     uint32_t canvasWidth_ = 640;
     uint32_t canvasHeight_ = 480;
 
-    // Volume/mask state (roadmap step 4/6). No general RHITexture wrapper --
-    // see the Device.hpp header comment for why these stay raw WGPUTexture
-    // handles private to this backend for now.
+    // Volume/mask state. No general RHITexture wrapper -- see the
+    // Device.hpp header comment for why these stay raw WGPUTexture handles
+    // private to this backend for now.
     WGPUTexture volumeTexture_ = nullptr;
     WGPUTexture maskTexture_ = nullptr;
     WGPUTextureView volumeTextureView_ = nullptr;
     WGPUTextureView maskTextureView_ = nullptr;
-    // Precomputed gradient volume (issue #81's own follow-up,
-    // gradient_bake.slang) -- same voxel dimensions as volumeTexture_,
-    // (re)created and baked in loadVolume() every time a new volume loads.
+    // Precomputed gradient volume (gradient_bake.slang) -- same voxel
+    // dimensions as volumeTexture_, (re)created and baked in loadVolume()
+    // every time a new volume loads.
     WGPUTexture gradientTexture_ = nullptr;
     WGPUTextureView gradientTextureView_ = nullptr;
     uint32_t currentVolumeId_ = 0;
@@ -313,7 +297,6 @@ private:
     // full-volume RGBA16Float texture, 4x volumeTexture_'s own size) in
     // favor of an on-the-fly per-step gradient in the raymarch shader,
     // and downsamples the volume/mask textures in-plane by that factor.
-    // See loadVolume()'s own comment.
     uint32_t downsampleFactor_ = 1;
 
     core::RenderGraph renderGraph_;
@@ -328,25 +311,25 @@ private:
     WGPUSampler linearSampler_ = nullptr;
     WGPUTexture lutTexture_ = nullptr;
     WGPUTextureView lutTextureView_ = nullptr;
-    // Pre-integrated (front,back) transfer-function table (§6.1) -- only
-    // the raymarch pipeline samples this; see preintegratedLutTex's
-    // comment in volume_raymarch.slang.
+    // Pre-integrated (front,back) transfer-function table -- only the
+    // raymarch pipeline samples this; see preintegratedLutTex's comment
+    // in volume_raymarch.slang.
     WGPUTexture preintegratedLutTexture_ = nullptr;
     WGPUTextureView preintegratedLutTextureView_ = nullptr;
     // Rebuilt in rebuildBindGroup() -- depends on volumeTextureView_/
     // maskTextureView_, which change every loadVolume() call.
     WGPUBindGroup bindGroup_ = nullptr;
 
-    // Axial-slice pipeline (issue #37, PRD §9 slice-panning gap) -- shares
+    // Axial-slice pipeline (PRD §9 slice-panning gap) -- shares
     // bindGroupLayout_/pipelineLayout_/uboBuffer_/bindGroup_ with the
     // raymarch pipeline above; only the shader module and pipeline object
     // differ. See createRenderPipelineFor()'s header comment.
     WGPUShaderModule axialShaderModule_ = nullptr;
     WGPURenderPipeline axialPipeline_ = nullptr;
 
-    // Jitter + temporal accumulation (§6.5) -- the raymarch pass renders
-    // into this persistent offscreen buffer instead of the swapchain
-    // directly, blending each new (jittered) frame in with weight
+    // Jitter + temporal accumulation -- the raymarch pass renders into
+    // this persistent offscreen buffer instead of the swapchain directly,
+    // blending each new (jittered) frame in with weight
     // 1/(accumFrameIndex_+1) while the camera/params are static
     // (markAccumulationDirty() resets the blend to a full overwrite). A
     // separate composite pass then blits it to the swapchain. This
@@ -362,8 +345,8 @@ private:
     WGPUTexture accumulationTexture_ = nullptr;
     WGPUTextureView accumulationTextureView_ = nullptr;
 
-    // Composite/blit pipeline (§6.5) -- reads accumulationTexture_ and
-    // writes it to the swapchain, unchanged. A distinct 2-entry bind
+    // Composite/blit pipeline -- reads accumulationTexture_ and writes it
+    // to the swapchain, unchanged. A distinct 2-entry bind
     // group layout (texture + sampler only) from bindGroupLayout_ above,
     // since it's a genuinely different shader with different resources,
     // not another consumer of the raymarch/axial-slice layout.
@@ -375,8 +358,8 @@ private:
     // accumulationTextureView_, which is recreated on every resize().
     WGPUBindGroup compositeBindGroup_ = nullptr;
 
-    // Gradient-bake compute pipeline (issue #81's own follow-up) -- built
-    // once by createGradientBakePipeline(). gradientBakeParamsBuffer_ holds
+    // Gradient-bake compute pipeline -- built once by
+    // createGradientBakePipeline(). gradientBakeParamsBuffer_ holds
     // just the loaded volume's physical voxel spacing (a GradientBakeParams
     // uniform, gradient_bake.slang), rewritten by bakeGradientVolume() on
     // every loadVolume() call; the bind group referencing that call's
@@ -396,12 +379,12 @@ private:
     // loadVolume(), see setSliceIndex()/setSliceAxis().
     uint32_t sliceIndex_ = 0;
     // 0 = Axial (fixes Z), 1 = Sagittal (fixes X), 2 = Coronal (fixes Y) --
-    // MPR (2026-08-27 user request). See setSliceAxis().
+    // MPR. See setSliceAxis().
     uint32_t sliceAxis_ = 0;
 
-    // Native-slice volume (MPR + native-slice feature, 2026-08-27 user
-    // request) -- the DICOM series' own original per-file slices, entirely
-    // separate from volumeTexture_ (which loadVolume() may have received
+    // Native-slice volume (MPR + native-slice feature) -- the DICOM
+    // series' own original per-file slices, entirely separate from
+    // volumeTexture_ (which loadVolume() may have received
     // already trilinear-resampled onto a canonical LPS grid, see the Parse
     // Worker's oblique-series fallback). No mask/gradient texture of its
     // own: NativeSlice2D reuses maskTexture_/gradientTexture_/
@@ -454,19 +437,15 @@ private:
     float finestSpacing_ = 0.0F;
 
     // Window/level + mask overlay parameters -- defaults applied in
-    // createPipeline(); overridden via setWindowLevel()/setColormapPreset()
-    // or once real data has been observed to have a class present.
+    // createPipeline(); overridden via setWindowLevel()/setColormapPreset().
     float windowCenter_ = 0.0F;
     float windowWidth_ = 400.0F;
     bool maskOverlayEnabled_ = true;
-    // Mask highlight blend strength (§5.3.1) -- was a fixed 0.6 literal
-    // written directly into both UBOs' maskParams.y before setMaskOverlayAlpha()
-    // existed.
+    // Mask highlight blend strength (PRD §5.3.1).
     float maskOverlayAlpha_ = 0.6F;
 
     // REQ-R04 quality/step-count tier -- see kQualityTiers in
-    // WebGPUDevice.cpp. Default matches the previous hardcoded behavior
-    // (Medium == the old fixed 512-step/diagonal-384 formula).
+    // WebGPUDevice.cpp. Default is Medium.
     uint32_t qualityTier_ = 1;
     // Gradient-based Lambert shading mode (0=off, 1=on, 2=on-flat) -- see
     // setShadingMode().
@@ -476,35 +455,31 @@ private:
     // incremented once per renderFrame() call otherwise.
     float accumFrameIndex_ = 0.0F;
 
-    // TF detail controls (§5.3) -- were fixed constants before these
-    // setters existed (extinction) or simply didn't exist (the rest).
-    // Defaults exactly reproduce Branch 1's behavior for anyone who never
-    // touches these new controls.
+    // TF detail controls. Defaults leave rendering unchanged when a caller
+    // never touches them.
     float extinction_ = 8.0F;
     float densityScale_ = 1.0F;
     float threshold_ = 0.0F;
-    // Upper cutoff paired with threshold_ (§5.3 follow-up, 2026-08-27) --
-    // 1.0 means "no upper cutoff" (every preset except Lung leaves this
-    // alone; see ColormapPreset::thresholdMax's own comment for why Lung
-    // needs the opposite-direction cutoff threshold_ alone can't provide).
-    // No public setter/WASM export -- set only by setColormapPreset(),
-    // the same way windowCenter_/windowWidth_ are, not exposed as its own
-    // slider.
+    // Upper cutoff paired with threshold_ -- 1.0 means "no upper cutoff"
+    // (every preset except Lung leaves this alone; see
+    // ColormapPreset::thresholdMax's own comment for why Lung needs the
+    // opposite-direction cutoff threshold_ alone can't provide). No public
+    // setter/WASM export -- set only by setColormapPreset(), the same way
+    // windowCenter_/windowWidth_ are.
     float thresholdMax_ = 1.0F;
     float gradientOpacityStrength_ = 0.0F;
     bool occlusionEnabled_ = false;
 
-    // Clipping box (§6.4), world mm -- reset to the full aabbMin_/aabbMax_
-    // on every loadVolume() (frameCameraForVolume()), since a clip region
+    // Clipping box, world mm -- reset to the full aabbMin_/aabbMax_ on
+    // every loadVolume() (frameCameraForVolume()), since a clip region
     // sized for a previous volume would otherwise misclip a newly loaded
     // one of different physical size.
     glm::vec3 clipMin_{0.0F};
     glm::vec3 clipMax_{0.0F};
 
-    // Custom colormap (§5.3's 5th preset) -- applied via setCustomColormap(),
-    // independent of kColormapPresets/setColormapPreset(). Defaults are
-    // arbitrary (never rendered with until setCustomColormap() is called
-    // at least once).
+    // Custom colormap -- applied via setCustomColormap(), independent of
+    // kColormapPresets/setColormapPreset(). Defaults are arbitrary (never
+    // rendered with until setCustomColormap() is called at least once).
     ColorRGB customLowColor_{0, 0, 0};
     ColorRGB customHighColor_{255, 255, 255};
 
@@ -514,9 +489,7 @@ private:
     // (letterbox bars, the no-volume-loaded fallback, and the otherwise-
     // dead accumulation/composite-pass clears) so there's no visible seam
     // between "this shader's own compositing" and "a render pass's plain
-    // clear color" cases. Default matches the previous hardcoded constant
-    // (0.05, 0.05, 0.12) exactly, so nobody who never touches this control
-    // sees any change.
+    // clear color" cases.
     glm::vec3 backgroundColor_{0.05F, 0.05F, 0.12F};
 
     // Debug/perf overlay state (see getFrameStats()/getHardwareInfo()).

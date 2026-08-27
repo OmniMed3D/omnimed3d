@@ -10,8 +10,7 @@
 #   ./engine/scripts/wasm-build.sh [emsdk-dir]
 #
 # Resolves emsdk dir the same way emsdk-shell.sh does ($EMSDK if set, else
-# the argument), falling back to ~/emsdk (this machine's documented install
-# path -- CLAUDE.md sec7) only if neither is given.
+# the argument), falling back to ~/emsdk only if neither is given.
 
 set -euo pipefail
 
