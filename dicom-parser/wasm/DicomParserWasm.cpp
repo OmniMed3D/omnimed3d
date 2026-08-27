@@ -126,9 +126,17 @@ int dicom_wasm_parse_meta(uint8_t const* data, size_t size, size_t* outDataSetOf
 // already has the full file buffer in WASM memory (it had to, to call
 // this), so pixel bytes are read from there directly rather than copied a
 // second time.
+// `outModalityBuf` (NUL-terminated, truncated to outModalityBufLen - 1
+// bytes if needed) follows dicom_wasm_parse_meta's transferSyntaxUID
+// out-buffer convention rather than a fixed-size struct field -- Modality
+// (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT"/"MR") is a real string field, and
+// this WASM layer otherwise carries none (see this file's header comment
+// on why strings are normally left out); a short ASCII code string is
+// cheap enough to pass the same way transferSyntaxUID already is.
 EMSCRIPTEN_KEEPALIVE
 int dicom_wasm_parse_image(uint8_t const* data, size_t size, size_t dataSetOffset,
-                            char const* transferSyntaxUID, DicomWasmImageInfo* out) {
+                            char const* transferSyntaxUID, DicomWasmImageInfo* out, char* outModalityBuf,
+                            size_t outModalityBufLen) {
     auto const* bytes = reinterpret_cast<std::byte const*>(data);
     dicom_parser::DicomParseError error{};
     auto const image = dicom_parser::DicomFile::parseImageInfo(bytes, size, dataSetOffset,
@@ -159,6 +167,15 @@ int dicom_wasm_parse_image(uint8_t const* data, size_t size, size_t dataSetOffse
     out->windowWidth = image->windowWidth;
     out->hasWindowCenter = image->hasWindowCenter ? 1 : 0;
     out->hasWindowWidth = image->hasWindowWidth ? 1 : 0;
+
+    if (outModalityBufLen > 0) {
+        size_t copyLen = image->modality.size();
+        if (copyLen > outModalityBufLen - 1) {
+            copyLen = outModalityBufLen - 1;
+        }
+        std::memcpy(outModalityBuf, image->modality.data(), copyLen);
+        outModalityBuf[copyLen] = '\0';
+    }
     return 0;
 }
 

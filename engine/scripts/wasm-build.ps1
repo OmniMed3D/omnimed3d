@@ -20,4 +20,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $scriptDir = $PSScriptRoot
+$engineDir = Split-Path -Parent $scriptDir
+
+# `cmake --preset wasm-windows` must run from engine/ (where CMakePresets.json
+# lives), not the caller's working directory -- `npm run dev:full` invokes this
+# from viewer/. Mirrors wasm-build.sh's `cd "$engine_dir"`.
+Set-Location $engineDir
+
 & "$scriptDir\emsdk-shell.ps1" "cmake --preset wasm-windows && cmake --build build_wasm" -EmsdkDir $EmsdkDir

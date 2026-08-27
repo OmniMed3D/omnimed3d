@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
                  image->pixelRepresentation == 0 ? "unsigned" : "signed");
     std::printf("  Samples Per Pixel:              %u\n", image->samplesPerPixel);
     std::printf("  Photometric Interpretation:     %s\n", image->photometricInterpretation.c_str());
+    std::printf("  Modality:                       %s\n", image->modality.c_str());
     std::printf("  Pixel Spacing (row, column):    %g, %g\n", image->pixelSpacingRow, image->pixelSpacingColumn);
     std::printf("  Slice Thickness:                %g\n", image->sliceThickness);
     std::printf("  Rescale Slope / Intercept:      %g / %g\n", image->rescaleSlope, image->rescaleIntercept);

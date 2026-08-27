@@ -105,6 +105,16 @@ struct DicomImageInfo {
     bool hasWindowCenter = false;
     bool hasWindowWidth = false;
 
+    // Modality (DICOM PS3.3 C.7.3.1.1.1, e.g. "CT", "MR") -- callers were
+    // using "does this file carry a VOI LUT window" as a proxy for "is this
+    // non-HU data", but real CT commonly carries one too (bug report,
+    // 2026-08-27: a CT series' own VOI LUT window got auto-selected over
+    // the app's ordinary CT presets). Modality is the actual signal for
+    // that decision; exposed as the raw two-letter code (empty if absent),
+    // same "no presence flag, empty string means absent" convention as
+    // photometricInterpretation above.
+    std::string modality;
+
     // View into the caller's original buffer -- never a copy (ADR-0004's
     // zero-copy philosophy). Valid only as long as that buffer is alive.
     std::byte const* pixelData = nullptr;

@@ -80,6 +80,15 @@ export interface VolumeReadyMessage {
    */
   windowCenter?: number;
   windowWidth?: number;
+  /**
+   * DICOM Modality (PS3.3 C.7.3.1.1.1, e.g. "CT", "MR"), taken from the
+   * first slice -- undefined if that slice carried no Modality tag. Lets
+   * the Shell tell real HU CT data apart from non-HU data (MR etc.)
+   * without relying on "does this file carry a VOI LUT window" as a proxy
+   * (bug report, 2026-08-27 follow-up: real CT series commonly carry one
+   * too, wrongly auto-selecting "From File" over the app's CT presets).
+   */
+  modality?: string;
 }
 
 /**
@@ -329,6 +338,7 @@ function assembleFromParsedSlices(
     data: volumeData.buffer as ArrayBuffer,
     windowCenter: first.image.hasWindowCenter ? first.image.windowCenter : undefined,
     windowWidth: first.image.hasWindowWidth ? first.image.windowWidth : undefined,
+    modality: first.image.modality || undefined,
   };
 
   return { sliceMessages, volume, orderingMethod };
@@ -539,6 +549,7 @@ function assembleObliqueSeries(
     data: volumeData.buffer as ArrayBuffer,
     windowCenter: first.image.hasWindowCenter ? first.image.windowCenter : undefined,
     windowWidth: first.image.hasWindowWidth ? first.image.windowWidth : undefined,
+    modality: first.image.modality || undefined,
   };
 
   // NativeSlice2D payload (MPR + native-slice feature, 2026-08-27 user

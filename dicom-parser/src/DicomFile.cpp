@@ -282,6 +282,7 @@ enum class KnownTag {
     ImagePositionPatient,
     WindowCenter,
     WindowWidth,
+    Modality,
 };
 
 struct TagLookup {
@@ -308,6 +309,7 @@ constexpr TagLookup kKnownTags[] = {
     {0x0020, 0x0032, KnownTag::ImagePositionPatient},
     {0x0028, 0x1050, KnownTag::WindowCenter},
     {0x0028, 0x1051, KnownTag::WindowWidth},
+    {0x0008, 0x0060, KnownTag::Modality},
 };
 
 std::optional<KnownTag> lookupKnownTag(uint16_t group, uint16_t element) {
@@ -448,6 +450,10 @@ void applyKnownTagValue(KnownTag tag, std::byte const* data, size_t valueOffset,
             }
             break;
         }
+        case KnownTag::Modality:
+            info.modality =
+                trimPadding(std::string(reinterpret_cast<char const*>(data + valueOffset), valueLength));
+            break;
     }
 }
 

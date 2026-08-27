@@ -29,6 +29,7 @@ function makeFakeSlice(
   orientation?: { row: [number, number, number]; column: [number, number, number] },
   position?: [number, number, number],
   windowLevel?: { center: number; width: number },
+  modality = "",
 ): DicomWasmImageInfo {
   const pixelCount = rows * columns;
   const raw = new Int16Array(pixelCount).fill(rawValue);
@@ -53,6 +54,7 @@ function makeFakeSlice(
     windowWidth: windowLevel?.width ?? 0,
     hasWindowCenter: windowLevel !== undefined,
     hasWindowWidth: windowLevel !== undefined,
+    modality,
     pixelData: new Uint8Array(raw.buffer),
   };
 }
@@ -88,6 +90,7 @@ function makeFakeSliceFromValues(
     windowWidth: 0,
     hasWindowCenter: false,
     hasWindowWidth: false,
+    modality: "",
     pixelData: new Uint8Array(raw.buffer),
   };
 }
@@ -198,6 +201,29 @@ describe("assembleSeries", () => {
 
     expect(volume.windowCenter).toBeUndefined();
     expect(volume.windowWidth).toBeUndefined();
+  });
+
+  // Bug report, 2026-08-27 follow-up: "does this file carry a VOI LUT
+  // window" turned out to be a bad proxy for "is this non-HU data" -- real
+  // CT commonly carries one too. Modality is the actual signal the Shell
+  // needs, carried through the same "first slice" pattern as windowCenter/
+  // windowWidth above.
+  it("carries the first slice's Modality into the volume-ready message when present", () => {
+    const sliceA = makeFakeSlice(1, 1, 2, 2, undefined, undefined, undefined, "MR");
+    const wasm = fakeParserFor([sliceA]);
+
+    const { volume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
+
+    expect(volume.modality).toBe("MR");
+  });
+
+  it("leaves modality undefined when the file carries no Modality tag", () => {
+    const sliceA = makeFakeSlice(1, 1, 2, 2);
+    const wasm = fakeParserFor([sliceA]);
+
+    const { volume } = assembleSeries(wasm, [new Uint8Array(0)], "v");
+
+    expect(volume.modality).toBeUndefined();
   });
 
   it("orders slices geometrically by ImagePositionPatient when every slice has orientation/position, overriding instanceNumber", () => {

@@ -92,6 +92,7 @@ describe("parseSliceToHu vs CT_small.dcm ground truth", () => {
       windowWidth: 0,
       hasWindowCenter: false,
       hasWindowWidth: false,
+      modality: "",
       pixelData: new Uint8Array(16),
     };
     const fakeParser: ImageParser = { parseImage: () => fakeImage };

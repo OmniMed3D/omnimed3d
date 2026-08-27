@@ -96,55 +96,128 @@ See [`.github/CODEOWNERS`](.github/CODEOWNERS) for the exact review-routing rule
 
 ## Getting started
 
-Each module owns its own build; see its README for full detail. Quick pointers:
+Each module owns its own build; see its README for full detail. This
+section is the from-a-fresh-clone path.
 
-**Fastest path for local iteration** (after the one-time prerequisite
-setup below — vcpkg, Emscripten, `npm install`): a single command
-rebuilds the engine's WASM target, syncs it into the viewer, and starts
-the dev server, instead of running each step by hand.
+### Prerequisites (one-time per machine)
+
+On `PATH`: Git, [Git LFS](https://git-lfs.com), [CMake](https://cmake.org),
+[Ninja](https://ninja-build.org), a standalone
+[LLVM/Clang](https://github.com/llvm/llvm-project/releases), and
+[Node.js](https://nodejs.org). On Windows, the browser (WASM) build also
+needs [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/)
+or the [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+with the "Desktop development with C++" (MSVC) workload — its
+`wasm-windows` preset builds with NMake, and the build scripts locate
+`nmake.exe` under the VS 2022 install (default install location; no
+Developer Command Prompt or `vcvars` needed).
+
+The layout below keeps `vcpkg` and `emsdk` as siblings of the repo, in
+whatever folder you keep projects in:
+
+```text
+<your projects folder>/
+├─ omnimed3d/   ← this repo (cloned in the next step)
+├─ vcpkg/
+└─ emsdk/
+```
+
+Run this **from that projects folder** — pick the block for your shell.
+
+**Windows (PowerShell)** — the primary host:
+
+```powershell
+git lfs install
+
+git clone https://github.com/microsoft/vcpkg
+.\vcpkg\bootstrap-vcpkg.bat
+.\vcpkg\vcpkg install shader-slang    # required — both engine builds need slangc
+
+git clone https://github.com/emscripten-core/emsdk.git emsdk
+cd emsdk; .\emsdk.bat install 4.0.10; .\emsdk.bat activate 4.0.10; cd ..
+
+# Persist both so new shells and the build scripts find them
+# (add them to your User environment variables too):
+$env:VCPKG_ROOT = "$PWD\vcpkg"
+$env:EMSDK      = "$PWD\emsdk"
+```
+
+**macOS / Linux (bash or zsh):**
+
+```bash
+git lfs install
+
+git clone https://github.com/microsoft/vcpkg
+./vcpkg/bootstrap-vcpkg.sh
+./vcpkg/vcpkg install shader-slang    # required — both engine builds need slangc
+
+git clone https://github.com/emscripten-core/emsdk.git emsdk
+cd emsdk && ./emsdk install 4.0.10 && ./emsdk activate 4.0.10 && cd ..
+
+# Persist both (add to ~/.zshrc or ~/.bashrc) so new shells and the
+# build scripts find them:
+export VCPKG_ROOT="$PWD/vcpkg"
+export EMSDK="$PWD/emsdk"
+```
+
+### Clone
+
+```sh
+git clone <repo-url> omnimed3d   # into the projects folder, next to vcpkg/ and emsdk/
+cd omnimed3d
+git lfs pull   # test-data/ DICOM — without git-lfs you get pointer files, not real data
+```
+
+### Fastest path for local iteration
+
+After a one-time `npm install` in `viewer/`, one command rebuilds the
+engine's WASM target, syncs it into the viewer, and starts the dev server:
 
 ```sh
 cd viewer
-npm run sync-demo-ct   # one-time, or whenever the demo DICOM data changes
+npm install            # one-time
+npm run sync-demo-ct   # one-time, or when the demo DICOM data changes
 npm run dev:full       # Windows
 npm run dev:full:mac   # macOS/Linux
 ```
 
-`dev:full`/`dev:full:mac` (`viewer/scripts/dev-full.ps1`/`.sh`) chains
-`engine/scripts/wasm-build.ps1`/`.sh` (the two-step Emscripten
-configure+build below, collapsed into one call) →
-`npm run sync-engine-wasm` → the same backgrounded dev server
-`dev:start`/`dev:start:mac` uses — see
-[`viewer/README.md`](viewer/README.md#building-and-testing) for
-`dev:status`/`dev:stop` and what each step does individually. It does
-**not** run `sync-demo-ct` — that only needs re-running when the demo
-DICOM data itself changes, not on every engine rebuild.
+`dev:full` chains the WASM build → `sync-engine-wasm` → a backgrounded dev
+server (also managed by `dev:start`/`dev:stop`/`dev:status`). See
+[`viewer/README.md`](viewer/README.md#building-and-testing) for the steps
+run individually.
 
-**Engine** (C++20, needs [vcpkg](https://vcpkg.io) and, for the browser build, [Emscripten](https://emscripten.org)):
+### Per-module builds
+
+**Engine** (C++20 — needs vcpkg + `VCPKG_ROOT` and, for the browser
+build, Emscripten; see Prerequisites):
 
 ```sh
 cd engine
-cmake --preset macos-default   # or windows-default
+cmake --preset windows-default   # or macos-default
 cmake --build build
+ctest --test-dir build
 
-# Browser (WebGPU/WASM) build:
-./scripts/emsdk-shell.sh "cmake --preset wasm-macos" ~/emsdk    # or emsdk-shell.ps1 / wasm-windows on Windows
-./scripts/emsdk-shell.sh "cmake --build build_wasm" ~/emsdk
+# Browser (WebGPU/WASM) build — configure + build in one emsdk activation:
+./scripts/wasm-build.ps1   # Windows
+./scripts/wasm-build.sh    # macOS/Linux
 ```
+
+Artifacts land in `engine/build_wasm/`.
 
 **Viewer** (Vite + TypeScript, npm workspaces):
 
 ```sh
 cd viewer
 npm install
-npm run dev      # dev server
-npm run build    # production build
-npm test         # unit tests (vitest, across all workspace packages)
+npm run sync-engine-wasm   # copy engine/build_wasm/* into src/shell/public/engine/ (needs the WASM build above)
+npm run sync-demo-ct       # copy test-data/* into src/shell/public/demo-ct/ (needs git lfs pull)
+npm run dev                # dev server (foreground); npm run dev:start backgrounds it
+npm run build              # production build
+npm test                   # unit tests (vitest, across all workspace packages)
 ```
 
-The viewer's dev server expects the engine's WASM build to already exist
-— see [`viewer/README.md`](viewer/README.md#building-and-testing) for
-the `sync-engine-wasm`/`sync-demo-ct` steps that wire the two together.
+The dev server expects the engine's WASM build to already exist — the
+`sync-engine-wasm` step above wires the two together.
 
 **dicom-parser** — not configured standalone; it's pulled into the
 engine's own build via `add_subdirectory()`. Building `engine/` above

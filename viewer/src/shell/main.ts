@@ -488,7 +488,7 @@ function engineLoadVolume(msg: VolumeReadyMessage): void {
   // that didn't carry one) -- setFileWindowLevel wires it into the "From
   // File" preset option instead, so the user opts in rather than having
   // it forced on them.
-  setFileWindowLevel(msg.windowCenter, msg.windowWidth);
+  setFileWindowLevel(msg.windowCenter, msg.windowWidth, msg.modality);
   scheduleAutoTierCheck();
   setLoading(false);
   // Visual polish pass: the empty-canvas hint has served its purpose
