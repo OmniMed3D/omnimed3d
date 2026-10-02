@@ -98,6 +98,11 @@ jobs:
 
       - name: Build viewer
         working-directory: viewer
+        env:
+          # Picked up by inferenceControls.ts's MODEL_BASE_PATH -- unset in
+          # local dev/test builds, which keep using the relative
+          # /models/lungmask_r231 path served out of this same bundle.
+          VITE_MODEL_BASE_URL: https://omnimed3d-model-proxy.omnimed-3d.workers.dev/lungmask_r231
         run: npm run build
 
       - name: Install wrangler
