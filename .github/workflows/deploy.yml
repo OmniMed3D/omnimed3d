@@ -123,7 +123,7 @@ jobs:
       # R2's free tier covers 1M write ops/month, and this is 2-3 of them
       # per deploy, so a change-detection step would be optimizing a cost
       # that doesn't exist.
-      - name: Upload models to R2 and strip them from the Pages bundle
+      - name: Upload models to R2 and strip oversized assets from the Pages bundle
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -133,6 +133,16 @@ jobs:
             infra/cloudflare/model-proxy/node_modules/.bin/wrangler r2 object put "omnimed3d-models/$name" --file="$f"
           done
           rm -f viewer/dist/models/*.onnx
+
+          # onnxruntime-web's JSEP (WebGPU) build also exceeds Pages' limit
+          # (~25.6MiB), but unlike the models above it doesn't need R2: the
+          # webgpu bundle picks a WASM variant via its own runtime feature
+          # detection, and on this repo's target browsers (Chrome
+          # Desktop/Mobile, P0) it never actually selects the JSEP variant
+          # -- confirmed by removing this file and exercising the WebGPU
+          # path end to end. Vite still emits it into dist/assets "just in
+          # case", so it just needs stripping, not serving from anywhere.
+          rm -f viewer/dist/assets/ort-wasm-simd-threaded.jsep-*.wasm
 
       - name: Deploy to Cloudflare Pages
         env:
