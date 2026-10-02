@@ -1,0 +1,141 @@
+# Builds the Engine WASM module + viewer bundle on the same toolchain as
+# test.yml's e2e-viewer job (see that file's header comment for why
+# macos-latest + a pinned slangc binary are required) -- Cloudflare Pages'
+# own Git-integration build only offers Linux containers, which can't run
+# this build, so this workflow does the full build here and pushes the
+# already-built output with wrangler instead of relying on Pages' build
+# step.
+#
+# The INT8/FP16 lungmask models (viewer/src/shell/public/models/*.onnx)
+# exceed Cloudflare Pages' ~25MiB per-file static asset limit, so they're
+# uploaded to R2 and stripped out of the Pages bundle; a separate Worker
+# (infra/cloudflare/model-proxy) serves them back out at runtime. Demo
+# CT/MR assets (synced via sync-demo-ct) stay in the Pages bundle --
+# individually well under the 25MiB limit.
+#
+# One-time manual setup this workflow assumes already happened (see
+# infra/cloudflare/model-proxy/README.md):
+#   - `wrangler r2 bucket create omnimed3d-models`
+#   - `wrangler pages project create omnimed3d` (or an initial interactive
+#     `wrangler pages deploy`) -- the project must exist before this
+#     workflow's non-interactive deploy can target it.
+#   - CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID registered as repo
+#     secrets (Account-scoped token with Cloudflare Pages: Edit, Workers
+#     R2 Storage: Edit, Workers Scripts: Edit).
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy (Cloudflare Pages + R2)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Needed for both the committed INT8/dummy model (plain blob)
+          # and the LFS-tracked FP16 model + demo CT/MR series -- same
+          # trap as test.yml's identical comment.
+          lfs: true
+
+      - name: Cache emsdk
+        id: emsdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-4.0.10-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install emsdk
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+          cd ~/emsdk
+          ./emsdk install 4.0.10
+
+      - name: Activate emsdk
+        run: |
+          cd ~/emsdk
+          ./emsdk activate 4.0.10
+
+      - name: Install slangc
+        run: |
+          curl -sL -o /tmp/slang.tar.gz "https://github.com/shader-slang/slang/releases/download/v2026.16/slang-2026.16-macos-aarch64.tar.gz"
+          mkdir -p /tmp/slang
+          tar -xzf /tmp/slang.tar.gz -C /tmp/slang
+          chmod +x /tmp/slang/bin/slangc
+          echo "/tmp/slang/bin" >> "$GITHUB_PATH"
+
+      - name: Configure and build Engine WASM module
+        working-directory: engine
+        run: |
+          ./scripts/emsdk-shell.sh "cmake --preset wasm-macos" ~/emsdk
+          ./scripts/emsdk-shell.sh "cmake --build build_wasm" ~/emsdk
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install viewer dependencies
+        working-directory: viewer
+        run: npm ci
+
+      - name: Sync Engine WASM build and demo CT/MR series into the viewer
+        working-directory: viewer
+        run: |
+          npm run sync-engine-wasm
+          npm run sync-demo-ct
+
+      - name: Build viewer
+        working-directory: viewer
+        env:
+          # Picked up by inferenceControls.ts's MODEL_BASE_PATH -- unset in
+          # local dev/test builds, which keep using the relative
+          # /models/lungmask_r231 path served out of this same bundle.
+          VITE_MODEL_BASE_URL: https://omnimed3d-model-proxy.omnimed-3d.workers.dev/lungmask_r231
+        run: npm run build
+
+      - name: Install wrangler
+        working-directory: infra/cloudflare/model-proxy
+        run: npm ci
+
+      - name: Deploy model-proxy Worker
+        working-directory: infra/cloudflare/model-proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      # Uploads whatever .onnx files are actually committed under
+      # public/models/ -- not a hardcoded filename list, so adding,
+      # removing, or renaming a model variant needs no change here. Always
+      # re-uploads on every deploy rather than checking for changes first:
+      # R2's free tier covers 1M write ops/month, and this is 2-3 of them
+      # per deploy, so a change-detection step would be optimizing a cost
+      # that doesn't exist.
+      - name: Upload models to R2 and strip them from the Pages bundle
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for f in viewer/src/shell/public/models/*.onnx; do
+            name=$(basename "$f")
+            infra/cloudflare/model-proxy/node_modules/.bin/wrangler r2 object put "omnimed3d-models/$name" --file="$f"
+          done
+          rm -f viewer/dist/models/*.onnx
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: infra/cloudflare/model-proxy/node_modules/.bin/wrangler pages deploy viewer/dist --project-name=omnimed3d --branch=main

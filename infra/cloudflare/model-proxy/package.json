@@ -1,0 +1,16 @@
+{
+  "name": "@omnimed3d/model-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker serving the lungmask INT8/FP16 ONNX model files out of R2 -- Cloudflare Pages' ~25MiB per-file limit can't hold either one directly.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.114.17"
+  }
+}

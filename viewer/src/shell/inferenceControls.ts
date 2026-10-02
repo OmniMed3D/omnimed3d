@@ -49,7 +49,7 @@
 import { setGaugeLabel, setGaugeProgress } from "./buttonGauge.js";
 import { shouldUseLowMemoryMode } from "./deviceTier.js";
 
-const MODEL_BASE_PATH = "/models/lungmask_r231";
+const MODEL_BASE_PATH = import.meta.env.VITE_MODEL_BASE_URL ?? "/models/lungmask_r231";
 
 /**
  * Debug-only override (?aiForce=wasm-int8 or ?aiForce=gpu-fp16 on the

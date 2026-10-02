@@ -1,0 +1,7 @@
+name = "omnimed3d-model-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[r2_buckets]]
+binding = "MODEL_BUCKET"
+bucket_name = "omnimed3d-models"

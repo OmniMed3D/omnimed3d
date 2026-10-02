@@ -19,6 +19,9 @@ venv/
 node_modules/
 dist/
 
+# Cloudflare Workers local dev/deploy state (infra/cloudflare/)
+.wrangler/
+
 # Copied engine WASM build output (regenerated via npm run sync-engine-wasm,
 # sourced from the gitignored engine/build_wasm/)
 viewer/src/shell/public/engine/
