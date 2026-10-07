@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "sync-engine-wasm": "node scripts/sync-engine-wasm.mjs",
-    "sync-demo-ct": "node scripts/sync-demo-ct.mjs",
+    "sync-demo-ct": "node scripts/sync-demo-ct.mjs && node scripts/sync-landing-media.mjs",
+    "sync-landing-media": "node scripts/sync-landing-media.mjs",
     "dev": "vite",
     "dev:full": "powershell -ExecutionPolicy Bypass -File scripts/dev-full.ps1",
     "dev:start": "powershell -ExecutionPolicy Bypass -File scripts/dev-server.ps1 -Action Start",

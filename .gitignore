@@ -32,6 +32,11 @@ viewer/src/shell/public/engine/
 # reasoning as public/engine/ above).
 viewer/src/shell/public/demo-ct/
 
+# Landing page demo clips, copied from docs/media/ (Git LFS) by
+# npm run sync-landing-media -- same no-double-storage reasoning as
+# public/demo-ct/ above.
+viewer/src/shell/public/media/
+
 # Playwright output
 viewer/test-results/
 viewer/playwright-report/
