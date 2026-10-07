@@ -9,15 +9,21 @@
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const clips = Array.from(document.querySelectorAll<HTMLVideoElement>("video.clip"));
+// Clips currently on screen -- so a reduced-motion change can restart the
+// ones the visitor is looking at, not wait for them to scroll back in.
+const visible = new Set<HTMLVideoElement>();
 
 function playIfAllowed(video: HTMLVideoElement): void {
   if (reducedMotion.matches) {
     return;
   }
-  // Rejects when the clip is missing or autoplay is blocked -- either way
-  // the poster is still showing, so offer controls and move on.
-  video.play().catch(() => {
-    video.controls = true;
+  video.play().catch((err: unknown) => {
+    // Autoplay blocked: the clip is fine, so let the visitor start it.
+    // Anything else (missing or undecodable clip) leaves the bare poster --
+    // controls there would be an inert play button.
+    if (err instanceof DOMException && err.name === "NotAllowedError") {
+      video.controls = true;
+    }
   });
 }
 
@@ -26,6 +32,8 @@ function applyMotionPreference(): void {
     video.controls = reducedMotion.matches;
     if (reducedMotion.matches) {
       video.pause();
+    } else if (visible.has(video)) {
+      playIfAllowed(video);
     }
   }
 }
@@ -38,8 +46,10 @@ const observer = new IntersectionObserver(
     for (const entry of entries) {
       const video = entry.target as HTMLVideoElement;
       if (entry.isIntersecting) {
+        visible.add(video);
         playIfAllowed(video);
       } else {
+        visible.delete(video);
         video.pause();
       }
     }

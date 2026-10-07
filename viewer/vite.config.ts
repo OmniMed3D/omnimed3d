@@ -1,8 +1,19 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const shellRoot = resolve(dirname(fileURLToPath(import.meta.url)), "src/shell");
+
+function redirectAppToTrailingSlash(req: IncomingMessage, res: ServerResponse, next: () => void): void {
+  if (req.url === "/app" || req.url?.startsWith("/app?")) {
+    res.statusCode = 301;
+    res.setHeader("Location", req.url.replace(/^\/app/, "/app/"));
+    res.end();
+    return;
+  }
+  next();
+}
 
 export default defineConfig({
   root: "src/shell",
@@ -21,20 +32,16 @@ export default defineConfig({
   },
   plugins: [
     {
-      // The dev server's SPA fallback serves the landing page for /app
-      // (no trailing slash) instead of app/index.html. Cloudflare Pages
-      // redirects /app -> /app/ in production, so mirror that here.
+      // Both the dev server's and `vite preview`'s SPA fallback serve the
+      // landing page for /app (no trailing slash) instead of
+      // app/index.html. Cloudflare Pages redirects /app -> /app/ in
+      // production, so mirror that here.
       name: "app-trailing-slash",
       configureServer(server) {
-        server.middlewares.use((req, res, next) => {
-          if (req.url === "/app" || req.url?.startsWith("/app?")) {
-            res.statusCode = 301;
-            res.setHeader("Location", req.url.replace(/^\/app/, "/app/"));
-            res.end();
-            return;
-          }
-          next();
-        });
+        server.middlewares.use(redirectAppToTrailingSlash);
+      },
+      configurePreviewServer(server) {
+        server.middlewares.use(redirectAppToTrailingSlash);
       },
     },
   ],

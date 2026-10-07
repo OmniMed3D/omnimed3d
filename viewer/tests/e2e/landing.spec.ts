@@ -53,15 +53,61 @@ test("missing clips leave the layout intact and throw no page error", async ({ p
   const pageErrors: Error[] = [];
   page.on("pageerror", (err) => pageErrors.push(err));
   await page.route("**/media/*.mp4", (route) => route.abort());
+  const posterResponse = page.waitForResponse((response) => response.url().endsWith("/landing/rendering-poster.jpg"));
   await page.goto("/");
+  expect((await posterResponse).status()).toBe(200);
   await page.waitForTimeout(1000);
 
-  const box = await page.locator(".hero-media video").boundingBox();
+  const hero = page.locator(".hero-media video");
+  const box = await hero.boundingBox();
   expect(box?.height ?? 0).toBeGreaterThan(100);
+  expect(await hero.evaluate((v: HTMLVideoElement) => v.poster)).toContain("/landing/rendering-poster.jpg");
+  // A clip that can't load has nothing to play -- native controls would be
+  // an inert play button over the poster.
+  expect(await hero.evaluate((v: HTMLVideoElement) => v.controls)).toBe(false);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
   expect(pageErrors).toEqual([]);
 });
+
+test("turning reduced motion off restarts the clip already on screen", async ({ page }) => {
+  // Counts play() calls rather than checking playback itself, so this
+  // doesn't depend on the browser shipping an H.264 decoder (Playwright's
+  // bundled Chromium doesn't).
+  await page.addInitScript(() => {
+    const original = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      this.dataset["playCalls"] = String(Number(this.dataset["playCalls"] ?? "0") + 1);
+      return original.call(this);
+    };
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const hero = page.locator(".hero-media video");
+  await page.waitForTimeout(500);
+  expect(await hero.getAttribute("data-play-calls")).toBeNull();
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(hero).toHaveAttribute("data-play-calls", "1");
+  expect(await hero.evaluate((v: HTMLVideoElement) => v.controls)).toBe(false);
+});
+
+for (const path of ["/", "/app/"]) {
+  test(`${path} loads without a 404 (favicon included)`, async ({ page }) => {
+    const notFound: string[] = [];
+    page.on("response", (response) => {
+      if (response.status() === 404) notFound.push(response.url());
+    });
+    await page.goto(path);
+    await page.waitForLoadState("load");
+    await page.waitForTimeout(1000);
+    const favicon = await page.evaluate(
+      () => document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href ?? null,
+    );
+    expect(favicon).not.toBeNull();
+    expect(notFound).toEqual([]);
+  });
+}
 
 test("a browser without WebGPU sees a notice next to the CTA", async ({ page }) => {
   await page.addInitScript(() => {
