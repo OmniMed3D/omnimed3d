@@ -26,9 +26,7 @@ src/
   rhi/
     include/rhi/    Device.hpp — the backend-agnostic interface
     backends/
-      vulkan/       not implemented yet
       webgpu/       the real, shipping rendering backend (WebGPUDevice)
-  scene/ rendering/ assets/   scaffolded, not built out yet
   utils/            FrameStats and other small shared helpers
 
 shaders/
@@ -36,11 +34,7 @@ shaders/
                     compiled to both SPIR-V and WGSL at build time
   generated/        build output (SPIR-V / WGSL), gitignored
 
-tools/codegen/       scaffolded (C++ struct <-> shader binding generator), empty
-
 tests/
-  parity/           scaffolded — cross-backend (Vulkan vs WebGPU) output
-                    diff tests, blocked on a native Vulkan Device
   wasm_smoke/        shell.html, the WASM test harness page
   fixtures/          small binary fixtures (e.g. CT_small.dcm)
 
@@ -107,8 +101,8 @@ toolchains can report success while producing nothing; check
 
 - `ctest --test-dir build` — native unit tests (`core`'s `RenderGraph`
   tests today).
-- `tests/parity/` — scoped to cross-backend (Vulkan vs. WebGPU) parity
-  once a native Vulkan `Device` exists; currently scaffolded only.
+- Cross-backend (Vulkan vs. WebGPU) parity tests will land under
+  `tests/parity/` once a native Vulkan `Device` exists.
 - Cross-backend integration and visual regression is currently covered
   from the other side, in [`viewer/tests/e2e/`](../viewer/README.md#browser-e2e-tests-testse2e)
   (real browser, real WASM build, real WebGPU adapter).
