@@ -1,0 +1,317 @@
+/* Landing page (index.html). Separate from the viewer's style.css on
+   purpose -- the viewer's tokens are tuned for a control panel floating
+   over a diagnostic render; this page is long-form reading. Colors reuse
+   the viewer's teal accent family so the hand-off into /app/ feels like
+   the same product. Dark only, matching the viewer. */
+
+:root {
+  --bg: #0a0c10;
+  --surface: #121a19;
+  --border: rgba(255, 255, 255, 0.1);
+  --text: #e6e9ef;
+  --text-muted: #a7b5b1;
+  --accent: #1d5c56;
+  --accent-bright: #4fb8ab;
+  --warning: #e0b15c;
+  --radius: 10px;
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --gutter: 16px;
+  --max-width: 1120px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent-bright);
+}
+
+h1,
+h2 {
+  line-height: 1.2;
+  margin: 0 0 0.5em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: clamp(1.25rem, 1.1rem + 0.6vw, 1.6rem);
+}
+
+p {
+  margin: 0 0 1em;
+}
+
+main,
+.site-header,
+.site-footer {
+  width: 100%;
+  max-width: var(--max-width);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block: 20px;
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.header-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 10px 4px;
+}
+
+.header-link:hover {
+  color: var(--text);
+}
+
+section {
+  padding-block: clamp(40px, 6vw, 88px);
+}
+
+.hero {
+  display: grid;
+  gap: 32px;
+  align-items: center;
+  padding-top: 24px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent-bright);
+  margin-bottom: 0.75em;
+}
+
+.lede {
+  font-size: 1.125rem;
+  color: var(--text-muted);
+  max-width: 34em;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 28px 0 16px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 22px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: var(--accent-bright);
+  color: #06201d;
+}
+
+.btn-primary:hover {
+  background: #6cc9bd;
+}
+
+.btn-secondary {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: var(--text-muted);
+}
+
+.btn:focus-visible,
+.header-link:focus-visible,
+.site-footer a:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 3px;
+}
+
+.cta-note {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  max-width: 34em;
+}
+
+.webgpu-warning {
+  font-size: 0.9rem;
+  color: var(--warning);
+  border-left: 3px solid var(--warning);
+  padding-left: 12px;
+}
+
+figure {
+  margin: 0;
+}
+
+/* The clips are 1280x720 full-window screen captures: rows 0-57 are the
+   capturing browser's own tab/address bar and rows ~708-720 are black.
+   Cropping to the 651-row app region (aspect-ratio + object-position:
+   57 / (720 - 651) = 83%) shows only the viewer itself, no re-encode. */
+.clip {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1280 / 651;
+  object-fit: cover;
+  object-position: 50% 83%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+figcaption {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.values {
+  display: grid;
+  gap: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.value h2 {
+  font-size: 1.15rem;
+}
+
+.value p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.feature {
+  display: grid;
+  gap: 32px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+}
+
+.feature-copy p {
+  color: var(--text-muted);
+  max-width: 34em;
+}
+
+.pipeline,
+.stack {
+  border-top: 1px solid var(--border);
+}
+
+.steps {
+  list-style: none;
+  counter-reset: step;
+  display: grid;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+.steps li {
+  counter-increment: step;
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent-bright);
+}
+
+.step-name {
+  font-weight: 600;
+}
+
+.step-detail {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.stack-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+}
+
+.stack-list strong {
+  color: var(--text);
+}
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding-block: 32px 48px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.disclaimer {
+  color: var(--text);
+}
+
+@media (min-width: 720px) {
+  .values {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .steps {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .stack-list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .hero {
+    grid-template-columns: 5fr 6fr;
+    gap: 48px;
+  }
+
+  .feature {
+    grid-template-columns: 6fr 5fr;
+    gap: 48px;
+  }
+}

@@ -201,6 +201,10 @@ server (also managed by `dev:start`/`dev:stop`/`dev:status`). See
 [`viewer/README.md`](viewer/README.md#building-and-testing) for the steps
 run individually.
 
+The dev server serves the landing page at `/` and the viewer at `/app/`.
+`/app/?demo=LIDC-IDRI-0001` opens the viewer with that demo series
+loading.
+
 ### Per-module builds
 
 **Engine** (C++20 — needs vcpkg + `VCPKG_ROOT` and, for the browser
@@ -225,7 +229,7 @@ Artifacts land in `engine/build_wasm/`.
 cd viewer
 npm install
 npm run sync-engine-wasm   # copy engine/build_wasm/* into src/shell/public/engine/ (needs the WASM build above)
-npm run sync-demo-ct       # copy test-data/* into src/shell/public/demo-ct/ (needs git lfs pull)
+npm run sync-demo-ct       # copy test-data/* and the landing clips (docs/media/) into src/shell/public/ (needs git lfs pull)
 npm run dev                # dev server (foreground); npm run dev:start backgrounds it
 npm run build              # production build
 npm test                   # unit tests (vitest, across all workspace packages)

@@ -4,9 +4,142 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OmniMed3D</title>
+    <meta
+      name="description"
+      content="A browser-only 3D medical imaging viewer: WebGPU volume rendering and on-device AI segmentation. Nothing is installed or uploaded."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./landing.css" />
   </head>
   <body>
-    <h1>OmniMed3D</h1>
-    <a href="/app/?demo=LIDC-IDRI-0001">Open the demo</a>
+    <header class="site-header">
+      <span class="wordmark">OmniMed3D</span>
+      <a class="header-link" href="https://github.com/OmniMed3D/omnimed3d">GitHub</a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Research prototype</p>
+          <h1>3D medical imaging that runs entirely in your browser</h1>
+          <p class="lede">
+            OmniMed3D renders CT and MR volumes with WebGPU and runs AI segmentation on your own device. There is
+            nothing to install, and your scans never leave your machine.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" id="cta-demo" href="/app/?demo=LIDC-IDRI-0001">Open the demo</a>
+            <a class="btn btn-secondary" href="https://github.com/OmniMed3D/omnimed3d">View on GitHub</a>
+          </div>
+          <p class="cta-note">
+            The demo loads a public, de-identified chest CT. Needs a WebGPU-capable browser, such as recent Chrome on
+            desktop or Android.
+          </p>
+          <p class="webgpu-warning" id="webgpu-warning" hidden>
+            This browser doesn't expose WebGPU, so the viewer can't start here. Try a recent version of Chrome.
+          </p>
+        </div>
+        <figure class="hero-media">
+          <video
+            class="clip"
+            src="/media/omnimed3d_rendering.mp4"
+            poster="/landing/rendering-poster.jpg"
+            muted
+            loop
+            playsinline
+            preload="none"
+            aria-label="Screen capture: a chest CT volume rotating under real-time WebGPU rendering"
+          ></video>
+          <figcaption>Real-time WebGPU raymarching with clinical window/level.</figcaption>
+        </figure>
+      </section>
+
+      <section class="values" aria-label="Why OmniMed3D">
+        <div class="value">
+          <h2>Nothing to install</h2>
+          <p>Open a link and load a scan. No plugin, no desktop app, no IT setup.</p>
+        </div>
+        <div class="value">
+          <h2>Nothing uploaded</h2>
+          <p>DICOM parsing, AI inference, and rendering all happen on your device. No server ever sees the data.</p>
+        </div>
+        <div class="value">
+          <h2>Runs without a network</h2>
+          <p>Once the app has loaded, parsing, rendering, and segmentation need no network connection.</p>
+        </div>
+      </section>
+
+      <section class="feature">
+        <figure class="feature-media">
+          <video
+            class="clip"
+            src="/media/omnimed3d_segmentation.mp4"
+            poster="/landing/segmentation-poster.jpg"
+            muted
+            loop
+            playsinline
+            preload="none"
+            aria-label="Screen capture: a lung segmentation mask filling in progressively over the rendered CT volume"
+          ></video>
+        </figure>
+        <div class="feature-copy">
+          <h2>AI segmentation that never blocks the view</h2>
+          <p>
+            The volume renders the moment it loads. A lung segmentation model runs in the browser with ONNX Runtime
+            Web, and its mask fills in slice by slice on top of the image you're already exploring.
+          </p>
+        </div>
+      </section>
+
+      <section class="pipeline" aria-labelledby="pipeline-title">
+        <h2 id="pipeline-title">How it works</h2>
+        <ol class="steps">
+          <li>
+            <span class="step-name">Your DICOM files</span>
+            <span class="step-detail">Picked from disk. Never uploaded.</span>
+          </li>
+          <li>
+            <span class="step-name">Parse Worker</span>
+            <span class="step-detail">C++ DICOM parser compiled to WASM builds the HU volume.</span>
+          </li>
+          <li>
+            <span class="step-name">Engine</span>
+            <span class="step-detail">Renders the volume with WebGPU right away.</span>
+          </li>
+          <li>
+            <span class="step-name">Inference Worker</span>
+            <span class="step-detail">Segments slices in parallel and streams the mask to the engine.</span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="stack" aria-labelledby="stack-title">
+        <h2 id="stack-title">Built with</h2>
+        <ul class="stack-list">
+          <li><strong>WebGPU</strong> volume raymarching</li>
+          <li><strong>C++20</strong> engine compiled to WASM with Emscripten</li>
+          <li><strong>Slang</strong> shaders cross-compiled to WGSL</li>
+          <li><strong>ONNX Runtime Web</strong> for on-device inference</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p class="disclaimer">
+        OmniMed3D is research prototype software. It is not a certified clinical device and is not for diagnostic
+        use.
+      </p>
+      <p>
+        Demo data: LIDC-IDRI (CC BY 3.0) and UPENN-GBM (CC BY 4.0), both from The Cancer Imaging Archive. Full
+        citations are shown in the viewer's demo panel.
+      </p>
+      <p>
+        <a href="https://github.com/OmniMed3D/omnimed3d">Source on GitHub</a> ·
+        <a href="https://github.com/OmniMed3D/omnimed3d/blob/main/LICENSE">Apache License 2.0</a>
+      </p>
+    </footer>
+
+    <script type="module" src="./landing.ts"></script>
   </body>
 </html>
