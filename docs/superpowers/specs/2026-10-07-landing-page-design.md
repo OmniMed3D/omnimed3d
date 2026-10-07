@@ -67,8 +67,9 @@ Top to bottom:
    rendering is never blocked by inference: the volume renders immediately and
    the lung mask fills in progressively.
 4. **How it works** — the Parse Worker → Engine / Inference Worker pipeline
-   from the root README's diagram, redrawn as inline SVG that adapts to light
-   and dark themes.
+   from the root README's diagram, rebuilt as responsive HTML steps (a row on
+   wide screens, a vertical list on phones) rather than an SVG that would
+   shrink its text below legibility at phone width.
 5. **Built with** — WebGPU raymarching, a C++20 engine compiled to WASM, Slang
    shaders cross-compiled to WGSL, ONNX Runtime Web.
 6. **Footer** —
@@ -94,11 +95,15 @@ page must work at phone width with no horizontal scroll.
   `sync-demo-ct.mjs`. It runs as part of the existing sync steps in local dev
   and in the deploy build, so no clip is stored twice in git.
   - The deploy workflow already runs `npm run sync-demo-ct`; to keep
-    `deploy.yml` untouched, `sync-demo-ct` invokes the media copy as well
-    rather than adding a new workflow step.
-- Each `<video>` uses `muted autoplay loop playsinline preload="metadata"`
-  with a poster frame (a small still extracted once and committed), so mobile
-  visitors don't download ~28 MB before interacting.
+    `deploy.yml` untouched, that npm script chains the media copy after the
+    demo-series copy rather than adding a new workflow step.
+  - The copy fails loudly on an un-pulled Git LFS pointer stub or on a clip
+    over 25 MiB (the Pages per-file limit), instead of producing a deploy
+    that silently breaks.
+- Each `<video>` is `muted loop playsinline preload="none"` with a poster
+  frame (a still extracted once and committed). A small script starts
+  playback only while the clip is on screen, so mobile visitors don't
+  download ~28 MB up front.
 - `prefers-reduced-motion: reduce` disables autoplay; the poster and native
   controls remain.
 - If the clips are missing (sync not run), the poster still renders and the
