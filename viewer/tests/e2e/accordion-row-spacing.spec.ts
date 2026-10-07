@@ -19,7 +19,7 @@ import { expect, test } from "@playwright/test";
  */
 
 test("rows inside a <details> section get the same 8px gap as rows inside a plain <div> section", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.locator("#advanced-mode-toggle").click();

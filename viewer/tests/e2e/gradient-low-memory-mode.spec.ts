@@ -196,7 +196,7 @@ test("low-memory gradient fallback renders real shading on a sphere, not flat/de
     if (msg.type() === "error") errors.push(msg.text());
   });
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // The control panel overlays most of the viewport at this canvas size --
   // collapse it first, or a canvas-clipped screenshot just captures the

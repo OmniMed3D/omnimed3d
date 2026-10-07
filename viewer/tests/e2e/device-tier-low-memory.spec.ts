@@ -55,7 +55,7 @@ async function loadCtSmallAndCaptureLowMemoryMode(
   urlSuffix = "",
   beforeLoad?: (page: import("@playwright/test").Page) => Promise<void>,
 ): Promise<{ calledWith: number[]; statText: string | null }> {
-  await page.goto(`/${urlSuffix}`);
+  await page.goto(`/app/${urlSuffix}`);
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   if (beforeLoad) {
@@ -140,7 +140,7 @@ test("?lowMemory=0 forces full mode even when deviceMemory says otherwise", asyn
 
 test("Low-Memory Mode checkbox starts synced with the auto-detected default", async ({ page }) => {
   await stubDeviceMemory(page, 8);
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // Rendering (which holds this checkbox) is a collapsed <details>
   // section by default, nested inside the outer "Advanced Mode" <details>

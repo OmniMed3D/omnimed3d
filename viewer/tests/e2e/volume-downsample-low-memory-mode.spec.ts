@@ -51,7 +51,7 @@ test("low-memory mode downsamples the volume/mask textures, and the mask still l
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // MPR: Axial/Sagittal/Coronal share data-view-mode="1",
   // disambiguated by data-slice-axis.

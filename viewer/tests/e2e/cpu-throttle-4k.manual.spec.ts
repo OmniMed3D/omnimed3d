@@ -53,7 +53,7 @@ test.describe("4x CPU throttle @ 2560x1440 (vsync-escaping resolution, PRD §9 i
   test.use({ viewport: { width: 2560, height: 1440 } });
 
   test("static and drag FPS at 1x vs 4x CPU throttle", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/app/");
     await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
     await page.locator("#load-demo-ct").click();

@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
  */
 
 test("device-lost shows the reload banner and stops rendering", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await expect(page.locator("#device-lost-banner")).toBeHidden();
@@ -39,7 +39,7 @@ test("device-lost shows the reload banner and stops rendering", async ({ page })
 });
 
 test("device-lost banner's Reload button reloads the page", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   await page.evaluate(() => window.Module._engine_debug_simulate_device_lost());
   await expect(page.locator("#device-lost-banner")).toBeVisible();

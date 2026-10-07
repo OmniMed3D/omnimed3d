@@ -25,7 +25,7 @@ interface RecordedMaskSlice {
 test("hu-slice messages sent before the model finishes loading are queued and still processed, not dropped", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   // Observe raw mask-slice traffic on the Inference Worker directly, the

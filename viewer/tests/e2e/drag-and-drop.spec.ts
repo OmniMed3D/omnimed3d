@@ -53,7 +53,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test("dragenter with files shows the drop overlay; without files, it doesn't", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await dispatchDragEvent(page, "dragenter", false);
@@ -66,7 +66,7 @@ test("dragenter with files shows the drop overlay; without files, it doesn't", a
 });
 
 test("dragenter/dragleave depth counter keeps the overlay visible while crossing nested elements", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   // Simulates the pointer entering the page, then entering a nested
@@ -93,7 +93,7 @@ test("dropping a file loads it as a real volume and hides the overlay", async ({
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const canvas = page.locator("#canvas");

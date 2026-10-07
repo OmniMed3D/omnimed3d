@@ -14,7 +14,7 @@ import { expect, test } from "@playwright/test";
  */
 
 test("hovering a slider shows its tooltip with the expected text", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const tooltip = page.locator("#control-tooltip");
@@ -29,7 +29,7 @@ test("hovering a slider shows its tooltip with the expected text", async ({ page
 });
 
 test("keyboard focus shows the same tooltip as hover", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   // TF Detail is a collapsed <details> section by default, nested inside
@@ -47,7 +47,7 @@ test("keyboard focus shows the same tooltip as hover", async ({ page }) => {
 });
 
 test("tooltips near the panel's top and bottom edges stay within the viewport", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const viewport = page.viewportSize()!;

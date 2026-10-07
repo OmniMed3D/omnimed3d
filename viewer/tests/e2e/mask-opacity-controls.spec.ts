@@ -22,7 +22,7 @@ async function loadVolumeWithMask(page: import("@playwright/test").Page): Promis
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // TF Detail is a collapsed <details> section by default, nested inside
   // the outer "Advanced Mode" <details> -- see index.html.

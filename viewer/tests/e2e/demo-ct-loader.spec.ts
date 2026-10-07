@@ -27,7 +27,7 @@ test("Load Demo CT loads a real volume and shows CC BY 3.0 attribution", async (
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const canvas = page.locator("#canvas");
@@ -62,7 +62,7 @@ test("Load Demo CT loads a real volume and shows CC BY 3.0 attribution", async (
 test("a missing demo-ct manifest shows a sync-demo-ct hint, not a generic error", async ({ page }) => {
   await page.route("**/demo-ct/LIDC-IDRI-0001/manifest.json", (route) => route.fulfill({ status: 404 }));
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.locator("#load-demo-ct").click();
