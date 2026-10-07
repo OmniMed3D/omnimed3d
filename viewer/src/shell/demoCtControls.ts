@@ -98,6 +98,31 @@ export function setupDemoCtControls(
   });
 }
 
+/**
+ * Starts the demo series named by `?demo=<series-id>` loading, as if its
+ * button had been clicked -- the landing page's "Open the demo" CTA links
+ * to /app/?demo=LIDC-IDRI-0001. Must run after setupDemoCtControls (the
+ * click handler does the actual load) and after the engine is ready. An
+ * unknown or empty id is ignored: the viewer stays exactly as it would
+ * without the parameter. The parameter is dropped from the URL either way,
+ * so a later refresh (or the device-lost banner's reload) doesn't start
+ * the demo download again over whatever the user loaded since.
+ */
+export function autoLoadDemoFromQuery(search: string = location.search): void {
+  const params = new URLSearchParams(search);
+  const seriesId = params.get("demo");
+  if (!seriesId) {
+    return;
+  }
+  params.delete("demo");
+  const query = params.toString();
+  history.replaceState(history.state, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  const button = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-demo-ct-id]")).find(
+    (candidate) => candidate.dataset["demoCtId"] === seriesId,
+  );
+  button?.click();
+}
+
 async function loadDemoCt(
   seriesId: string,
   button: HTMLButtonElement,

@@ -57,7 +57,7 @@ test("real Worker postMessage/Transferable, Shell to Engine wiring, out-of-order
 
   await page.route("**/dummy-lungmask.onnx", (route) => route.fulfill({ path: dummyOnnxPath }));
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const ctSmallBase64 = readFileSync(ctSmallDcmPath).toString("base64");
@@ -190,7 +190,7 @@ test("raymarch pass actually draws real DICOM data, not just the flat clear colo
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const canvas = page.locator("#canvas");
@@ -233,7 +233,7 @@ test("mask overlay actually composites over the rendered volume", async ({ page 
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const canvas = page.locator("#canvas");
@@ -293,7 +293,7 @@ test("mask overlay actually composites over the rendered volume", async ({ page 
 });
 
 test("real UI: file picker, camera drag, wheel zoom, and window/level controls all visually work", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const consoleLines: string[] = [];
@@ -364,7 +364,7 @@ test("view-mode toggle switches to a 2D axial slice view and the slice slider pa
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const canvas = page.locator("#canvas");
@@ -482,7 +482,7 @@ test("canvas backing store is responsive, not a fixed 640x480 box", async ({ pag
   }
 
   await page.setViewportSize({ width: 1000, height: 700 });
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   // The ResizeObserver in canvasResize.ts fires once on observe() -- give
@@ -545,7 +545,7 @@ test("a loading indicator appears during a real file load and clears after", asy
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const indicator = page.locator("#loading-indicator");

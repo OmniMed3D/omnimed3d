@@ -23,7 +23,7 @@ const ctSmallDcmPath = fileURLToPath(new URL("../../../engine/tests/fixtures/CT_
 test("Reload Volume is disabled until a volume loads, then re-applies a changed Low-Memory Mode setting", async ({
   page,
 }) => {
-  await page.goto("/?lowMemory=0");
+  await page.goto("/app/?lowMemory=0");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await expect(page.locator("#reload-volume")).toBeDisabled();
@@ -71,7 +71,7 @@ test("Reload Volume is disabled until a volume loads, then re-applies a changed 
 });
 
 test("Reload Volume also works after Load Demo CT", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const consoleLines: string[] = [];

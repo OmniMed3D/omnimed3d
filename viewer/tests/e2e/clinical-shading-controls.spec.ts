@@ -19,7 +19,7 @@ async function loadVolumeAndSettle(page: import("@playwright/test").Page): Promi
     await expect.poll(() => consoleLines.some((line) => pattern.test(line)), { timeout: timeoutMs }).toBe(true);
   }
 
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // Rendering/TF Detail/Clip are collapsed <details> sections nested
   // inside the outer "Advanced Mode" <details> -- see index.html. Clip's

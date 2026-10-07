@@ -38,6 +38,11 @@ npm run build        # vite build, src/shell/ -> dist/
 npm run dev           # vite dev server, src/shell/ (foreground)
 ```
 
+The dev server serves the landing page at `/` and the viewer at `/app/`
+(`http://localhost:5173/app/`). Append `?demo=LIDC-IDRI-0001` (or
+`LIDC-IDRI-0002`, `UPENN-GBM-00001`) to start a demo series loading
+immediately.
+
 To run the dev server in the background instead of tying up a terminal
 (`scripts/dev-server.ps1`/`.sh` -- tracks the process via a PID file so
 it can be stopped cleanly, child processes included):

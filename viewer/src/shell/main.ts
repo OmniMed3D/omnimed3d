@@ -32,7 +32,7 @@ import { setupCanvasResize } from "./canvasResize.js";
 import { setLoading } from "./loadingIndicator.js";
 import { setupPanelDrag, setupPanelCollapse } from "./panelDrag.js";
 import { notifyMaskSliceApplied, notifyVolumeLoadedForInference, setupInferenceControls } from "./inferenceControls.js";
-import { setupDemoCtControls } from "./demoCtControls.js";
+import { autoLoadDemoFromQuery, setupDemoCtControls } from "./demoCtControls.js";
 import { setupTooltips } from "./tooltipManager.js";
 import {
   getDownsampleFactor,
@@ -705,6 +705,7 @@ async function main() {
   // prompt -- not during the earlier load/init states, which already
   // have their own status text.
   document.getElementById("empty-hint")!.hidden = false;
+  autoLoadDemoFromQuery();
 }
 
 main();

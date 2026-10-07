@@ -1,11 +1,43 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const shellRoot = resolve(dirname(fileURLToPath(import.meta.url)), "src/shell");
 
 export default defineConfig({
   root: "src/shell",
   build: {
     outDir: "../../dist",
     emptyOutDir: true,
+    // Two pages from one build: the landing page at / and the viewer at
+    // /app/. Both share public/ (engine WASM, models, demo series) and the
+    // site-wide headers in public/_headers.
+    rollupOptions: {
+      input: {
+        landing: resolve(shellRoot, "index.html"),
+        app: resolve(shellRoot, "app/index.html"),
+      },
+    },
   },
+  plugins: [
+    {
+      // The dev server's SPA fallback serves the landing page for /app
+      // (no trailing slash) instead of app/index.html. Cloudflare Pages
+      // redirects /app -> /app/ in production, so mirror that here.
+      name: "app-trailing-slash",
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url === "/app" || req.url?.startsWith("/app?")) {
+            res.statusCode = 301;
+            res.setHeader("Location", req.url.replace(/^\/app/, "/app/"));
+            res.end();
+            return;
+          }
+          next();
+        });
+      },
+    },
+  ],
   // Inference Worker (worker.ts) dynamically imports either
   // "onnxruntime-web" or "onnxruntime-web/webgpu" per `init` message, so a
   // WebKit session never loads the JSEP/webgpu bundle at all (see that

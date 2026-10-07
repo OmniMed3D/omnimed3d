@@ -14,7 +14,7 @@ import { expect, test } from "@playwright/test";
  */
 
 test("Low-Memory Mode shows a slower-inference notice when Load Segmentation Model is clicked", async ({ page }) => {
-  await page.goto("/?lowMemory=1");
+  await page.goto("/app/?lowMemory=1");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.locator("#load-demo-model").click();
@@ -22,7 +22,7 @@ test("Low-Memory Mode shows a slower-inference notice when Load Segmentation Mod
 });
 
 test("outside Low-Memory Mode, no slower-inference notice appears", async ({ page }) => {
-  await page.goto("/?lowMemory=0");
+  await page.goto("/app/?lowMemory=0");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.locator("#load-demo-model").click();

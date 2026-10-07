@@ -42,7 +42,7 @@ test("in low-memory mode, a real hu-slice inference pauses rendering, then resum
 
   await page.route("**/dummy-lungmask.onnx", (route) => route.fulfill({ path: dummyOnnxPath }));
 
-  await page.goto("/?lowMemory=1");
+  await page.goto("/app/?lowMemory=1");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.evaluate(() => {
@@ -100,7 +100,7 @@ test("outside low-memory mode, a real hu-slice inference does not pause renderin
 
   await page.route("**/dummy-lungmask.onnx", (route) => route.fulfill({ path: dummyOnnxPath }));
 
-  await page.goto("/?lowMemory=0");
+  await page.goto("/app/?lowMemory=0");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.evaluate(() => {

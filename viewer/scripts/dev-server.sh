@@ -20,7 +20,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 viewer_root="$(dirname "$script_dir")"
 pid_file="$viewer_root/.dev-server.pid"
 log_file="$viewer_root/.dev-server.log"
-dev_url="http://localhost:5173/"
+dev_url="http://localhost:5173/app/"
 
 get_tracked_pid() {
     if [[ -f "$pid_file" ]]; then

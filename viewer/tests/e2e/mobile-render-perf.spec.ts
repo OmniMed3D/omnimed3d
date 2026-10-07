@@ -24,7 +24,7 @@ test("canvas backing resolution is capped, not proportional to a high devicePixe
   // every test in this file.
   const context = await browser.newContext({ deviceScaleFactor: 4 });
   const page = await context.newPage();
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   const [cssWidth, cssHeight, dpr] = await page.evaluate(() => [
@@ -51,7 +51,7 @@ test("canvas backing resolution is capped, not proportional to a high devicePixe
 });
 
 test("camera drag drops the engine's active quality tier and restores it on release", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // Rendering is a collapsed <details> section by default, nested inside
   // the outer "Advanced Mode" <details> -- see index.html.
@@ -108,7 +108,7 @@ test("camera drag forces occlusion off (restoring on release) but leaves shading
   // drag, precisely to eliminate the brightness pop that approximation
   // itself couldn't quite avoid. Occlusion, unrelated to that change,
   // still drops during a drag.
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
   // TF Detail is a collapsed <details> section by default, nested inside
   // the outer "Advanced Mode" <details> -- see index.html.

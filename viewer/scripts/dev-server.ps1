@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 
 $ViewerRoot = Split-Path -Parent $PSScriptRoot
 $PidFile = Join-Path $ViewerRoot ".dev-server.pid"
-$DevUrl = "http://localhost:5173/"
+$DevUrl = "http://localhost:5173/app/"
 
 function Get-TrackedProcess {
     if (-not (Test-Path $PidFile)) {

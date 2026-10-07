@@ -16,7 +16,7 @@ import { expect, test } from "@playwright/test";
  */
 
 test("a touch drag on the canvas orbits the camera", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.evaluate(() => {
@@ -68,7 +68,7 @@ test("a touch drag on the canvas orbits the camera", async ({ page }) => {
 });
 
 test("a second touch point mid-drag is ignored, not treated as a new drag", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/app/");
   await expect(page.locator("#shell-status")).toHaveText(/ready for input/, { timeout: 15000 });
 
   await page.evaluate(() => {
