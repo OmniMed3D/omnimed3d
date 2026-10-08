@@ -12,7 +12,7 @@ engine honors), and Appendix A.
 landed — `wasm_smoke.js`/`.wasm` is the production rendering module
 [`viewer/`](../viewer/README.md)'s Shell loads (`viewer/scripts/sync-engine-wasm.mjs`),
 not a demo target. No native Vulkan `Device` implementation exists yet;
-the native build currently exercises `core`/`concurrency`/`utils` and
+the native build currently exercises `core`/`utils` and
 their tests only. See [`docs/RENDERING_SPEC.md`](docs/RENDERING_SPEC.md)
 for exactly what's currently rendered and tunable.
 
@@ -22,7 +22,6 @@ for exactly what's currently rendered and tunable.
 src/
   core/            RenderGraph — the single owner of all resource-state
                     transitions (no hand-written barriers elsewhere)
-  concurrency/      frame barrier / thread pool primitives
   rhi/
     include/rhi/    Device.hpp — the backend-agnostic interface
     backends/
