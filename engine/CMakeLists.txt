@@ -12,7 +12,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 enable_testing()
 
 add_subdirectory(src/core)
-add_subdirectory(src/concurrency)
 add_subdirectory(src/utils)
 
 # Slang -> WGSL/SPIR-V shader compilation (ADR-0002). Unconditional (not

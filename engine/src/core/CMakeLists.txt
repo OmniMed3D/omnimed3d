@@ -1,5 +1,4 @@
 add_library(core STATIC
-    Core.cpp
     RenderGraph.cpp
 )
 add_library(omnimed3d::core ALIAS core)
